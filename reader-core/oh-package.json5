@@ -1,0 +1,7 @@
+{
+  "name": "@reader-kit/core",
+  "version": "0.1.0",
+  "description": "Provider-neutral experimental reader session",
+  "main": "Index.ets",
+  "dependencies": {}
+}

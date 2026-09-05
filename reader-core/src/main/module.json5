@@ -1,0 +1,7 @@
+{
+  "module": {
+    "name": "reader_core",
+    "type": "har",
+    "deviceTypes": ["phone", "tablet", "2in1"]
+  }
+}

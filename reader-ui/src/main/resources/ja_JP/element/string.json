@@ -1,0 +1,40 @@
+{
+  "string": [
+    {
+      "name": "rkit_lab_title",
+      "value": "共有リーダー · D1"
+    },
+    {
+      "name": "rkit_lab_scope",
+      "value": "デバッグ接続 · 履歴と設定は保存しません"
+    },
+    {
+      "name": "rkit_retry",
+      "value": "再試行"
+    },
+    {
+      "name": "rkit_previous_page",
+      "value": "前のページ"
+    },
+    {
+      "name": "rkit_next_page",
+      "value": "次のページ"
+    },
+    {
+      "name": "rkit_thumbnail",
+      "value": "サムネイル"
+    },
+    {
+      "name": "rkit_original",
+      "value": "元の画像"
+    },
+    {
+      "name": "rkit_previous_unit",
+      "value": "前の章"
+    },
+    {
+      "name": "rkit_next_unit",
+      "value": "次の章"
+    }
+  ]
+}

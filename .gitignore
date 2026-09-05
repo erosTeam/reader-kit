@@ -1,0 +1,7 @@
+.DS_Store
+.hvigor/
+**/build/
+**/oh_modules/
+**/BuildProfile.ets
+**/oh-package-lock.json5
+.idea/

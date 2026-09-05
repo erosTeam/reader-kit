@@ -1,0 +1,40 @@
+{
+  "string": [
+    {
+      "name": "rkit_lab_title",
+      "value": "共享阅读器 · D1"
+    },
+    {
+      "name": "rkit_lab_scope",
+      "value": "调试接入 · 不保存阅读进度和设置"
+    },
+    {
+      "name": "rkit_retry",
+      "value": "重试"
+    },
+    {
+      "name": "rkit_previous_page",
+      "value": "上一页"
+    },
+    {
+      "name": "rkit_next_page",
+      "value": "下一页"
+    },
+    {
+      "name": "rkit_thumbnail",
+      "value": "缩略图"
+    },
+    {
+      "name": "rkit_original",
+      "value": "原图"
+    },
+    {
+      "name": "rkit_previous_unit",
+      "value": "上一章"
+    },
+    {
+      "name": "rkit_next_unit",
+      "value": "下一章"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "module": {
+    "name": "reader_ui",
+    "type": "har",
+    "deviceTypes": ["phone", "tablet", "2in1"]
+  }
+}

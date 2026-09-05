@@ -1,0 +1,40 @@
+{
+  "string": [
+    {
+      "name": "rkit_lab_title",
+      "value": "Shared reader · D1"
+    },
+    {
+      "name": "rkit_lab_scope",
+      "value": "Debug integration · no progress or settings are saved"
+    },
+    {
+      "name": "rkit_retry",
+      "value": "Retry"
+    },
+    {
+      "name": "rkit_previous_page",
+      "value": "Previous page"
+    },
+    {
+      "name": "rkit_next_page",
+      "value": "Next page"
+    },
+    {
+      "name": "rkit_thumbnail",
+      "value": "Thumbnail"
+    },
+    {
+      "name": "rkit_original",
+      "value": "Original"
+    },
+    {
+      "name": "rkit_previous_unit",
+      "value": "Previous chapter"
+    },
+    {
+      "name": "rkit_next_unit",
+      "value": "Next chapter"
+    }
+  ]
+}

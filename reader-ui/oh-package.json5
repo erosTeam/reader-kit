@@ -1,0 +1,7 @@
+{
+  "name": "@reader-kit/ui",
+  "version": "0.1.0",
+  "description": "Opt-in shared reader diagnostic surface",
+  "main": "Index.ets",
+  "dependencies": { "@reader-kit/core": "file:../reader-core" }
+}
