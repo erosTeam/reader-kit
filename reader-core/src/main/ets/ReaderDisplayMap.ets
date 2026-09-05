@@ -1,4 +1,4 @@
-import { ReaderPage, ReaderUnit, ReaderUnitKey } from './ReaderSession'
+import { ReaderPage, ReaderUnit, ReaderUnitKey } from './ReaderContent'
 
 export type ReaderFragment = 'whole' | 'left' | 'right'
 export type ReaderDirection = 'ltr' | 'rtl'

@@ -5,15 +5,23 @@ import { ReaderSession, ReaderSnapshot, ReaderUnitKey } from '@reader-kit/core'
 export struct ReaderLabSurface {
   @Require @Param session: ReaderSession
   @Require @Param initialUnit: ReaderUnitKey
+  @Require @Param active: boolean
   @Param initialIndex: number = 0
   @Local private state: ReaderSnapshot = new ReaderSnapshot()
 
   aboutToAppear(): void {
+    this.session.setViewportActive(this.active)
     this.session.subscribe((state: ReaderSnapshot): void => { this.state = state })
     void this.session.open(this.initialUnit, this.initialIndex)
   }
 
   aboutToDisappear(): void { this.session.close() }
+
+  @Monitor('active')
+  onActiveChanged(): void {
+    this.session.setViewportActive(this.active)
+    console.info(`[ReaderLab] viewport_active=${this.active}`)
+  }
 
   build() {
     Column({ space: 12 }) {
@@ -33,11 +41,18 @@ export struct ReaderLabSurface {
           ForEach([this.state], (frame: ReaderSnapshot) => {
             ReaderLabImage({
               frame: frame,
+              active: this.active,
               onPresented: (requestId: number, success: boolean): void => {
                 this.session.reportPresentation(requestId, success)
               },
+              onVisibleOriginal: (requestId: number, pageKey: string): void => {
+                this.session.setViewportActive(this.active)
+                this.session.reportVisiblePosition(requestId, pageKey, 0.5, 0)
+                const snapshot = this.session.snapshot()
+                console.info(`[ReaderLab] original_observation active=${this.active} request=${requestId} accepted=${snapshot.presentedRequestId === requestId} sourceIndex=${snapshot.presentedAnchor?.sourceIndexHint ?? -1}`)
+              },
             })
-          }, (frame: ReaderSnapshot): string => frame.requestId.toString())
+          }, (frame: ReaderSnapshot): string => frame.assetRequestId.toString())
         }
         if (this.state.phase === 'catalog' || this.state.phase === 'asset' || this.state.phase === 'decoding') {
           LoadingProgress().width(32).height(32)
@@ -96,9 +111,33 @@ export struct ReaderLabSurface {
 @ComponentV2
 struct ReaderLabImage {
   @Require @Param frame: ReaderSnapshot
+  @Require @Param active: boolean
   @Event onPresented: (requestId: number, success: boolean) => void = () => {}
+  @Event onVisibleOriginal: (requestId: number, pageKey: string) => void = () => {}
   @Local private viewportWidth: number = 1
   @Local private viewportHeight: number = 1
+  private fullyVisible: boolean = false
+  private decoded: boolean = false
+
+  @Monitor('active')
+  onActiveChanged(): void { this.reportVisibleOriginal() }
+
+  private reportVisibleOriginal(): void {
+    if (this.active && this.fullyVisible && this.decoded && this.frame.kind === 'original' && this.frame.page !== null) {
+      this.onVisibleOriginal(this.frame.assetRequestId, this.frame.page.key)
+    }
+  }
+
+  private imageCompleted(): void {
+    this.decoded = true
+    this.onPresented(this.frame.assetRequestId, true)
+    this.reportVisibleOriginal()
+  }
+
+  private imageFailed(): void {
+    this.decoded = false
+    this.onPresented(this.frame.assetRequestId, false)
+  }
 
   private spriteScale(): number {
     const thumbnail = this.frame.page?.thumbnail
@@ -119,9 +158,9 @@ struct ReaderLabImage {
               y: -this.frame.page.thumbnail.offsetY * this.spriteScale(),
             })
             .onComplete((event): void => {
-              if (event?.loadingStatus === 1) this.onPresented(this.frame.requestId, true)
+              if (event?.loadingStatus === 1) this.imageCompleted()
             })
-            .onError((): void => { this.onPresented(this.frame.requestId, false) })
+            .onError((): void => { this.imageFailed() })
         }
         .width(this.frame.page.thumbnail.width * this.spriteScale())
         .height(this.frame.page.thumbnail.height * this.spriteScale())
@@ -131,12 +170,16 @@ struct ReaderLabImage {
           .width('100%').height('100%')
           .objectFit(ImageFit.Contain)
           .onComplete((event): void => {
-            if (event?.loadingStatus === 1) this.onPresented(this.frame.requestId, true)
+            if (event?.loadingStatus === 1) this.imageCompleted()
           })
-          .onError((): void => { this.onPresented(this.frame.requestId, false) })
+          .onError((): void => { this.imageFailed() })
       }
     }
     .width('100%').height('100%')
+    .onVisibleAreaChange([0, 1], (_expanding: boolean, ratio: number): void => {
+      this.fullyVisible = ratio >= 1
+      this.reportVisibleOriginal()
+    })
     .onAreaChange((_oldArea: Area, area: Area): void => {
       this.viewportWidth = Math.max(1, Number(area.width))
       this.viewportHeight = Math.max(1, Number(area.height))

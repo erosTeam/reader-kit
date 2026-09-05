@@ -1,19 +1,6 @@
 const assert = require('node:assert/strict')
-const fs = require('node:fs')
-const path = require('node:path')
-const Module = require('node:module')
 const test = require('node:test')
-const ts = require(process.env.READER_KIT_TYPESCRIPT || '/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/node_modules/typescript')
-
-// Execute the real platform-free core. No source-shape or UI assertions.
-const file = path.resolve(__dirname, '../reader-core/src/main/ets/ReaderSession.ets')
-const compiled = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
-}).outputText
-const coreModule = new Module(file, module)
-coreModule.filename = file
-coreModule._compile(compiled, file)
-const { ReaderSession, ReaderUnitKey, ReaderUnit, ReaderPage, ReaderAsset } = coreModule.exports
+const { ReaderSession, ReaderUnitKey, ReaderUnit, ReaderPage, ReaderAsset } = require('./load-core.cjs')('ReaderSession')
 
 const key = (unit = 'A') => new ReaderUnitKey('test', 'work', unit)
 const deferred = () => {
@@ -174,5 +161,134 @@ test('identity mismatch is terminal and never loads an asset', async () => {
   await session.open(key())
   assert.equal(session.snapshot().phase, 'failed')
   assert.equal(calls, 0)
+  session.close()
+})
+
+test('request/decode success alone does not publish a visible original position', async () => {
+  const session = new ReaderSession(new Catalog(), new Assets())
+  session.setViewportActive(true)
+  await session.open(key())
+  const request = session.snapshot().requestId
+  session.reportVisiblePosition(request, 'A:0', 0.5, 0)
+  assert.equal(session.snapshot().presentedAnchor, null)
+  session.reportPresentation(request, true)
+  assert.equal(session.snapshot().presentedAnchor, null)
+  session.reportVisiblePosition(request, 'A:0', 0.5, 0)
+  assert.equal(session.snapshot().presentedAnchor.pageKey, 'A:0')
+  assert.equal(session.snapshot().presentedRequestId, request)
+  session.close()
+})
+
+test('navigation, failure and thumbnails retain the last observed original', async () => {
+  const session = new ReaderSession(new Catalog(), new Assets())
+  session.setViewportActive(true)
+  await session.open(key())
+  const first = session.snapshot().requestId
+  session.reportPresentation(first, true)
+  session.reportVisiblePosition(first, 'A:0', 0.5, 0.3)
+  await session.show(2)
+  let current = session.snapshot().requestId
+  session.reportPresentation(current, false)
+  session.reportVisiblePosition(current, 'A:2', 0.5, 1)
+  assert.equal(session.snapshot().presentedAnchor.pageKey, 'A:0')
+  await session.show(2, 'thumbnail')
+  current = session.snapshot().requestId
+  session.reportPresentation(current, true)
+  session.reportVisiblePosition(current, 'A:2', 0.5, 1)
+  assert.equal(session.snapshot().presentedAnchor.pageKey, 'A:0')
+  assert.equal(session.snapshot().presentedAnchor.y, 0.3)
+  await session.show(2)
+  current = session.snapshot().requestId
+  session.reportPresentation(current, true)
+  session.reportVisiblePosition(first, 'A:0', 0.5, 0)
+  assert.equal(session.snapshot().presentedRequestId, first)
+  session.reportVisiblePosition(current, 'A:2', 0.5, 0)
+  assert.equal(session.snapshot().presentedAnchor.pageKey, 'A:2')
+  session.close()
+})
+
+test('only a current matching page and finite original coordinates can be observed', async () => {
+  const session = new ReaderSession(new Catalog(), new Assets())
+  session.setViewportActive(true)
+  await session.open(key())
+  const request = session.snapshot().requestId
+  session.reportPresentation(request, true)
+  session.reportVisiblePosition(request, 'wrong', 0.5, 0)
+  for (const value of [NaN, Infinity, -0.1, 1.1]) {
+    session.reportVisiblePosition(request, 'A:0', value, 0)
+    session.reportVisiblePosition(request, 'A:0', 0.5, value)
+  }
+  assert.equal(session.snapshot().presentedAnchor, null)
+  session.reportVisiblePosition(request, 'A:0', 0.4, 0.6)
+  const snapshot = session.snapshot()
+  snapshot.presentedAnchor.unit.unit = 'mutated'
+  snapshot.presentedAnchor.y = 1
+  assert.equal(session.snapshot().presentedAnchor.unit.unit, 'A')
+  assert.equal(session.snapshot().presentedAnchor.y, 0.6)
+  session.close()
+  session.reportVisiblePosition(request, 'A:0', 0.5, 1)
+  assert.equal(session.snapshot().presentedAnchor.y, 0.6)
+})
+
+test('chapter transition exposes the previous observed unit until the new original is seen', async () => {
+  const session = new ReaderSession(new Catalog(), new Assets())
+  session.setViewportActive(true)
+  await session.open(key())
+  let request = session.snapshot().requestId
+  session.reportPresentation(request, true)
+  session.reportVisiblePosition(request, 'A:0', 0.5, 0)
+  await session.switchUnit('next')
+  assert.equal(session.snapshot().unit.key.unit, 'B')
+  assert.equal(session.snapshot().presentedAnchor.unit.unit, 'A')
+  request = session.snapshot().requestId
+  session.reportPresentation(request, true)
+  session.reportVisiblePosition(request, 'B:0', 0.5, 0)
+  assert.equal(session.snapshot().presentedAnchor.unit.unit, 'B')
+  session.close()
+})
+
+test('retained old image cannot inherit a preparing chapter request identity', async () => {
+  const session = new ReaderSession(new Catalog(), new Assets())
+  const frames = []
+  session.subscribe(frame => frames.push(frame))
+  await session.open(key())
+  const old = session.snapshot()
+  session.reportPresentation(old.assetRequestId, true)
+  await session.switchUnit('next')
+  const retained = frames.find(frame => frame.phase === 'catalog' && frame.uri === 'A:0')
+  assert.notEqual(retained.requestId, old.requestId)
+  assert.equal(retained.assetRequestId, old.assetRequestId)
+  assert.equal(retained.page.key, 'A:0')
+  assert.equal(session.snapshot().phase, 'decoding')
+  session.reportPresentation(retained.assetRequestId, true)
+  assert.equal(session.snapshot().phase, 'decoding')
+  const current = session.snapshot()
+  assert.equal(current.assetRequestId, current.requestId)
+  assert.equal(current.page.key, 'B:0')
+  session.reportPresentation(current.assetRequestId, true)
+  assert.equal(session.snapshot().phase, 'displayed')
+  session.close()
+})
+
+test('inactive viewport cannot observe and repeated identical observations do not emit again', async () => {
+  const session = new ReaderSession(new Catalog(), new Assets())
+  await session.open(key())
+  const request = session.snapshot().assetRequestId
+  session.reportPresentation(request, true)
+  session.reportVisiblePosition(request, 'A:0', 0.5, 0)
+  assert.equal(session.snapshot().presentedAnchor, null)
+  session.setViewportActive(true)
+  let changes = 0
+  session.subscribe(() => changes++)
+  session.reportVisiblePosition(request, 'A:0', 0.5, 0)
+  assert.equal(changes, 2)
+  session.reportVisiblePosition(request, 'A:0', 0.5, 0)
+  assert.equal(changes, 2)
+  session.setViewportActive(false)
+  session.reportVisiblePosition(request, 'A:0', 0.5, 0.8)
+  assert.equal(session.snapshot().presentedAnchor.y, 0)
+  session.setViewportActive(true)
+  session.reportVisiblePosition(request, 'A:0', 0.5, 0.8)
+  assert.equal(session.snapshot().presentedAnchor.y, 0.8)
   session.close()
 })

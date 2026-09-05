@@ -60,8 +60,37 @@ not fall back to thumbnail dimensions.
   returned anchor forward (including its resolved half).
 
 The current API requires a known finite page count; open-ended catalogs, content
-revision handling, visible-position reporting and host persistence are subsequent
-integration work, not claimed by this map. Page-key stability belongs to the host.
+revision handling and host persistence remain subsequent integration work.
+Page-key stability belongs to the host.
+
+## Observed position and resource identity (D2)
+
+`ReaderSnapshot.requestId` identifies the newest command; `assetRequestId`
+identifies the retained image. They deliberately differ while the next unit is
+only being prepared. Native image keys and callbacks use the asset identity so
+an old image cannot confirm a newer request.
+
+Decode completion changes the diagnostic `phase` to `displayed`, but does **not**
+publish a reading position. The separate `presentedAnchor` / `presentedRequestId`
+pair records only a matching, decoded original reported by an active viewport.
+Navigation, thumbnails and failures retain the last observed original, including
+its old unit identity during a chapter transition. Observations are copied,
+validated and deduplicated; no settings/progress/tracker writes occur.
+
+For this single-image contain lab, all hosts supply destination visibility AND
+ability foreground state. The image additionally requires decode completion and
+full ancestor-clipped visibility before reporting its top-center anchor. This is
+not a general zoom/scroll visibility algorithm or a sibling/system-occlusion
+detector. Future viewports must supply their actual observed point; reaching a
+final image is not chapter completion.
+
+The 2026-09-06 final candidates were built and inspected on NextN/NextE device-237
+and Koma device-197: original observation, page changes, background/resume and
+return to the production host. NH independent thumbnails and EH sprite regions
+remain separate assets. Koma's existing downloaded-page path passed; its new
+zero-page catalog/manifest fallback has host behavior coverage only because the
+current device data has no qualifying existing chapter. No full-reader parity,
+spread/split rendering or adjacent-local-chapter success is claimed.
 
 Run core behavioral tests with `node --test tests/*.test.cjs`.
 They execute the actual platform-free ArkTS core through the DevEco TypeScript

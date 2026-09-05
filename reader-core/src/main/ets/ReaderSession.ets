@@ -1,82 +1,6 @@
-/** Source identifiers are opaque to the reader. Never put credentials in scope. */
-export class ReaderUnitKey {
-  scope: string
-  work: string
-  unit: string
-
-  constructor(scope: string, work: string, unit: string) {
-    this.scope = scope
-    this.work = work
-    this.unit = unit
-  }
-
-  equals(other: ReaderUnitKey): boolean {
-    return this.scope === other.scope && this.work === other.work && this.unit === other.unit
-  }
-
-  copy(): ReaderUnitKey { return new ReaderUnitKey(this.scope, this.work, this.unit) }
-}
-
-export class ReaderUnit {
-  key: ReaderUnitKey
-  title: string
-  pageCount: number
-
-  constructor(key: ReaderUnitKey, title: string, pageCount: number) {
-    this.key = key
-    this.title = title
-    this.pageCount = pageCount
-  }
-
-  copy(): ReaderUnit { return new ReaderUnit(this.key.copy(), this.title, this.pageCount) }
-}
-
-export class ReaderThumbnail {
-  available: boolean = true
-  kind: 'image' | 'sprite' | 'derived' = 'image'
-  width: number = 0
-  height: number = 0
-  spriteWidth: number = 0
-  spriteHeight: number = 0
-  offsetX: number = 0
-  offsetY: number = 0
-
-  copy(): ReaderThumbnail {
-    const value = new ReaderThumbnail()
-    value.available = this.available
-    value.kind = this.kind
-    value.width = this.width
-    value.height = this.height
-    value.spriteWidth = this.spriteWidth
-    value.spriteHeight = this.spriteHeight
-    value.offsetX = this.offsetX
-    value.offsetY = this.offsetY
-    return value
-  }
-}
-
-export class ReaderPage {
-  unit: ReaderUnitKey
-  key: string
-  sourceIndex: number
-  width: number = 0
-  height: number = 0
-  thumbnail: ReaderThumbnail = new ReaderThumbnail()
-
-  constructor(unit: ReaderUnitKey, key: string, sourceIndex: number) {
-    this.unit = unit
-    this.key = key
-    this.sourceIndex = sourceIndex
-  }
-
-  copy(): ReaderPage {
-    const value = new ReaderPage(this.unit.copy(), this.key, this.sourceIndex)
-    value.width = this.width
-    value.height = this.height
-    value.thumbnail = this.thumbnail.copy()
-    return value
-  }
-}
+import { ReaderUnitKey, ReaderUnit, ReaderPage } from './ReaderContent'
+import { ReaderReadingAnchor } from './ReaderDisplayMap'
+export { ReaderUnitKey, ReaderUnit, ReaderPage, ReaderThumbnail } from './ReaderContent'
 
 export type ReaderAssetKind = 'original' | 'thumbnail'
 export type ReaderPhase = 'idle' | 'catalog' | 'asset' | 'decoding' | 'displayed' | 'failed' | 'closed'
@@ -130,9 +54,14 @@ export class ReaderSnapshot {
   kind: ReaderAssetKind = 'original'
   uri: string = ''
   requestId: number = 0
+  /** Identity of uri/page, retained while a different unit is only being prepared. */
+  assetRequestId: number = 0
   error: string = ''
   canPreviousUnit: boolean = false
   canNextUnit: boolean = false
+  /** Last UI-observed ORIGINAL, possibly from the previous unit while preparing a new one. */
+  presentedAnchor: ReaderReadingAnchor | null = null
+  presentedRequestId: number = 0
 
   copy(): ReaderSnapshot {
     const value = new ReaderSnapshot()
@@ -143,9 +72,12 @@ export class ReaderSnapshot {
     value.kind = this.kind
     value.uri = this.uri
     value.requestId = this.requestId
+    value.assetRequestId = this.assetRequestId
     value.error = this.error
     value.canPreviousUnit = this.canPreviousUnit
     value.canNextUnit = this.canNextUnit
+    value.presentedAnchor = this.presentedAnchor === null ? null : this.presentedAnchor.copy()
+    value.presentedRequestId = this.presentedRequestId
     return value
   }
 }
@@ -165,6 +97,7 @@ export class ReaderSession {
   private disposed: boolean = false
   private pendingUnit: ReaderUnitKey | null = null
   private pendingIndex: number = 0
+  private viewportActive: boolean = false
 
   constructor(catalog: ReaderCatalog, assets: ReaderAssetProvider) {
     this.catalog = catalog
@@ -178,6 +111,7 @@ export class ReaderSession {
 
   snapshot(): ReaderSnapshot { return this.state.copy() }
   cancellationMode(): string { return this.assets.cancellationMode }
+  setViewportActive(active: boolean): void { this.viewportActive = !this.disposed && active }
 
   private emit(): void {
     if (this.listener !== null) this.listener(this.state.copy())
@@ -257,6 +191,7 @@ export class ReaderSession {
     this.state.kind = kind
     this.state.page = null
     this.state.uri = ''
+    this.state.assetRequestId = 0
     this.releaseAsset()
     this.emit()
     try {
@@ -278,6 +213,7 @@ export class ReaderSession {
       }
       this.asset = asset
       this.state.uri = asset.uri
+      this.state.assetRequestId = epoch
       this.state.phase = 'decoding'
       this.emit()
     } catch (_error) {
@@ -286,9 +222,27 @@ export class ReaderSession {
   }
 
   reportPresentation(requestId: number, success: boolean): void {
-    if (!this.current(requestId) || this.state.phase !== 'decoding') return
+    if (!this.current(requestId) || requestId !== this.state.assetRequestId || this.state.phase !== 'decoding') return
     this.state.phase = success ? 'displayed' : 'failed'
     this.state.error = success ? '' : 'reader_decode_failed'
+    this.emit()
+  }
+
+  /**
+   * Single-original viewport observation, separate from asset/decode completion.
+   * D1's contain surface reports its fully visible original at top-center.
+   * This is an in-memory observation only, not persistence or unit completion.
+   */
+  reportVisiblePosition(requestId: number, pageKey: string, x: number, y: number): void {
+    const page = this.state.page
+    if (!this.viewportActive || !this.current(requestId) || requestId !== this.state.assetRequestId ||
+      this.state.phase !== 'displayed' || this.state.kind !== 'original' ||
+      page === null || page.key !== pageKey || !Number.isFinite(x) || !Number.isFinite(y) ||
+      x < 0 || x > 1 || y < 0 || y > 1) return
+    const previous = this.state.presentedAnchor
+    if (this.state.presentedRequestId === requestId && previous !== null && previous.x === x && previous.y === y) return
+    this.state.presentedAnchor = new ReaderReadingAnchor(page.unit, page.key, page.sourceIndex, x, y)
+    this.state.presentedRequestId = requestId
     this.emit()
   }
 
@@ -307,11 +261,13 @@ export class ReaderSession {
   close(): void {
     if (this.disposed) return
     this.disposed = true
+    this.viewportActive = false
     this.cancellation.cancel()
     this.epoch += 1
     this.releaseAsset()
     this.state.phase = 'closed'
     this.state.uri = ''
+    this.state.assetRequestId = 0
     this.emit()
     this.listener = null
   }
