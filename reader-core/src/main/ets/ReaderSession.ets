@@ -163,6 +163,16 @@ export class ReaderSession {
     await this.load(unit, this.boundedIndex(index, unit), kind, epoch, this.cancellation, forceReload)
   }
 
+  /** Asset slot entry for an already prepared catalog; does not reopen the host unit. */
+  async openPrepared(unit: ReaderUnit, index: number, kind: ReaderAssetKind): Promise<void> {
+    if (this.disposed) return
+    if (!Number.isSafeInteger(unit.pageCount) || unit.pageCount < 1) throw new Error('reader_catalog_unavailable')
+    const epoch = this.begin()
+    this.pendingUnit = null
+    this.state.unit = unit.copy()
+    await this.load(this.state.unit, this.boundedIndex(index, unit), kind, epoch, this.cancellation)
+  }
+
   async switchUnit(direction: 'next' | 'previous'): Promise<void> {
     if (this.disposed || this.state.unit === null) return
     const target = this.catalog.adjacent(this.state.unit, direction)
@@ -225,6 +235,15 @@ export class ReaderSession {
     if (!this.current(requestId) || requestId !== this.state.assetRequestId || this.state.phase !== 'decoding') return
     this.state.phase = success ? 'displayed' : 'failed'
     this.state.error = success ? '' : 'reader_decode_failed'
+    this.emit()
+  }
+
+  /** A current viewport node can fail while reusing an already decoded asset. */
+  reportRenderFailure(requestId: number): void {
+    if (!this.current(requestId) || requestId !== this.state.assetRequestId ||
+      (this.state.phase !== 'displayed' && this.state.phase !== 'decoding')) return
+    this.state.phase = 'failed'
+    this.state.error = 'reader_decode_failed'
     this.emit()
   }
 

@@ -2,7 +2,7 @@
   "string": [
     {
       "name": "rkit_lab_title",
-      "value": "Shared reader · D1"
+      "value": "Shared reader · D3"
     },
     {
       "name": "rkit_lab_scope",
@@ -35,6 +35,38 @@
     {
       "name": "rkit_next_unit",
       "value": "Next chapter"
+    },
+    {
+      "name": "rkit_single",
+      "value": "Single"
+    },
+    {
+      "name": "rkit_spread",
+      "value": "Spread"
+    },
+    {
+      "name": "rkit_ltr",
+      "value": "LTR"
+    },
+    {
+      "name": "rkit_rtl",
+      "value": "RTL"
+    },
+    {
+      "name": "rkit_split_on",
+      "value": "Split: on"
+    },
+    {
+      "name": "rkit_split_off",
+      "value": "Split: off"
+    },
+    {
+      "name": "rkit_cover_on",
+      "value": "Cover: solo"
+    },
+    {
+      "name": "rkit_cover_off",
+      "value": "Cover: pair"
     }
   ]
 }

@@ -8,3 +8,4 @@ export {
   ReaderReadingAnchor, ReaderDisplayPart, ReaderDisplayItem,
   ReaderAnchorMatch, ReaderAnchorResolution, ReaderDisplayMap,
 } from './src/main/ets/ReaderDisplayMap'
+export { ReaderPagedSession, ReaderPagedSnapshot, ReaderPagedFrame } from './src/main/ets/ReaderPagedSession'

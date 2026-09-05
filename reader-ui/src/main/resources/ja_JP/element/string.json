@@ -2,7 +2,7 @@
   "string": [
     {
       "name": "rkit_lab_title",
-      "value": "共有リーダー · D1"
+      "value": "共有リーダー · D3"
     },
     {
       "name": "rkit_lab_scope",
@@ -35,6 +35,38 @@
     {
       "name": "rkit_next_unit",
       "value": "次の章"
+    },
+    {
+      "name": "rkit_single",
+      "value": "単ページ"
+    },
+    {
+      "name": "rkit_spread",
+      "value": "見開き"
+    },
+    {
+      "name": "rkit_ltr",
+      "value": "左→右"
+    },
+    {
+      "name": "rkit_rtl",
+      "value": "右→左"
+    },
+    {
+      "name": "rkit_split_on",
+      "value": "分割：オン"
+    },
+    {
+      "name": "rkit_split_off",
+      "value": "分割：オフ"
+    },
+    {
+      "name": "rkit_cover_on",
+      "value": "表紙：単"
+    },
+    {
+      "name": "rkit_cover_off",
+      "value": "表紙：双"
     }
   ]
 }

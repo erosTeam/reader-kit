@@ -2,7 +2,7 @@
 
 Shared HarmonyOS reader integration for NextE, NextN and Koma.
 
-This D1 integration is opt-in and does not replace any application's reader.
+This experimental integration is opt-in and does not replace any application's reader.
 `reader-core` owns neutral catalog/session contracts; `reader-ui` contains the
 shared diagnostic surface. Host adapters resolve their own sources and files.
 The diagnostic session does not save reading progress or preferences.
@@ -26,17 +26,18 @@ unit argument at the host boundary; it is not a core identity field. N needs
 only its gallery id. Koma needs a real library comic id and optionally chapter
 id. Ordinary launch/deep links and Reader destinations are unchanged.
 
-The surface currently supports explicit previous/next page, original/thumbnail,
-retry, and host-provided adjacent units. It has no zoom/pan, continuous mode,
-spread layout, settings, progress persistence, or production toolbar yet.
+The surface supports explicit previous/next display item, single/physical-half/
+joined-spread rendering, LTR/RTL, original/thumbnail, retry, and host-provided
+adjacent units. It has no swipe pager, zoom/pan, continuous viewport, settings,
+progress persistence, or production toolbar yet.
 Koma D1 accepts existing local/downloaded pages only, and does not yet derive
 thumbnails. All adapters honestly declare consumer-only cancellation: stale
 results are detached/released, but existing transfers are not physically aborted.
 
 ## Display mapping and anchors (D2)
 
-`ReaderDisplayMap` is an additive, platform-free API; the diagnostic UI does not
-yet render its spread/split/continuous items. It builds one reading unit at a
+`ReaderDisplayMap` is an additive, platform-free API. D3 renders its selected
+single/split/spread item; continuous rendering is not implemented. It builds one reading unit at a
 time from its known page count and a possibly sparse set of `ReaderPage` metadata.
 It never downloads images or reads preferences. Unknown original dimensions do
 not fall back to thumbnail dimensions.
@@ -77,20 +78,52 @@ Navigation, thumbnails and failures retain the last observed original, including
 its old unit identity during a chapter transition. Observations are copied,
 validated and deduplicated; no settings/progress/tracker writes occur.
 
-For this single-image contain lab, all hosts supply destination visibility AND
+For the original D2 single-image contain lab, all hosts supply destination visibility AND
 ability foreground state. The image additionally requires decode completion and
 full ancestor-clipped visibility before reporting its top-center anchor. This is
 not a general zoom/scroll visibility algorithm or a sibling/system-occlusion
 detector. Future viewports must supply their actual observed point; reaching a
 final image is not chapter completion.
 
-The 2026-09-06 final candidates were built and inspected on NextN/NextE device-237
+The 2026-09-06 D2 candidates were built and inspected on NextN/NextE device-237
 and Koma device-197: original observation, page changes, background/resume and
 return to the production host. NH independent thumbnails and EH sprite regions
 remain separate assets. Koma's existing downloaded-page path passed; its new
 zero-page catalog/manifest fallback has host behavior coverage only because the
 current device data has no qualifying existing chapter. No full-reader parity,
 spread/split rendering or adjacent-local-chapter success is claimed.
+
+## Selected-item viewport (D3)
+
+`ReaderPagedSession` owns the map, selected original/physical fragment, and at
+most two `ReaderSession` resource slots. It opens each host unit once, reads only
+selected page metadata, and reuses the same original asset between physical
+halves and compatible policy changes. Failed siblings retry independently.
+Changing a layout is not a second host-side progress calculation.
+
+`ReaderPagedViewport` renders only that selection. Its neutral events carry
+selection, slot, asset and fragment identity; the diagnostic controls live in
+`ReaderLabSurface`, outside the viewport. Native original dimensions refine the
+map while preserving the anchor. Independent NH previews and EH sprite crops
+keep their own thumbnail geometry, even when an original half is selected.
+Stable native keys retain resource identity, while cells read the current
+reactive snapshot for decode state and dimensions.
+
+`observedAnchor` is separate from the commanded `anchor`. Only an active,
+decoded and fully visible selected original may publish it. A spread sibling
+finishing first cannot steal the selected page. Retired selection/asset/fragment
+callbacks cannot fail or observe a replacement. No core/UI code persists this
+fact or turns a final page into chapter completion.
+
+Device237 is the primary fallback for all hosts;197 is supplementary, not a
+required acceptance device. D3 N/E237 evidence covers original/thumbnail,
+single/spread/RTL/half restoration and foreground return. Koma237 currently has
+an empty real shelf: only default-entry, missing-catalog/Retry and Back boundaries
+are covered there. Do not call empty-library testing actual reading acceptance.
+The first empty display counter `1 / 0` was rejected and corrected to `0 / 0`.
+Full-reader parity, gesture/continuous rendering, transition chrome and migration
+remain open. Exact candidate/device limits are recorded in NextN's
+`docs/plans/active/shared-reader-architecture.md` and project-owned manifests.
 
 Run core behavioral tests with `node --test tests/*.test.cjs`.
 They execute the actual platform-free ArkTS core through the DevEco TypeScript
