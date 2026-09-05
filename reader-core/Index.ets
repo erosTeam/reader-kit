@@ -9,3 +9,4 @@ export {
   ReaderAnchorMatch, ReaderAnchorResolution, ReaderDisplayMap,
 } from './src/main/ets/ReaderDisplayMap'
 export { ReaderPagedSession, ReaderPagedSnapshot, ReaderPagedFrame } from './src/main/ets/ReaderPagedSession'
+export { ReaderViewportGeometry, ReaderViewportTransform } from './src/main/ets/ReaderViewportTransform'

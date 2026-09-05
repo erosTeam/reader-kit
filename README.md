@@ -28,8 +28,8 @@ id. Ordinary launch/deep links and Reader destinations are unchanged.
 
 The surface supports explicit previous/next display item, single/physical-half/
 joined-spread rendering, LTR/RTL, original/thumbnail, retry, and host-provided
-adjacent units. It has no swipe pager, zoom/pan, continuous viewport, settings,
-progress persistence, or production toolbar yet.
+adjacent units, plus double-tap/pinch zoom and zoomed pan. It has no swipe pager,
+continuous viewport, settings, progress persistence, or production toolbar yet.
 Koma D1 accepts existing local/downloaded pages only, and does not yet derive
 thumbnails. All adapters honestly declare consumer-only cancellation: stale
 results are detached/released, but existing transfers are not physically aborted.
@@ -121,9 +121,36 @@ single/spread/RTL/half restoration and foreground return. Koma237 currently has
 an empty real shelf: only default-entry, missing-catalog/Retry and Back boundaries
 are covered there. Do not call empty-library testing actual reading acceptance.
 The first empty display counter `1 / 0` was rejected and corrected to `0 / 0`.
-Full-reader parity, gesture/continuous rendering, transition chrome and migration
+Full-reader parity, swipe/continuous rendering, transition chrome and migration
 remain open. Exact candidate/device limits are recorded in NextN's
 `docs/plans/active/shared-reader-architecture.md` and project-owned manifests.
+
+## Selected-item zoom and pan (D3)
+
+`ReaderViewportTransform` is pure fitted-content/focal-point math. The ArkUI
+viewport owns transient gesture/animation state; neither layer owns application
+navigation, chapters, persisted progress or preferences. All spread parts share
+one transform on the joined content Row, with pan bounds derived from the fitted
+content rather than a viewport-sized placeholder around each part.
+
+Double tap follows 2x/native/reset (skipping an identical native stop); pinch uses
+a dynamic 4–12x maximum and elastic 0.8 minimum settling back to 1x. Pan is active
+only after zoom. A new page, physical half, asset kind or display policy resets
+the transform; same-resource phase updates and background/resume retain it.
+Gesture availability requires the active selected item's assets to be displayed.
+The previous whole-original observation is suppressed during zoom/animation:
+zoomed normalized-anchor reporting remains unimplemented, not fabricated from
+decode completion or transformed bounds.
+
+Current NextN 237 evidence includes native double tap, long-strip top/bottom pan,
+explicit two-pointer pinch out/in, asset/page reset and background/resume.
+NextE 237 adds a joined 2x frame, both horizontal bounds, layout/half reset and
+off-center focal zoom; its current foreground and full screenshots were checked.
+These terminal checks do not accept gesture arbitration with a future pager,
+pinch-to-remaining-finger chaining, rotation, animation frames or all three hosts.
+The same UI implementation is consumed by all hosts; build consumption is not
+host-specific physical gesture acceptance. Exact NextE and Koma limits remain
+in the project acceptance record.
 
 Run core behavioral tests with `node --test tests/*.test.cjs`.
 They execute the actual platform-free ArkTS core through the DevEco TypeScript

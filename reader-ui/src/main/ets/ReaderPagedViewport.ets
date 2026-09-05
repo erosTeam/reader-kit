@@ -1,4 +1,5 @@
 import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPart, ReaderSnapshot, ReaderUnitKey, ReaderFragment } from '@reader-kit/core'
+import { ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/core'
 
 function partRatio(frame: ReaderPagedFrame): number {
   const page = frame.asset.page
@@ -18,6 +19,140 @@ export struct ReaderPagedViewport {
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Local private viewportWidth: number = 1
   @Local private viewportHeight: number = 1
+  @Local private zoomState: ReaderViewportTransform = new ReaderViewportTransform()
+  @Local private zoomAnimating: boolean = false
+  private transformIdentity: string = ''
+  private gestureIdentity: string = ''
+  private pinchStart: ReaderViewportTransform = new ReaderViewportTransform()
+  private panStart: ReaderViewportTransform = new ReaderViewportTransform()
+  private pinchX: number = 0
+  private pinchY: number = 0
+  private pinching: boolean = false
+  private panning: boolean = false
+  private ignorePan: boolean = false
+  private pinchAdjusted: boolean = false
+  private animationTimer: number = 0
+
+  private identity(): string {
+    return `${this.snapshot.kind}:${this.snapshot.policy.layout}:${this.snapshot.policy.direction}:` +
+      this.snapshot.frames.map((frame: ReaderPagedFrame) =>
+        `${frame.slotId}:${frame.asset.assetRequestId}:${frame.part.fragment}`).join('|')
+  }
+
+  @Monitor('snapshot', 'active')
+  onContentChanged(): void {
+    const identity = this.identity()
+    if (identity !== this.transformIdentity) {
+      this.cancelGesture()
+      this.transformIdentity = identity
+      this.zoomState = new ReaderViewportTransform()
+      this.pinchAdjusted = false
+    } else if (!this.gesturesEnabled()) {
+      this.cancelGesture()
+      this.zoomState = this.zoomState.settled(this.geometry())
+    } else {
+      this.zoomState = this.zoomState.constrained(this.geometry())
+    }
+  }
+
+  aboutToDisappear(): void { this.cancelGesture() }
+
+  private gesturesEnabled(): boolean {
+    return this.active && this.snapshot.phase === 'ready' && this.snapshot.frames.length > 0 &&
+      this.snapshot.frames.every((frame: ReaderPagedFrame) => frame.asset.phase === 'displayed')
+  }
+
+  private stopAnimation(): void {
+    if (this.animationTimer !== 0) clearTimeout(this.animationTimer)
+    this.animationTimer = 0
+    this.zoomAnimating = false
+  }
+
+  private cancelGesture(): void {
+    this.stopAnimation()
+    this.gestureIdentity = ''
+    this.pinching = false
+    this.panning = false
+    this.ignorePan = true
+  }
+
+  private geometry(): ReaderViewportGeometry {
+    const height = this.frameHeight()
+    const scales = this.snapshot.frames.map((frame: ReaderPagedFrame): number => {
+      const intrinsicHeight = frame.asset.kind === 'original' ? frame.asset.page?.height ?? 0 :
+        frame.asset.page?.thumbnail.height ?? 0
+      return intrinsicHeight > 0 ? intrinsicHeight / height : 2
+    })
+    return new ReaderViewportGeometry(this.viewportWidth, this.viewportHeight,
+      height * this.totalRatio(), height, Math.max(1, ...scales))
+  }
+
+  private logTransform(action: string): void {
+    console.info(`[ReaderViewport] action=${action} selection=${this.snapshot.selectionId} scale=${this.zoomState.scale.toFixed(3)} x=${this.zoomState.x.toFixed(2)} y=${this.zoomState.y.toFixed(2)}`)
+  }
+
+  private doubleTap(event?: GestureEvent): void {
+    if (!this.gesturesEnabled() || this.pinching || event === undefined) return
+    this.cancelGesture()
+    const geometry = this.geometry()
+    const target = this.zoomState.doubleTapScale(geometry, this.pinchAdjusted)
+    this.pinchAdjusted = false
+    this.zoomAnimating = true
+    this.zoomState = target === 1 ? new ReaderViewportTransform() :
+      this.zoomState.zoom(geometry, target,
+        event.tapLocation?.x ?? geometry.width / 2, event.tapLocation?.y ?? geometry.height / 2)
+    this.animationTimer = setTimeout((): void => {
+      this.animationTimer = 0
+      this.zoomAnimating = false
+      this.logTransform('double-tap')
+    }, 180)
+  }
+
+  private beginPinch(event?: GestureEvent): void {
+    if (!this.gesturesEnabled() || event === undefined) return
+    this.stopAnimation()
+    this.gestureIdentity = this.identity()
+    this.pinching = true
+    this.panning = false
+    this.ignorePan = true
+    this.pinchStart = this.zoomState
+    this.pinchX = event.pinchCenterX
+    this.pinchY = event.pinchCenterY
+  }
+
+  private updatePinch(event?: GestureEvent): void {
+    if (!this.pinching || !this.gesturesEnabled() || event === undefined || this.gestureIdentity !== this.identity()) return
+    this.pinchAdjusted = true
+    this.zoomState = this.pinchStart.zoom(this.geometry(), this.pinchStart.scale * event.scale,
+      this.pinchX, this.pinchY, event.pinchCenterX, event.pinchCenterY, true)
+  }
+
+  private endPinch(): void {
+    if (!this.pinching) return
+    this.pinching = false
+    this.zoomState = this.zoomState.settled(this.geometry())
+    this.logTransform('pinch')
+  }
+
+  private beginPan(): void {
+    this.ignorePan = this.pinching || !this.gesturesEnabled() || !this.zoomState.zoomed()
+    this.panning = !this.ignorePan
+    if (!this.panning) return
+    this.stopAnimation()
+    this.gestureIdentity = this.identity()
+    this.panStart = this.zoomState
+  }
+
+  private updatePan(event?: GestureEvent): void {
+    if (!this.panning || this.ignorePan || this.pinching || !this.gesturesEnabled() ||
+      event === undefined || this.gestureIdentity !== this.identity()) return
+    this.zoomState = this.panStart.pan(this.geometry(), event.offsetX, event.offsetY)
+  }
+
+  private endPan(): void {
+    if (this.panning && !this.ignorePan) this.logTransform('pan')
+    this.panning = false
+  }
 
   private totalRatio(): number {
     return Math.max(0.01, this.snapshot.frames.reduce((sum: number, frame: ReaderPagedFrame) => sum + partRatio(frame), 0))
@@ -35,7 +170,7 @@ export struct ReaderPagedViewport {
             snapshot: this.snapshot, slotId: frame.slotId,
             assetRequestId: frame.asset.assetRequestId,
             renderedFragment: frame.part.fragment,
-            frameHeight: this.frameHeight(), active: this.active,
+            frameHeight: this.frameHeight(), active: this.active && !this.zoomAnimating && this.zoomState.scale === 1,
             onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
           })
         }, (frame: ReaderPagedFrame): string => `${frame.slotId}:${frame.asset.assetRequestId}:${frame.part.fragment}`)
@@ -43,6 +178,9 @@ export struct ReaderPagedViewport {
       .direction(Direction.Ltr)
       .width(this.frameHeight() * this.totalRatio())
       .height(this.frameHeight())
+      .scale({ x: this.zoomState.scale, y: this.zoomState.scale })
+      .translate({ x: this.zoomState.x, y: this.zoomState.y })
+      .animation({ duration: this.zoomAnimating ? 180 : 0, curve: Curve.FastOutSlowIn })
       if (this.snapshot.phase === 'catalog') {
         LoadingProgress().width(32).height(32)
       }
@@ -52,9 +190,25 @@ export struct ReaderPagedViewport {
     .clip(true)
     .id('rkit-image-viewport')
     .onAreaChange((_old: Area, area: Area): void => {
+      this.cancelGesture()
       this.viewportWidth = Math.max(1, Number(area.width))
       this.viewportHeight = Math.max(1, Number(area.height))
+      this.zoomState = this.zoomState.settled(this.geometry())
     })
+    .gesture(GestureGroup(GestureMode.Parallel,
+      TapGesture({ count: 2, distanceThreshold: 8 })
+        .onAction((event?: GestureEvent): void => { this.doubleTap(event) }),
+      PinchGesture({ fingers: 2 })
+        .onActionStart((event?: GestureEvent): void => { this.beginPinch(event) })
+        .onActionUpdate((event?: GestureEvent): void => { this.updatePinch(event) })
+        .onActionEnd((): void => { this.endPinch() })
+        .onActionCancel((): void => { this.endPinch() }),
+      PanGesture({ fingers: 1, direction: PanDirection.All, distance: this.zoomState.zoomed() ? 1 : 10000 })
+        .onActionStart((): void => { this.beginPan() })
+        .onActionUpdate((event?: GestureEvent): void => { this.updatePan(event) })
+        .onActionEnd((): void => { this.endPan() })
+        .onActionCancel((): void => { this.endPan() }),
+    ))
   }
 }
 
