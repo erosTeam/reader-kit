@@ -64,3 +64,21 @@ test('resizing constrains old offsets to the newly measured viewport', () => {
   near(resized.x, 200); near(resized.y, 200)
   near(resized.scale, 2)
 })
+
+test('continuous long-row focal zoom uses row coordinates without moving its layout rectangle', () => {
+  const g = new Geometry(416, 5342, 416, 5342, 720 / 416)
+  const localPoint = { x: 150, y: 1100 }
+  const zoomed = new Transform().zoom(g, 2, localPoint.x, localPoint.y)
+  near((localPoint.x - g.width / 2 - zoomed.x) / zoomed.scale, localPoint.x - g.width / 2)
+  near((localPoint.y - g.height / 2 - zoomed.y) / zoomed.scale, localPoint.y - g.height / 2)
+  near(g.height, 5342)
+  assert.deepEqual(zoomed.zoom(g, 1, localPoint.x, localPoint.y), new Transform())
+})
+
+test('continuous short-row zoom retains real image inset and bounds the image, not its neighboring rows', () => {
+  const g = new Geometry(416, 220, 416, 127, 3)
+  const moved = new Transform(2).pan(g, 10000, 10000)
+  near(moved.x, 208); near(moved.y, 17)
+  near((g.height - g.contentHeight * moved.scale) / 2 + moved.y, 0)
+  near(g.height, 220); near(g.contentHeight, 127)
+})

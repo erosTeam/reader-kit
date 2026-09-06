@@ -30,7 +30,8 @@ The surface supports explicit previous/next display item, single/physical-half/
 joined-spread rendering, LTR/RTL, original/thumbnail, retry, and host-provided
 adjacent units, plus native horizontal swipe paging, double-tap/pinch zoom and zoomed pan.
 It also has an optional native continuous List with original-local visible-position reporting.
-Continuous zoom, settings, progress persistence, and the production toolbar remain pending.
+Continuous images also support per-image zoom with List-scroll arbitration. Settings,
+progress persistence, and the production toolbar remain pending.
 Koma D1 accepts existing local/downloaded pages only, and does not yet derive
 thumbnails. All adapters honestly declare consumer-only cancellation: stale
 results are detached/released, but existing transfers are not physically aborted.
@@ -152,6 +153,28 @@ NextE237 adds neighboring originals and local-anchor restoration. Its first spri
 was rejected: a 4000x300 canvas was compressed to parsed4000x284. The corrected shared sprite
 leaf is inspected in both continuous and paged viewports with the same200x122 crop.
 Koma's previous selected-item evidence does not accept its current continuous viewport.
+
+### Continuous per-image zoom and scroll arbitration
+
+`ReaderContinuousZoomImage` reuses the shared focal-point transform and native asset/sprite
+renderer. Only the image transforms; the parent List retains its intrinsic row geometry,
+raises the current zoom owner, and disables native scroll input while that image is pinching,
+animating or zoomed. A navigation/slot/asset epoch owns the lock. Settled zoom survives Home;
+explicit navigation, asset replacement, failure and width reflow release/reset it.
+
+The gesture region includes the transformed image, including its visible overlap outside
+the original row. The first candidate displayed that overlap but could not drag there;
+the exact device237 failure and corrected replay are retained in the consumer ledger.
+Failure/loading controls remain outside the transform. Unscaled List-position observations
+pause during zoom and resume after reset; zoomed original coordinates are not fabricated.
+Programmatic List positioning stays pending until a native frame finishes, preventing an
+old row rectangle from being reported as the new command's position. Navigation, width and
+disposal invalidate queued frame callbacks; the core remains the sole reading-fact owner.
+
+66 actual behavior tests include long-row focal math and minimum-row insets. The N/E237
+protocols separately check real two-pointer gestures, overlap hit testing, Home, reset,
+asset replacement and command timing. These endpoints do not cover remaining-finger
+continuation, rotation, all late-size/zoom combinations or Koma runtime.
 
 ### Continuous page failure and retry
 

@@ -1,6 +1,6 @@
-import { LengthMetrics } from '@kit.ArkUI'
+import { FrameCallback, LengthMetrics } from '@kit.ArkUI'
 import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderFragment } from '@reader-kit/core'
-import { ReaderPagedImage } from './ReaderPagedViewport'
+import { ReaderContinuousZoomImage } from './ReaderContinuousZoomImage'
 import { ReaderFailurePanel } from './ReaderFailurePanel'
 
 class ReaderContinuousIndexSource implements IDataSource {
@@ -10,6 +10,12 @@ class ReaderContinuousIndexSource implements IDataSource {
   getData(index: number): string { return this.keys[index] }
   registerDataChangeListener(_listener: DataChangeListener): void {}
   unregisterDataChangeListener(_listener: DataChangeListener): void {}
+}
+
+class ReaderContinuousAfterLayout extends FrameCallback {
+  private action: () => void
+  constructor(action: () => void) { super(); this.action = action }
+  onIdle(_remaining: number): void { this.action() }
 }
 
 /** Continuous layout only. Host navigation, commands and resource ownership stay outside. */
@@ -55,13 +61,18 @@ struct ReaderContinuousList {
   private nativeReady: Map<string, string> = new Map()
   @Local private viewWidth: number = 1
   private viewHeight: number = 1
-  private fullyVisible: boolean = false
+  @Local private fullyVisible: boolean = false
   private lastNavigation: number = -1
   @Local private pendingPosition: boolean = true
   private positionTimer: number = 0
+  private positionInFlight: boolean = false
+  private positionEpoch: number = 0
+  private disposed: boolean = false
   private measureTimer: number = 0
   private first: number = 0
   private last: number = 0
+  @Local private lockedKey: string = ''
+  private lockedIdentity: string = ''
 
   aboutToAppear(): void {
     this.source = new ReaderContinuousIndexSource(this.snapshot.displayKeys)
@@ -71,19 +82,25 @@ struct ReaderContinuousList {
   }
 
   aboutToDisappear(): void {
+    this.disposed = true
+    this.positionEpoch += 1
     if (this.positionTimer !== 0) clearTimeout(this.positionTimer)
     if (this.measureTimer !== 0) clearTimeout(this.measureTimer)
   }
 
   @Monitor('snapshot', 'active')
   onSnapshotChanged(): void {
+    if (this.lockedKey.length > 0) {
+      const frame = this.snapshot.forItem(this.lockedKey).frames[0]
+      if (frame === undefined || frame.asset.phase !== 'displayed' ||
+        this.lockedIdentity !== `${this.snapshot.navigationRevision}:${frame.slotId}:${frame.asset.assetRequestId}`) {
+        this.lockedKey = ''
+        this.lockedIdentity = ''
+      }
+    }
     if (this.lastNavigation !== this.snapshot.navigationRevision) {
       this.lastNavigation = this.snapshot.navigationRevision
-      if (this.positionTimer !== 0) clearTimeout(this.positionTimer)
-      if (this.measureTimer !== 0) clearTimeout(this.measureTimer)
-      this.positionTimer = 0
-      this.measureTimer = 0
-      this.pendingPosition = true
+      this.invalidatePosition()
     }
     if (this.pendingPosition) this.schedulePosition()
     else this.scheduleMeasure()
@@ -101,28 +118,62 @@ struct ReaderContinuousList {
     return frame?.asset.phase === 'failed' ? 220 : Math.max(220, this.imageHeight(index))
   }
 
+  private onImageLock(key: string, identity: string, locked: boolean): void {
+    const frame = this.snapshot.forItem(key).frames[0]
+    if (frame === undefined || identity !== `${this.snapshot.navigationRevision}:${frame.slotId}:${frame.asset.assetRequestId}`) return
+    if (locked) {
+      if (frame.asset.phase !== 'displayed' || (this.lockedKey.length > 0 && this.lockedKey !== key)) return
+      this.lockedKey = key
+      this.lockedIdentity = identity
+    } else if (this.lockedKey === key && this.lockedIdentity === identity) {
+      this.lockedKey = ''
+      this.lockedIdentity = ''
+      this.scheduleMeasure()
+    }
+  }
+
+  private invalidatePosition(): void {
+    if (this.positionTimer !== 0) clearTimeout(this.positionTimer)
+    if (this.measureTimer !== 0) clearTimeout(this.measureTimer)
+    this.positionTimer = 0
+    this.measureTimer = 0
+    this.positionInFlight = false
+    this.positionEpoch += 1
+    this.pendingPosition = true
+  }
+
   private schedulePosition(): void {
-    if (this.positionTimer !== 0 || !this.active || this.viewWidth <= 1 || this.snapshot.phase !== 'ready') return
+    if (this.positionTimer !== 0 || this.positionInFlight || this.disposed || !this.active ||
+      this.viewWidth <= 1 || this.snapshot.phase !== 'ready') return
     const navigation = this.snapshot.navigationRevision
+    const epoch = this.positionEpoch
     this.positionTimer = setTimeout((): void => {
       this.positionTimer = 0
-      if (!this.active || navigation !== this.snapshot.navigationRevision) return
+      if (this.disposed || !this.active || epoch !== this.positionEpoch || navigation !== this.snapshot.navigationRevision) return
       const index = this.snapshot.displayIndex
       const y = this.snapshot.kind === 'original' ? this.snapshot.anchor?.y ?? 0 : 0
       const inset = (this.rowHeight(index) - this.imageHeight(index)) / 2
+      this.positionInFlight = true
       this.scroller.scrollToIndex(index, false, ScrollAlign.START,
         { extraOffset: LengthMetrics.vp(inset + this.imageHeight(index) * y) })
-      this.pendingPosition = false
-      this.scheduleMeasure()
+      // scrollToIndex schedules native layout; old getItemRect data is not the
+      // requested position. Keep input/observations gated until a frame finishes.
+      this.getUIContext().postFrameCallback(new ReaderContinuousAfterLayout((): void => {
+        if (this.disposed || epoch !== this.positionEpoch || navigation !== this.snapshot.navigationRevision) return
+        this.positionInFlight = false
+        if (!this.active) return
+        this.pendingPosition = false
+        this.scheduleMeasure()
+      }))
     }, 0)
   }
 
   private scheduleMeasure(): void {
-    if (this.measureTimer !== 0 || !this.active || this.pendingPosition || !this.fullyVisible) return
+    if (this.measureTimer !== 0 || !this.active || this.pendingPosition || !this.fullyVisible || this.lockedKey.length > 0) return
     const navigation = this.snapshot.navigationRevision
     this.measureTimer = setTimeout((): void => {
       this.measureTimer = 0
-      if (!this.active || this.pendingPosition || !this.fullyVisible || navigation !== this.snapshot.navigationRevision ||
+      if (!this.active || this.pendingPosition || !this.fullyVisible || this.lockedKey.length > 0 || navigation !== this.snapshot.navigationRevision ||
         this.snapshot.phase !== 'ready') return
       const hit = this.scroller.getItemIndex(this.viewWidth / 2, 1)
       if (hit >= 0) this.first = hit
@@ -151,6 +202,9 @@ struct ReaderContinuousList {
           ReaderContinuousCell({
             snapshot: this.snapshot.forItem(key),
             active: this.active,
+            interactionAllowed: !this.pendingPosition && this.fullyVisible &&
+              (this.lockedKey.length === 0 || this.lockedKey === key),
+            onLock: (identity: string, locked: boolean): void => { this.onImageLock(key, identity, locked) },
             imageHeight: this.imageHeight(this.snapshot.displayKeys.indexOf(key)),
             onRetry: (slot: number, request: number): void => {
               this.onRetry(this.createdRevision, key, slot, request)
@@ -172,15 +226,20 @@ struct ReaderContinuousList {
             },
           })
         }.height(this.rowHeight(this.snapshot.displayKeys.indexOf(key)))
+          .zIndex(this.lockedKey === key ? 1 : 0)
       }, (key: string): string => key)
     }
     .width('100%').height('100%').cachedCount(1)
     .scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
-    .enableScrollInteraction(this.active && this.snapshot.phase === 'ready' && !this.pendingPosition)
+    .enableScrollInteraction(this.active && this.snapshot.phase === 'ready' && !this.pendingPosition && this.lockedKey.length === 0)
     .id('rkit-continuous-list')
     .onAreaChange((_old: Area, area: Area): void => {
       const width = Math.max(1, Number(area.width))
-      if (this.viewWidth !== width) this.pendingPosition = true
+      if (this.viewWidth !== width) {
+        this.invalidatePosition()
+        this.lockedKey = ''
+        this.lockedIdentity = ''
+      }
       this.viewWidth = width
       this.viewHeight = Math.max(1, Number(area.height))
       if (this.pendingPosition) this.schedulePosition()
@@ -205,6 +264,8 @@ struct ReaderContinuousCell {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param imageHeight: number
   @Require @Param active: boolean
+  @Require @Param interactionAllowed: boolean
+  @Event onLock: (identity: string, locked: boolean) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onFailed: (slot: number, request: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetired: (slot: number, request: number) => void = () => {}
@@ -220,14 +281,13 @@ struct ReaderContinuousCell {
             onRetry: (): void => { this.onRetry(frame.slotId, this.snapshot.frames[0].asset.requestId) },
           })
         } else if (this.snapshot.frames[0].asset.uri.length > 0) {
-          ReaderPagedImage({
-            frame: this.snapshot.frames[0], slotId: frame.slotId, assetRequestId: frame.asset.assetRequestId,
-            selectionId: this.snapshot.selectionId, renderedFragment: frame.part.fragment, active: false,
+          ReaderContinuousZoomImage({
+            frame: this.snapshot.frames[0], navigation: this.snapshot.navigationRevision,
+            imageHeight: this.imageHeight, active: this.active, interactionAllowed: this.interactionAllowed,
+            onLock: this.onLock,
             onPresented: this.onPresented,
-            onFailed: (_selection: number, slot: number, request: number, fragment: ReaderFragment): void => {
-              this.onFailed(slot, request, fragment)
-            },
-          }).height(this.imageHeight)
+            onFailed: this.onFailed,
+          })
             .onDisAppear((): void => { this.onRetired(frame.slotId, frame.asset.assetRequestId) })
         }
       }, (frame: ReaderPagedFrame): string => `${frame.slotId}:${frame.asset.assetRequestId}`)
@@ -235,7 +295,7 @@ struct ReaderContinuousCell {
         this.snapshot.frames[0].asset.phase === 'asset' || this.snapshot.frames[0].asset.phase === 'decoding') {
         LoadingProgress().width(32).height(32)
       }
-    }.width('100%').height('100%').clip(true)
+    }.width('100%').height('100%')
       .id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
   }
 }
