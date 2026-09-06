@@ -1,5 +1,6 @@
 import { ReaderPagedFrame, ReaderFragment, ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/core'
 import { ReaderPagedImage } from './ReaderPagedViewport'
+import { ReaderTapSequence } from './ReaderTapSequence'
 
 /** Image interaction only. The parent List owns scrolling, stacking and visible-position reporting. */
 @ComponentV2
@@ -9,6 +10,7 @@ export struct ReaderContinuousZoomImage {
   @Require @Param imageHeight: number
   @Require @Param active: boolean
   @Require @Param interactionAllowed: boolean
+  @Event onTap: () => void = () => {}
   @Event onLock: (identity: string, locked: boolean) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onFailed: (slot: number, request: number, fragment: ReaderFragment) => void = () => {}
@@ -28,6 +30,7 @@ export struct ReaderContinuousZoomImage {
   private gestureStart: ReaderViewportTransform = new ReaderViewportTransform()
   private pinchX: number = 0
   private pinchY: number = 0
+  private tapSequence: ReaderTapSequence = new ReaderTapSequence()
 
   aboutToAppear(): void { this.onContentChanged() }
 
@@ -118,6 +121,7 @@ export struct ReaderContinuousZoomImage {
 
   private beginPinch(event?: GestureEvent): void {
     if (!this.canInteract() || event === undefined) return
+    this.tapSequence.suppress()
     this.cancelMotion()
     this.pinching = true
     this.gestureIdentity = this.identity
@@ -145,6 +149,7 @@ export struct ReaderContinuousZoomImage {
   private beginPan(): void {
     this.panning = !this.pinching && this.canInteract() && this.imageTransform.zoomed()
     if (!this.panning) return
+    this.tapSequence.suppress()
     if (this.animationTimer !== 0) clearTimeout(this.animationTimer)
     this.animationTimer = 0
     this.animating = false
@@ -181,6 +186,7 @@ export struct ReaderContinuousZoomImage {
     }
     .width('100%').height('100%')
     .responseRegion(this.interactionRegion())
+    .onTouch((event: TouchEvent): void => { this.tapSequence.touch(event) })
     .onAreaChange((_old: Area, area: Area): void => {
       const previous = this.geometry()
       const width = Math.max(1, Number(area.width))
@@ -197,7 +203,12 @@ export struct ReaderContinuousZoomImage {
       if (changed && this.imageTransform.zoomed()) this.log('reflow')
     })
     .gesture(GestureGroup(GestureMode.Parallel,
-      TapGesture({ count: 2, distanceThreshold: 8 }).onAction((event?: GestureEvent): void => { this.doubleTap(event) }),
+      GestureGroup(GestureMode.Exclusive,
+        TapGesture({ count: 2, distanceThreshold: 8 }).onAction((event?: GestureEvent): void => { this.doubleTap(event) }),
+        TapGesture({ count: 1 }).onAction((): void => {
+          if (this.canInteract() && !this.pinching && this.tapSequence.allowed()) this.onTap()
+        }),
+      ),
       PinchGesture({ fingers: 2 })
         .onActionStart((event?: GestureEvent): void => { this.beginPinch(event) })
         .onActionUpdate((event?: GestureEvent): void => { this.updatePinch(event) })

@@ -1,4 +1,7 @@
 export { ReaderLabSurface } from './src/main/ets/ReaderLabSurface'
+export { ReaderSurface } from './src/main/ets/ReaderSurface'
+export { ReaderChrome } from './src/main/ets/ReaderChrome'
+export { ReaderTrialWindow } from './src/main/ets/ReaderTrialWindow'
 export { ReaderLabVisibilityState, connectReaderLabVisibility, updateReaderLabForeground } from './src/main/ets/ReaderLabVisibility'
 export { ReaderLabLaunchState, ReaderLabRequest, captureReaderLabWant, connectReaderLabLaunch } from './src/main/ets/ReaderLabLaunch'
 export { ReaderPagedViewport } from './src/main/ets/ReaderPagedViewport'

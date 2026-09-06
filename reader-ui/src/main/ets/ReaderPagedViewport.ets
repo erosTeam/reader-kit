@@ -1,6 +1,7 @@
 import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPart, ReaderSnapshot, ReaderUnitKey, ReaderFragment } from '@reader-kit/core'
 import { ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/core'
 import { ReaderFailurePanel } from './ReaderFailurePanel'
+import { ReaderTapSequence } from './ReaderTapSequence'
 
 function partRatio(frame: ReaderPagedFrame): number {
   const page = frame.asset.page
@@ -16,6 +17,7 @@ export struct ReaderPagedViewport {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param selected: boolean = true
+  @Event onTap: (xFraction: number) => void = () => {}
   @Event onInputLockChange: (locked: boolean) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -38,9 +40,10 @@ export struct ReaderPagedViewport {
   private ignorePan: boolean = false
   private pinchAdjusted: boolean = false
   private animationTimer: number = 0
+  private tapSequence: ReaderTapSequence = new ReaderTapSequence()
 
   private identity(): string {
-    return `${this.snapshot.kind}:${this.snapshot.policy.layout}:${this.snapshot.policy.direction}:` +
+    return `${this.snapshot.navigationRevision}:${this.snapshot.kind}:${this.snapshot.policy.layout}:${this.snapshot.policy.direction}:` +
       this.snapshot.frames.map((frame: ReaderPagedFrame) =>
         `${frame.slotId}:${frame.asset.assetRequestId}:${frame.part.fragment}`).join('|')
   }
@@ -132,6 +135,7 @@ export struct ReaderPagedViewport {
 
   private beginPinch(event?: GestureEvent): void {
     if (!this.gesturesEnabled() || event === undefined) return
+    this.tapSequence.suppress()
     this.stopAnimation()
     this.gestureIdentity = this.identity()
     this.pinching = true
@@ -160,6 +164,7 @@ export struct ReaderPagedViewport {
     this.ignorePan = this.pinching || !this.gesturesEnabled() || !this.zoomState.zoomed()
     this.panning = !this.ignorePan
     if (!this.panning) return
+    this.tapSequence.suppress()
     this.stopAnimation()
     this.gestureIdentity = this.identity()
     this.panStart = this.zoomState
@@ -215,6 +220,7 @@ export struct ReaderPagedViewport {
     .width('100%').height('100%')
     .clip(true)
     .id(this.selected ? 'rkit-image-viewport' : `rkit-cached-viewport-${this.snapshot.displayIndex}`)
+    .onTouch((event: TouchEvent): void => { this.tapSequence.touch(event) })
     .onAreaChange((_old: Area, area: Area): void => {
       this.cancelGesture()
       this.viewportWidth = Math.max(1, Number(area.width))
@@ -222,8 +228,15 @@ export struct ReaderPagedViewport {
       this.zoomState = this.zoomState.settled(this.geometry())
     })
     .gesture(GestureGroup(GestureMode.Parallel,
-      TapGesture({ count: 2, distanceThreshold: 8 })
-        .onAction((event?: GestureEvent): void => { this.doubleTap(event) }),
+      GestureGroup(GestureMode.Exclusive,
+        TapGesture({ count: 2, distanceThreshold: 8 })
+          .onAction((event?: GestureEvent): void => { this.doubleTap(event) }),
+        TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => {
+          if (this.active && this.selected && !this.pinching && this.tapSequence.allowed() && event !== undefined) {
+            this.onTap((event.tapLocation?.x ?? this.viewportWidth / 2) / this.viewportWidth)
+          }
+        }),
+      ),
       PinchGesture({ fingers: 2 })
         .onActionStart((event?: GestureEvent): void => { this.beginPinch(event) })
         .onActionUpdate((event?: GestureEvent): void => { this.updatePinch(event) })

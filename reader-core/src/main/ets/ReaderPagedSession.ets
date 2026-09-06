@@ -251,6 +251,23 @@ export class ReaderPagedSession {
     this.selectDisplay(next, this.topologyRevision, this.navigationRevision)
   }
 
+  /** A source-page command, not a display index or an observed/saved reading position.
+   * A slider may outlive its unit/navigation; stale commits must not seek the new unit.
+   */
+  seekSource(index: number, unit: ReaderUnitKey, navigationRevision: number): boolean {
+    if (this.disposed || this.state.phase !== 'ready' || this.state.unit === null ||
+      !this.state.unit.key.equals(unit) || navigationRevision !== this.navigationRevision ||
+      !Number.isSafeInteger(index) || index < 0 || index >= this.state.unit.pageCount) return false
+    this.navigationRevision += 1
+    this.continuousStart = -1
+    this.continuousEnd = -1
+    // Center/whole resolves to the first physical half in the current direction.
+    // Re-seeking the current source intentionally returns to its start.
+    this.state.anchor = new ReaderReadingAnchor(unit, this.pages.get(index)?.key ?? null, index)
+    this.rebuild()
+    return true
+  }
+
   /** Reject a native index from a retired topology or superseded navigation command. */
   selectDisplay(index: number, topologyRevision: number, navigationRevision: number): boolean {
     if (this.disposed || this.state.phase !== 'ready' || this.map === null ||

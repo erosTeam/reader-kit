@@ -23,6 +23,7 @@ class ReaderContinuousAfterLayout extends FrameCallback {
 export struct ReaderContinuousSurface {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
+  @Event onTap: () => void = () => {}
   @Event onRange: (start: number, end: number, topology: number, navigation: number) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (topology: number, navigation: number, key: string, slot: number, request: number, x: number, y: number) => void = () => {}
@@ -37,6 +38,7 @@ export struct ReaderContinuousSurface {
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
             onRange: this.onRange, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onRetry: this.onRetry,
+            onTap: this.onTap,
           })
         }, (revision: number): string => `${revision}`)
       } else if (this.snapshot.phase === 'idle' || this.snapshot.phase === 'catalog') {
@@ -50,6 +52,7 @@ export struct ReaderContinuousSurface {
 struct ReaderContinuousList {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
+  @Event onTap: () => void = () => {}
   @Require @Param createdRevision: number
   @Event onRange: (start: number, end: number, topology: number, navigation: number) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
@@ -202,6 +205,7 @@ struct ReaderContinuousList {
           ReaderContinuousCell({
             snapshot: this.snapshot.forItem(key),
             active: this.active,
+            onTap: this.onTap,
             interactionAllowed: !this.pendingPosition && this.fullyVisible &&
               (this.lockedKey.length === 0 || this.lockedKey === key),
             onLock: (identity: string, locked: boolean): void => { this.onImageLock(key, identity, locked) },
@@ -262,6 +266,7 @@ struct ReaderContinuousCell {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param imageHeight: number
   @Require @Param active: boolean
+  @Event onTap: () => void = () => {}
   @Require @Param interactionAllowed: boolean
   @Event onLock: (identity: string, locked: boolean) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
@@ -283,6 +288,7 @@ struct ReaderContinuousCell {
             frame: this.snapshot.frames[0], navigation: this.snapshot.navigationRevision,
             imageHeight: this.imageHeight, active: this.active, interactionAllowed: this.interactionAllowed,
             onLock: this.onLock,
+            onTap: this.onTap,
             onPresented: this.onPresented,
             onFailed: this.onFailed,
           })

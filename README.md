@@ -4,7 +4,7 @@ Shared HarmonyOS reader integration for NextE, NextN and Koma.
 
 This experimental integration is opt-in and does not replace any application's reader.
 `reader-core` owns neutral catalog/session contracts; `reader-ui` contains the
-shared diagnostic surface. Host adapters resolve their own sources and files.
+shared diagnostic surface and an optional full-window reading surface. Host adapters resolve their own sources and files.
 The diagnostic session does not save reading progress or preferences.
 
 The current prototype is not a complete reader. Production routes continue to
@@ -31,7 +31,7 @@ joined-spread rendering, LTR/RTL, original/thumbnail, retry, and host-provided
 adjacent units, plus native horizontal swipe paging, double-tap/pinch zoom and zoomed pan.
 It also has an optional native continuous List with original-local visible-position reporting.
 Continuous images also support per-image zoom with List-scroll arbitration. Settings,
-progress persistence, and the production toolbar remain pending.
+progress persistence, and complete production toolbar capabilities remain pending.
 Settled continuous zoom now preserves content-relative translation through measured
 width reflow while the List restores its unscaled anchor behind the native frame gate.
 NextN long-original and NextE original/sprite portrait-landscape-portrait endpoints
@@ -41,6 +41,30 @@ production chrome, all intermediate frames, every pan clamp, or Koma runtime.
 Koma D1 accepts existing local/downloaded pages only, and does not yet derive
 thumbnails. All adapters honestly declare consumer-only cancellation: stale
 results are detached/released, but existing transfers are not physically aborted.
+
+## Optional reading chrome (D4 first slice)
+
+NextN/NextE Debug hosts accept `readerLabChrome=true` on the explicit Lab Want.
+This adds a full-window trial route without replacing ordinary readers or the original Lab.
+`ReaderSurface` composes the existing paged/continuous viewports and their resource callbacks;
+`ReaderChrome` owns only presentation/slider preview and emits close, policy and source-seek intents.
+The host owns routing, safe insets and the optional `ReaderTrialWindow` color lease, which restores
+the captured pre-trial system-bar properties. Neither surface nor core writes application preferences.
+
+The first controls are chrome show/hide, outlined passive page status, source-page seek,
+single/spread/continuous, LTR/RTL, cover alignment and physical wide-page splitting.
+Source seek uses a captured unit/navigation token, never a display-item index or a saved observation;
+re-seeking the same source intentionally resets its viewport to the start.
+Single/double recognition is exclusive within the existing pinch/pan group. A fresh one-pointer
+sequence is required after pinch/pan, so the previous gesture's tail cannot open the toolbar.
+
+72 core tests and two named native tests per N/E host ran on237. Inspected evidence includes
+same-source zoom reset, actual LTR/RTL page changes, outlined status on light/dark backgrounds,
+pinch-tail suppression and close restoration. The E P117/P118 full-window comparison preserves
+the reference image rectangle, progress row and trailing layout group. This is not full parity:
+thumbnail rail, share/save/original-source actions, auto reading, full settings/system input,
+transition integration and Koma trial chrome remain subsequent slices. Slider mid-drag preview,
+retry/tap interaction and remaining lifecycle combinations still need their own native acceptance.
 
 ## Display mapping and anchors (D2)
 

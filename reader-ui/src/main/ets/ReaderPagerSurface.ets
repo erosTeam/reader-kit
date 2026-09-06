@@ -16,6 +16,7 @@ class ReaderPagerIndexSource implements IDataSource {
 export struct ReaderPagerSurface {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
+  @Event onTap: (xFraction: number) => void = () => {}
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -30,6 +31,7 @@ export struct ReaderPagerSurface {
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
             onSelect: this.onSelect, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onRetry: this.onRetry,
+            onTap: this.onTap,
           })
         }, (revision: number): string => `${revision}`)
       } else if (this.snapshot.phase === 'idle' || this.snapshot.phase === 'catalog') {
@@ -44,6 +46,7 @@ export struct ReaderPagerSurface {
 struct ReaderNativePager {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
+  @Event onTap: (xFraction: number) => void = () => {}
   @Require @Param createdRevision: number
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
@@ -119,6 +122,7 @@ struct ReaderNativePager {
             if (key === this.snapshot.displayKeys[this.snapshot.displayIndex]) this.inputLocked = locked
           },
           onPresented: this.onPresented,
+          onTap: this.onTap,
           onVisible: this.onVisible,
           onRetry: (slotId: number, requestId: number): void => {
             this.onRetry(this.createdRevision, key, slotId, requestId)

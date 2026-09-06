@@ -1,5 +1,9 @@
 {
   "string": [
+    { "name": "rkit_close", "value": "Back" },
+    { "name": "rkit_runtime_settings", "value": "Reading mode (this session)" },
+    { "name": "rkit_seek_page", "value": "Go to page" },
+    { "name": "rkit_catalog_failed", "value": "Could not load the page catalog" },
     {
       "name": "rkit_release_metrics",
       "value": "Release dimensions"

@@ -8,6 +8,7 @@ export class ReaderLabRequest {
   failurePage: number
   delayedMetricsPage: number
   failureLayout: string
+  readingChrome: boolean = false
 
   constructor(work: string, unit: string, pageIndex: number, failurePage: number = -1,
     delayedMetricsPage: number = -1, failureLayout: string = 'continuous') {
@@ -56,11 +57,13 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
     (typeof failurePage === 'number' ? failurePage : -1)
   const delayedIndex = typeof delayedPage === 'string' ? Number(delayedPage) :
     (typeof delayedPage === 'number' ? delayedPage : -1)
-  connectReaderLabLaunch().publish(new ReaderLabRequest(
+  const request = new ReaderLabRequest(
     work, typeof unit === 'string' ? unit : '',
     Number.isFinite(index) ? Math.max(0, Math.floor(index)) : 0,
     Number.isSafeInteger(failureIndex) && failureIndex >= 0 ? failureIndex : -1,
     Number.isSafeInteger(delayedIndex) && delayedIndex >= 0 ? delayedIndex : -1,
     failureLayout === 'single' ? 'single' : failureLayout === 'spread' ? 'spread' : 'continuous',
-  ))
+  )
+  request.readingChrome = want.parameters['readerLabChrome'] === 'true' || want.parameters['readerLabChrome'] === true
+  connectReaderLabLaunch().publish(request)
 }

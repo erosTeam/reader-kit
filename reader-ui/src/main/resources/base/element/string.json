@@ -1,5 +1,9 @@
 {
   "string": [
+    { "name": "rkit_close", "value": "返回" },
+    { "name": "rkit_runtime_settings", "value": "阅读模式（仅本次）" },
+    { "name": "rkit_seek_page", "value": "跳转页码" },
+    { "name": "rkit_catalog_failed", "value": "页面目录加载失败" },
     {
       "name": "rkit_release_metrics",
       "value": "释放尺寸"

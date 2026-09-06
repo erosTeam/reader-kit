@@ -41,6 +41,71 @@ function decode(session, frame, width = 0, height = 0) {
   session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true, width, height)
 }
 
+test('source seek is not a display index and does not reopen the host catalog', async () => {
+  const { session, key, calls } = setup({ count: 8 })
+  session.setPolicy(policy({ layout: 'spread', firstPageAlone: true }))
+  await session.open(key); await tick()
+  assert.equal(session.seekSource(4, key, session.snapshot().navigationRevision), true)
+  await tick()
+  const state = session.snapshot()
+  assert.equal(state.anchor.sourceIndexHint, 4)
+  assert.equal(state.displayIndex, 2)
+  assert.deepEqual(state.frames.map(frame => frame.part.sourceIndex), [3, 4])
+  assert.equal(calls.open.length, 1)
+  assert.equal(state.observedAnchor, null)
+  session.close()
+})
+
+test('source seek starts on the direction-appropriate wide half even when already on the same source', async () => {
+  const { session, key } = setup({ wide: [0] })
+  session.setPolicy(policy({ splitWidePages: true }))
+  await session.open(key); await tick()
+  session.move('next')
+  assert.equal(session.snapshot().anchor.fragment, 'right')
+  assert.equal(session.seekSource(0, key, session.snapshot().navigationRevision), true)
+  assert.equal(session.snapshot().anchor.fragment, 'left')
+  session.setPolicy(policy({ splitWidePages: true, direction: 'rtl' }))
+  assert.equal(session.seekSource(0, key, session.snapshot().navigationRevision), true)
+  assert.equal(session.snapshot().anchor.fragment, 'right')
+  session.close()
+})
+
+test('source seek rejects invalid indices and stale navigation or unit tokens without mutation', async () => {
+  const { session, key } = setup()
+  await session.open(key); await tick()
+  const before = session.snapshot()
+  for (const index of [-1, 5, 0.5, NaN, Infinity]) {
+    assert.equal(session.seekSource(index, key, before.navigationRevision), false)
+  }
+  assert.equal(session.snapshot().navigationRevision, before.navigationRevision)
+  session.move('next')
+  assert.equal(session.seekSource(3, key, before.navigationRevision), false)
+  await session.switchUnit('next'); await tick()
+  assert.equal(session.seekSource(3, key, session.snapshot().navigationRevision), false)
+  assert.equal(session.snapshot().anchor.sourceIndexHint, 0)
+  session.close()
+  assert.equal(session.seekSource(0, session.snapshot().unit.key, session.snapshot().navigationRevision), false)
+})
+
+test('seeking the current continuous source resets its row anchor without fabricating observation', async () => {
+  const { session, key } = setup()
+  session.setPolicy(policy({ layout: 'continuous' }))
+  await session.open(key); await tick()
+  let state = session.snapshot()
+  session.setContinuousRange(0, 0, state.topologyRevision, state.navigationRevision)
+  const frame = state.frames[0]
+  decode(session, frame)
+  state = session.snapshot()
+  assert.equal(session.reportContinuousVisible(state.topologyRevision, state.navigationRevision,
+    state.displayKeys[0], frame.slotId, frame.asset.assetRequestId, 0.5, 0.35), true)
+  assert.equal(session.seekSource(0, key, state.navigationRevision), true)
+  const after = session.snapshot()
+  assert.equal(after.anchor.y, 0)
+  assert.equal(after.observedAnchor.y, 0.35)
+  assert.notEqual(after.navigationRevision, state.navigationRevision)
+  session.close()
+})
+
 test('spread owns two assets but opens host catalog only once; RTL changes visual order, not anchor', async () => {
   const { session, key, calls } = setup()
   session.setPolicy(policy({ layout: 'spread' }))
