@@ -102,6 +102,23 @@ Koma trial chrome and production host capabilities remain open. Defaults and per
 are unchanged. Earlier slice limitations above are chronological, superseded only by
 these explicitly observed paths.
 
+## Thumbnail recovery arbitration (D7)
+
+An explicit Debug-only `readerLabFailThumbnailPage` zero-based Want parameter now
+selects one thumbnail for a one-shot missing local URI. `ReaderLabAssetProbe`
+exercises the native decoder failure callback; retry delegates to the real host
+provider. It neither deletes cache files nor simulates a transport outage.
+
+N/E237 native tests wait for the thumbnail session's native-decoded `displayed`
+phase, not merely an Image node. Both final tests pass with five whole captures
+and native roots inspected per host: the failed second thumbnail recovers without
+seeking the first original, losing healthy previews or hiding chrome; a fresh tile
+selection then displays the second original, and close restores the ordinary host.
+An earlier E capture preceded its healthy sprite decode and is retained as rejected
+readiness evidence. No additional gesture interception or visible layout change
+was warranted.79 core tests pass. Remaining host inputs/actions and lifecycle
+combinations are still separate replacement-readiness work.
+
 ## Display mapping and anchors (D2)
 
 `ReaderDisplayMap` is an additive, platform-free API. D3 renders its selected

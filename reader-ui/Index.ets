@@ -1,4 +1,5 @@
 export { ReaderLabSurface } from './src/main/ets/ReaderLabSurface'
+export { ReaderLabAssetProbe } from './src/main/ets/ReaderLabAssetProbe'
 export { ReaderSurface } from './src/main/ets/ReaderSurface'
 export { ReaderChrome } from './src/main/ets/ReaderChrome'
 export { ReaderTrialWindow } from './src/main/ets/ReaderTrialWindow'

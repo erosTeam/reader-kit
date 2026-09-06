@@ -147,6 +147,7 @@ struct ReaderThumbnailRailTile {
         .borderRadius(8).clip(true).id(`rkit-thumb-image-${this.index}`)
       Text(`${this.index + 1}`).fontSize(12).fontColor(this.selected ? this.accent : Color.White)
         .fontWeight(FontWeight.Medium).maxLines(1).height(18).width(this.widthValue()).textAlign(TextAlign.Center)
+        .id(`rkit-thumb-state-${this.index}-${this.frame?.asset.phase ?? 'pending'}`)
     }.width(this.widthValue()).height(140).alignItems(HorizontalAlign.Center)
       .id(`rkit-thumbnail-${this.index}`).onClick(this.onSelect)
   }
