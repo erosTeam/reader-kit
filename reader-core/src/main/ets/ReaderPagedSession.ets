@@ -16,6 +16,17 @@ export class ReaderPagedFrame {
   }
 }
 
+export class ReaderPagedItemSnapshot {
+  key: string
+  index: number
+  frames: ReaderPagedFrame[]
+  constructor(key: string, index: number, frames: ReaderPagedFrame[]) {
+    this.key = key
+    this.index = index
+    this.frames = frames
+  }
+}
+
 export class ReaderPagedSnapshot {
   unit: ReaderUnit | null = null
   phase: 'idle' | 'catalog' | 'ready' | 'failed' | 'closed' = 'idle'
@@ -30,8 +41,31 @@ export class ReaderPagedSnapshot {
   observedAnchor: ReaderReadingAnchor | null = null
   observedSelectionId: number = 0
   frames: ReaderPagedFrame[] = []
+  /** Render-only item identities, scoped to topologyRevision; never persistent page keys. */
+  displayKeys: string[] = []
+  topologyRevision: number = 0
+  navigationRevision: number = 0
+  window: ReaderPagedItemSnapshot[] = []
   canPreviousUnit: boolean = false
   canNextUnit: boolean = false
+
+  /** A cached item's render projection, not a second selection or observed anchor. */
+  forItem(key: string): ReaderPagedSnapshot {
+    const value = new ReaderPagedSnapshot()
+    value.unit = this.unit?.copy() ?? null
+    value.phase = this.phase
+    value.policy = this.policy.copy()
+    value.kind = this.kind
+    value.displayIndex = this.displayKeys.indexOf(key)
+    value.displayCount = this.displayCount
+    value.selectionId = this.selectionId
+    value.anchor = this.anchor?.copy() ?? null
+    value.topologyRevision = this.topologyRevision
+    value.navigationRevision = this.navigationRevision
+    value.frames = (this.window.find((item: ReaderPagedItemSnapshot) => item.key === key)?.frames ?? [])
+      .map((frame: ReaderPagedFrame) => new ReaderPagedFrame(frame.slotId, frame.part, frame.asset))
+    return value
+  }
 }
 
 class ReaderPageSlot {
@@ -49,9 +83,10 @@ class ReaderPageSlot {
 }
 
 /**
- * One display/anchor owner, at most two asset slots. ReaderSession continues to
+ * One display/anchor owner. Selected-only uses at most two asset slots; the
+ * optional neighbor window uses at most six. ReaderSession continues to
  * own each request, decoder fence and lease; hosts still own chapter semantics.
- * Metadata is discovered only for selected parts, never by opening every page.
+ * Metadata is discovered only within the requested window, never by opening every page.
  */
 export class ReaderPagedSession {
   private readonly catalog: ReaderCatalog
@@ -60,6 +95,11 @@ export class ReaderPagedSession {
   private map: ReaderDisplayMap | null = null
   private pages: Map<number, ReaderPage> = new Map()
   private slots: ReaderPageSlot[] = []
+  private prefetchNeighbors: boolean = false
+  private displayKeys: string[] = []
+  private topologySignature: string = ''
+  private topologyRevision: number = 0
+  private navigationRevision: number = 0
   private slotSerial: number = 0
   private epoch: number = 0
   private cancellation: ReaderCancellation = new ReaderCancellation()
@@ -96,8 +136,18 @@ export class ReaderPagedSession {
     value.observedSelectionId = this.state.observedSelectionId
     value.canPreviousUnit = this.state.canPreviousUnit
     value.canNextUnit = this.state.canNextUnit
-    const parts = this.map?.item(this.state.displayIndex)?.visualParts(this.state.policy.direction) ?? []
-    value.frames = parts.filter((part: ReaderDisplayPart) =>
+    value.topologyRevision = this.topologyRevision
+    value.navigationRevision = this.navigationRevision
+    value.displayKeys = this.displayKeys.slice()
+    value.frames = this.framesAt(this.state.displayIndex)
+    value.window = this.windowIndexes().map((index: number) =>
+      new ReaderPagedItemSnapshot(this.displayKeys[index], index, this.framesAt(index)))
+    return value
+  }
+
+  private framesAt(index: number): ReaderPagedFrame[] {
+    const parts = this.map?.item(index)?.visualParts(this.state.policy.direction) ?? []
+    return parts.filter((part: ReaderDisplayPart) =>
       this.slots.some((slot: ReaderPageSlot) => slot.index === part.sourceIndex))
       .map((part: ReaderDisplayPart): ReaderPagedFrame => {
       const slot = this.slots.find((candidate: ReaderPageSlot) => candidate.index === part.sourceIndex)
@@ -106,7 +156,22 @@ export class ReaderPagedSession {
       if (page !== undefined && asset.page !== null) asset.page = page.copy()
       return new ReaderPagedFrame(slot?.id ?? 0, part, asset)
     })
-    return value
+  }
+
+  private windowIndexes(): number[] {
+    if (this.map === null || this.map.count() === 0) return []
+    const indexes: number[] = [this.state.displayIndex]
+    if (this.prefetchNeighbors) {
+      if (this.state.displayIndex > 0) indexes.push(this.state.displayIndex - 1)
+      if (this.state.displayIndex + 1 < this.map.count()) indexes.push(this.state.displayIndex + 1)
+    }
+    return indexes
+  }
+
+  setNeighborPreload(enabled: boolean): void {
+    if (this.disposed || enabled === this.prefetchNeighbors) return
+    this.prefetchNeighbors = enabled
+    if (this.state.phase === 'ready') this.reconcile()
   }
 
   private emit(): void { if (this.listener !== null) this.listener(this.snapshot()) }
@@ -118,6 +183,7 @@ export class ReaderPagedSession {
     const cancellation = this.cancellation
     const epoch = ++this.epoch
     const target = key.copy()
+    this.navigationRevision += 1
     this.pendingUnit = target
     this.pendingIndex = index
     this.state.phase = 'catalog'
@@ -132,6 +198,7 @@ export class ReaderPagedSession {
       }
       this.releaseSlots()
       this.pages.clear()
+      this.topologySignature = ''
       this.state.unit = unit
       this.state.kind = 'original'
       this.state.phase = 'ready'
@@ -156,6 +223,7 @@ export class ReaderPagedSession {
       throw new Error('reader_unsupported_paged_policy')
     }
     this.state.policy = policy.copy()
+    this.navigationRevision += 1
     if (this.state.phase === 'ready') this.rebuild()
     else this.emit()
   }
@@ -164,8 +232,19 @@ export class ReaderPagedSession {
     if (this.disposed || this.state.phase !== 'ready' || this.map === null) return
     const next = this.map.neighbor(this.state.displayIndex, direction)
     if (next === null) return
-    this.state.anchor = this.map.anchorAt(next)
+    this.selectDisplay(next, this.topologyRevision, this.navigationRevision)
+  }
+
+  /** Reject a native index from a retired topology or superseded navigation command. */
+  selectDisplay(index: number, topologyRevision: number, navigationRevision: number): boolean {
+    if (this.disposed || this.state.phase !== 'ready' || this.map === null ||
+      topologyRevision !== this.topologyRevision || navigationRevision !== this.navigationRevision ||
+      !Number.isInteger(index) || index < 0 || index >= this.map.count()) return false
+    if (index === this.state.displayIndex) return true
+    this.navigationRevision += 1
+    this.state.anchor = this.map.anchorAt(index)
     this.rebuild()
+    return true
   }
 
   setAssetKind(kind: ReaderAssetKind): void {
@@ -173,6 +252,7 @@ export class ReaderPagedSession {
     if (kind === 'thumbnail' && this.snapshot().frames.some((frame: ReaderPagedFrame) =>
       frame.asset.page === null || !frame.asset.page.thumbnail.available)) return
     this.state.kind = kind
+    this.navigationRevision += 1
     this.state.selectionId += 1
     this.reconcile()
   }
@@ -186,13 +266,25 @@ export class ReaderPagedSession {
   async retry(): Promise<void> {
     if (this.disposed) return
     if (this.pendingUnit !== null) await this.open(this.pendingUnit, this.pendingIndex)
-    else await Promise.all(this.slots.filter((slot: ReaderPageSlot) => slot.session.snapshot().phase === 'failed')
+    else await Promise.all(this.slots.filter((slot: ReaderPageSlot) => slot.session.snapshot().phase === 'failed' &&
+      this.map?.item(this.state.displayIndex)?.parts.some((part: ReaderDisplayPart) => part.sourceIndex === slot.index))
       .map((slot: ReaderPageSlot) => slot.session.retry()))
   }
 
   private rebuild(): void {
     if (this.state.unit === null || this.state.anchor === null) return
     this.map = new ReaderDisplayMap(this.state.unit, Array.from(this.pages.values()), this.state.policy)
+    const keys: string[] = []
+    for (let index = 0; index < this.map.count(); index++) {
+      keys.push((this.map.item(index)?.parts ?? []).map((part: ReaderDisplayPart) =>
+        `${part.sourceIndex}:${part.fragment}`).join('+'))
+    }
+    const signature = `${this.state.policy.layout}:${this.state.policy.direction}:` + keys.join('|')
+    if (signature !== this.topologySignature) {
+      this.topologySignature = signature
+      this.topologyRevision += 1
+      this.displayKeys = keys
+    }
     const resolved = this.map.resolve(this.state.anchor)
     if (!resolved.resolved()) {
       this.state.error = 'reader_anchor_unresolved'
@@ -208,7 +300,12 @@ export class ReaderPagedSession {
 
   private reconcile(): void {
     const unit = this.state.unit
-    const parts = this.map?.item(this.state.displayIndex)?.parts ?? []
+    const parts: ReaderDisplayPart[] = []
+    this.windowIndexes().forEach((index: number) => {
+      (this.map?.item(index)?.parts ?? []).forEach((part: ReaderDisplayPart) => {
+        if (!parts.some((other: ReaderDisplayPart) => other.sourceIndex === part.sourceIndex)) parts.push(part)
+      })
+    })
     if (unit === null) return
     const retained = this.slots.filter((slot: ReaderPageSlot) => slot.kind === this.state.kind &&
       parts.some((part: ReaderDisplayPart) => part.sourceIndex === slot.index))
@@ -225,6 +322,7 @@ export class ReaderPagedSession {
     })
     this.emit()
     added.forEach((slot: ReaderPageSlot) => {
+      if (!this.slots.includes(slot)) return
       slot.session.subscribe((snapshot: ReaderSnapshot): void => { this.slotChanged(slot, snapshot) })
       void slot.session.openPrepared(unit, slot.index, slot.kind)
     })
@@ -268,6 +366,16 @@ export class ReaderPagedSession {
 
   reportRenderFailure(selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void {
     this.currentRenderSlot(selectionId, slotId, requestId, fragment)?.session.reportRenderFailure(requestId)
+  }
+
+  /** Cached decode failure is asset evidence, never a reading-position observation. */
+  reportCachedRenderFailure(topologyRevision: number, itemKey: string, slotId: number,
+    requestId: number, fragment: ReaderFragment): void {
+    if (this.disposed || topologyRevision !== this.topologyRevision || this.state.phase !== 'ready') return
+    const index = this.displayKeys.indexOf(itemKey)
+    const frame = this.framesAt(index).find((candidate: ReaderPagedFrame) =>
+      candidate.slotId === slotId && candidate.asset.assetRequestId === requestId && candidate.part.fragment === fragment)
+    if (frame !== undefined) this.slots.find((slot: ReaderPageSlot) => slot.id === slotId)?.session.reportRenderFailure(requestId)
   }
 
   reportVisible(selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): boolean {

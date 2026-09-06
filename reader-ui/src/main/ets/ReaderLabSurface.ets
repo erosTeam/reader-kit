@@ -1,5 +1,5 @@
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderPagedFrame, ReaderUnitKey, ReaderFragment } from '@reader-kit/core'
-import { ReaderPagedViewport } from './ReaderPagedViewport'
+import { ReaderPagerSurface } from './ReaderPagerSurface'
 
 /** Diagnostic controls only; the viewport has no dependency on this chrome. */
 @ComponentV2
@@ -11,6 +11,7 @@ export struct ReaderLabSurface {
   @Local private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
 
   aboutToAppear(): void {
+    this.session.setNeighborPreload(true)
     this.session.setViewportActive(this.active)
     this.session.subscribe((state: ReaderPagedSnapshot): void => { this.state = state })
     void this.session.open(this.initialUnit, this.initialIndex)
@@ -78,13 +79,17 @@ export struct ReaderLabSurface {
           .id('rkit-alignment').onClick((): void => { this.toggleAlignment() })
       }
       .width('100%')
-      ReaderPagedViewport({
+      ReaderPagerSurface({
         snapshot: this.state, active: this.active,
+        onSelect: (index: number, topologyRevision: number, navigationRevision: number): void => {
+          const accepted = this.session.selectDisplay(index, topologyRevision, navigationRevision)
+          console.info(`[ReaderLab] pager_selection index=${index} accepted=${accepted}`)
+        },
         onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number): void => {
           this.session.reportPresentation(slotId, requestId, success, width, height)
         },
-        onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {
-          this.session.reportRenderFailure(selectionId, slotId, requestId, fragment)
+        onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment): void => {
+          this.session.reportCachedRenderFailure(topologyRevision, itemKey, slotId, requestId, fragment)
         },
         onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {
           this.session.setViewportActive(this.active)

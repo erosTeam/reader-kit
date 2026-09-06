@@ -28,8 +28,8 @@ id. Ordinary launch/deep links and Reader destinations are unchanged.
 
 The surface supports explicit previous/next display item, single/physical-half/
 joined-spread rendering, LTR/RTL, original/thumbnail, retry, and host-provided
-adjacent units, plus double-tap/pinch zoom and zoomed pan. It has no swipe pager,
-continuous viewport, settings, progress persistence, or production toolbar yet.
+adjacent units, plus native horizontal swipe paging, double-tap/pinch zoom and zoomed pan.
+It has no continuous viewport, settings, progress persistence, or production toolbar yet.
 Koma D1 accepts existing local/downloaded pages only, and does not yet derive
 thumbnails. All adapters honestly declare consumer-only cancellation: stale
 results are detached/released, but existing transfers are not physically aborted.
@@ -95,9 +95,10 @@ spread/split rendering or adjacent-local-chapter success is claimed.
 
 ## Selected-item viewport (D3)
 
-`ReaderPagedSession` owns the map, selected original/physical fragment, and at
-most two `ReaderSession` resource slots. It opens each host unit once, reads only
-selected page metadata, and reuses the same original asset between physical
+`ReaderPagedSession` owns the map, selected original/physical fragment, and
+`ReaderSession` resource slots. Selected-only callers use at most two slots;
+the optional neighbor window below uses at most six. It opens each host unit once,
+reads only the requested window's metadata, and reuses the same original asset between physical
 halves and compatible policy changes. Failed siblings retry independently.
 Changing a layout is not a second host-side progress calculation.
 
@@ -121,7 +122,7 @@ single/spread/RTL/half restoration and foreground return. Koma237 currently has
 an empty real shelf: only default-entry, missing-catalog/Retry and Back boundaries
 are covered there. Do not call empty-library testing actual reading acceptance.
 The first empty display counter `1 / 0` was rejected and corrected to `0 / 0`.
-Full-reader parity, swipe/continuous rendering, transition chrome and migration
+Full-reader parity, continuous rendering, transition chrome and migration
 remain open. Exact candidate/device limits are recorded in NextN's
 `docs/plans/active/shared-reader-architecture.md` and project-owned manifests.
 
@@ -146,11 +147,43 @@ Current NextN 237 evidence includes native double tap, long-strip top/bottom pan
 explicit two-pointer pinch out/in, asset/page reset and background/resume.
 NextE 237 adds a joined 2x frame, both horizontal bounds, layout/half reset and
 off-center focal zoom; its current foreground and full screenshots were checked.
-These terminal checks do not accept gesture arbitration with a future pager,
+These zoom-only terminal checks did not accept gesture arbitration with a pager,
 pinch-to-remaining-finger chaining, rotation, animation frames or all three hosts.
 The same UI implementation is consumed by all hosts; build consumption is not
 host-specific physical gesture acceptance. Exact NextE and Koma limits remain
 in the project acceptance record.
+
+## Native horizontal pager (D3, experimental)
+
+`ReaderPagerSurface` adds a nonlooping native `Swiper`/`LazyForEach` parent around
+the existing fitted viewport. Diagnostic chrome and host navigation stay outside.
+`ReaderPagedSession` is still the only display-map/anchor owner: an opt-in window
+contains the previous, current and next display items, at most six unique original
+assets for spreads. A physical half can share the same asset slot with its neighbor.
+Prefetch/decode cannot publish a selected reading position or chapter completion.
+
+Render keys are scoped to a topology revision, not persisted as page identities.
+Native index feedback carries both topology and navigation revisions; delayed
+callbacks from an old map or superseded command are rejected. Feedback is deferred
+out of native `onChange` to avoid recursive `LazyForEach` updates. Cached item
+snapshots are detached render projections, not independent reading sessions.
+
+Only the active selected item can lock paging for pinch, zoom animation or zoomed
+pan. Motion suspends visibility reporting, background suspends gestures, and a
+cached outgoing item resets its transform when it ceases to be selected. Same
+selected-image background/resume retains the settled transform. Asset failures
+are fenced to their actual cached item; Retry concerns only the selected item.
+
+NextN237 currently covers LTR/RTL single and spread swipe roundtrips, a new
+single-finger pan after explicit pinch, pinch reset restoring swipe, and
+background/resume retaining zoom lock. NextE237 covers the whole-image baseline,
+physical-half LTR/RTL roundtrips, RTL joined-spread roundtrip and zoomed
+background/resume retaining the first joined pair during a new horizontal pan.
+Exact current results and limits are in the app ledger.
+The first recording is downscaled and has local ghosting, so it is retained as
+qualitative sequence evidence, not clean-motion or pixel-geometry acceptance.
+Pinch-to-remaining-finger continuity, rotation, concurrent topology change during
+drag, Koma pager behavior and all later migration work remain unverified.
 
 Run core behavioral tests with `node --test tests/*.test.cjs`.
 They execute the actual platform-free ArkTS core through the DevEco TypeScript

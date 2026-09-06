@@ -14,6 +14,8 @@ function partRatio(frame: ReaderPagedFrame): number {
 export struct ReaderPagedViewport {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
+  @Param selected: boolean = true
+  @Event onInputLockChange: (locked: boolean) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -27,7 +29,7 @@ export struct ReaderPagedViewport {
   private panStart: ReaderViewportTransform = new ReaderViewportTransform()
   private pinchX: number = 0
   private pinchY: number = 0
-  private pinching: boolean = false
+  @Local private pinching: boolean = false
   private panning: boolean = false
   private ignorePan: boolean = false
   private pinchAdjusted: boolean = false
@@ -39,10 +41,10 @@ export struct ReaderPagedViewport {
         `${frame.slotId}:${frame.asset.assetRequestId}:${frame.part.fragment}`).join('|')
   }
 
-  @Monitor('snapshot', 'active')
+  @Monitor('snapshot', 'active', 'selected')
   onContentChanged(): void {
     const identity = this.identity()
-    if (identity !== this.transformIdentity) {
+    if (identity !== this.transformIdentity || !this.selected) {
       this.cancelGesture()
       this.transformIdentity = identity
       this.zoomState = new ReaderViewportTransform()
@@ -57,8 +59,14 @@ export struct ReaderPagedViewport {
 
   aboutToDisappear(): void { this.cancelGesture() }
 
+  @Monitor('zoomState', 'zoomAnimating', 'pinching', 'active', 'selected')
+  onInputStateChanged(): void {
+    this.onInputLockChange(this.selected && this.active &&
+      (this.zoomState.zoomed() || this.zoomAnimating || this.pinching))
+  }
+
   private gesturesEnabled(): boolean {
-    return this.active && this.snapshot.phase === 'ready' && this.snapshot.frames.length > 0 &&
+    return this.active && this.selected && this.snapshot.phase === 'ready' && this.snapshot.frames.length > 0 &&
       this.snapshot.frames.every((frame: ReaderPagedFrame) => frame.asset.phase === 'displayed')
   }
 
@@ -170,7 +178,7 @@ export struct ReaderPagedViewport {
             snapshot: this.snapshot, slotId: frame.slotId,
             assetRequestId: frame.asset.assetRequestId,
             renderedFragment: frame.part.fragment,
-            frameHeight: this.frameHeight(), active: this.active && !this.zoomAnimating && this.zoomState.scale === 1,
+            frameHeight: this.frameHeight(), active: this.selected && this.active && !this.zoomAnimating && this.zoomState.scale === 1,
             onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
           })
         }, (frame: ReaderPagedFrame): string => `${frame.slotId}:${frame.asset.assetRequestId}:${frame.part.fragment}`)
@@ -188,7 +196,7 @@ export struct ReaderPagedViewport {
     .alignContent(Alignment.Center)
     .width('100%').height('100%')
     .clip(true)
-    .id('rkit-image-viewport')
+    .id(this.selected ? 'rkit-image-viewport' : `rkit-cached-viewport-${this.snapshot.displayIndex}`)
     .onAreaChange((_old: Area, area: Area): void => {
       this.cancelGesture()
       this.viewportWidth = Math.max(1, Number(area.width))
