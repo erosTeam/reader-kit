@@ -63,6 +63,14 @@ export class ReaderViewportTransform {
     return this.zoomed() ? this.constrained(geometry) : new ReaderViewportTransform()
   }
 
+  /** Preserve content-relative translation when the same image is laid out at a new size. */
+  reflow(previous: ReaderViewportGeometry, next: ReaderViewportGeometry): ReaderViewportTransform {
+    if (!this.zoomed()) return new ReaderViewportTransform()
+    return new ReaderViewportTransform(this.scale,
+      this.x * next.contentWidth / Math.max(1, previous.contentWidth),
+      this.y * next.contentHeight / Math.max(1, previous.contentHeight)).constrained(next)
+  }
+
   doubleTapScale(geometry: ReaderViewportGeometry, pinchAdjusted: boolean): number {
     if (pinchAdjusted && this.zoomed()) return 1
     if (!this.zoomed()) return 2

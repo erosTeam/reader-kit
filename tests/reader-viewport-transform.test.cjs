@@ -65,6 +65,27 @@ test('resizing constrains old offsets to the newly measured viewport', () => {
   near(resized.scale, 2)
 })
 
+test('continuous reflow preserves scale and the same original point at the restored row anchor', () => {
+  const portrait = new Geometry(416, 5342, 416, 5342)
+  const landscape = new Geometry(362.33, 4652.23, 362.33, 4652.23)
+  const before = new Transform(1.796, -165, 1804.62)
+  const after = before.reflow(portrait, landscape)
+  const originalAtTop = (g, t, rowAnchor) => (rowAnchor - 0.5 - t.y / g.contentHeight) / t.scale + 0.5
+  near(after.scale, before.scale)
+  near(after.x / landscape.contentWidth, before.x / portrait.contentWidth)
+  near(originalAtTop(portrait, before, 0.05), originalAtTop(landscape, after, 0.05))
+  const returned = after.reflow(landscape, portrait)
+  near(returned.x, before.x); near(returned.y, before.y)
+})
+
+test('continuous short-image reflow obeys the new minimum-row boundaries', () => {
+  const before = new Geometry(416, 220, 416, 127)
+  const after = new Geometry(800, 244, 800, 244)
+  const zoom = new Transform(2, 208, 17).reflow(before, after)
+  near(zoom.scale, 2); near(zoom.x, 400); near(zoom.y, 17 * 244 / 127)
+  assert.deepEqual(new Transform().reflow(before, after), new Transform())
+})
+
 test('continuous long-row focal zoom uses row coordinates without moving its layout rectangle', () => {
   const g = new Geometry(416, 5342, 416, 5342, 720 / 416)
   const localPoint = { x: 150, y: 1100 }

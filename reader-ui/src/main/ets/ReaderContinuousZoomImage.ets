@@ -16,6 +16,7 @@ export struct ReaderContinuousZoomImage {
   @Local private animating: boolean = false
   private componentWidth: number = 1
   private componentHeight: number = 1
+  private measuredImageHeight: number = 1
   private identity: string = ''
   private publishedIdentity: string = ''
   private publishedLock: boolean = false
@@ -55,7 +56,7 @@ export struct ReaderContinuousZoomImage {
   private geometry(): ReaderViewportGeometry {
     const page = this.frame.asset.page
     const pixels = this.frame.asset.kind === 'original' ? page?.width ?? 0 : page?.thumbnail.width ?? 0
-    return new ReaderViewportGeometry(this.componentWidth, this.componentHeight, this.componentWidth, this.imageHeight,
+    return new ReaderViewportGeometry(this.componentWidth, this.componentHeight, this.componentWidth, this.measuredImageHeight,
       pixels > 0 ? pixels / this.componentWidth : 2)
   }
 
@@ -181,16 +182,19 @@ export struct ReaderContinuousZoomImage {
     .width('100%').height('100%')
     .responseRegion(this.interactionRegion())
     .onAreaChange((_old: Area, area: Area): void => {
+      const previous = this.geometry()
       const width = Math.max(1, Number(area.width))
-      if (this.componentWidth !== width) {
+      const changed = this.componentWidth !== width || this.measuredImageHeight !== this.imageHeight
+      if (changed) {
         this.cancelMotion()
-        this.imageTransform = new ReaderViewportTransform()
-        this.pinchAdjusted = false
       }
       this.componentWidth = width
       this.componentHeight = Math.max(1, Number(area.height))
-      this.imageTransform = this.imageTransform.settled(this.geometry())
+      this.measuredImageHeight = this.imageHeight
+      this.imageTransform = changed ? this.imageTransform.reflow(previous, this.geometry()) :
+        this.imageTransform.settled(this.geometry())
       this.publishLock()
+      if (changed && this.imageTransform.zoomed()) this.log('reflow')
     })
     .gesture(GestureGroup(GestureMode.Parallel,
       TapGesture({ count: 2, distanceThreshold: 8 }).onAction((event?: GestureEvent): void => { this.doubleTap(event) }),

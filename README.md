@@ -32,6 +32,12 @@ adjacent units, plus native horizontal swipe paging, double-tap/pinch zoom and z
 It also has an optional native continuous List with original-local visible-position reporting.
 Continuous images also support per-image zoom with List-scroll arbitration. Settings,
 progress persistence, and the production toolbar remain pending.
+Settled continuous zoom now preserves content-relative translation through measured
+width reflow while the List restores its unscaled anchor behind the native frame gate.
+NextN long-original and NextE original/sprite portrait-landscape-portrait endpoints
+were inspected on device237, including new pan and NextN pinch-reset/continued scroll.
+These bounded observations do not accept the diagnostic split-window layout as
+production chrome, all intermediate frames, every pan clamp, or Koma runtime.
 Koma D1 accepts existing local/downloaded pages only, and does not yet derive
 thumbnails. All adapters honestly declare consumer-only cancellation: stale
 results are detached/released, but existing transfers are not physically aborted.

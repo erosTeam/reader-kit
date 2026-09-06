@@ -237,8 +237,6 @@ struct ReaderContinuousList {
       const width = Math.max(1, Number(area.width))
       if (this.viewWidth !== width) {
         this.invalidatePosition()
-        this.lockedKey = ''
-        this.lockedIdentity = ''
       }
       this.viewWidth = width
       this.viewHeight = Math.max(1, Number(area.height))
