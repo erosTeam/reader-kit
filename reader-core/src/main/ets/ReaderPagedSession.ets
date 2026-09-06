@@ -3,6 +3,7 @@ import {
   ReaderSession, ReaderSnapshot, ReaderCatalog, ReaderAssetProvider, ReaderAssetKind, ReaderCancellation,
 } from './ReaderSession'
 import { ReaderDisplayMap, ReaderDisplayPolicy, ReaderDisplayPart, ReaderReadingAnchor, ReaderFragment } from './ReaderDisplayMap'
+import { ReaderThumbnailWindow } from './ReaderThumbnailWindow'
 
 export class ReaderPagedFrame {
   slotId: number
@@ -120,6 +121,8 @@ export class ReaderPagedSession {
   }
 
   cancellationMode(): string { return this.assets.cancellationMode }
+  /** The caller owns and closes the auxiliary preview leases, never reading progress. */
+  createThumbnailWindow(): ReaderThumbnailWindow { return new ReaderThumbnailWindow(this.catalog, this.assets) }
   setViewportActive(active: boolean): void { this.active = active && !this.disposed }
   subscribe(listener: (snapshot: ReaderPagedSnapshot) => void): void {
     this.listener = listener

@@ -10,3 +10,4 @@ export {
 } from './src/main/ets/ReaderDisplayMap'
 export { ReaderPagedSession, ReaderPagedSnapshot, ReaderPagedFrame, ReaderPagedItemSnapshot } from './src/main/ets/ReaderPagedSession'
 export { ReaderViewportGeometry, ReaderViewportTransform } from './src/main/ets/ReaderViewportTransform'
+export { ReaderThumbnailWindow, ReaderThumbnailFrame } from './src/main/ets/ReaderThumbnailWindow'

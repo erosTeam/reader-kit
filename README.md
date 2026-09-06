@@ -66,6 +66,22 @@ thumbnail rail, share/save/original-source actions, auto reading, full settings/
 transition integration and Koma trial chrome remain subsequent slices. Slider mid-drag preview,
 retry/tap interaction and remaining lifecycle combinations still need their own native acceptance.
 
+## Auxiliary thumbnail navigation (D5)
+
+The optional reading surface now adds the reference overlay rail above its fixed bottom toolbar.
+Its native horizontal List uses source indexes and RTL direction; only selecting a tile seeks the reader.
+`ReaderThumbnailWindow` owns visible-range-plus-one-neighbor preview leases over the already prepared
+catalog. It never reopens a unit, selects a reading page, or reports original visibility. Retired requests
+release late assets; retry targets one exact failed slot. NH dimensions come from the preview itself;
+EH retains the sprite cell crop and uniform sheet pixel scale. Unsupported previews do not load originals.
+
+79 core tests pass. N/E237 named native suites each pass one sequence with all eight whole captures/root
+states inspected: opening leaves the main image fixed, later thumbnails load without changing the page,
+selection changes the original, RTL/hide/reopen retain it, and close restores the host. Independent N
+spread selection displays/highlights both original pages; E P117/P118 matches the production rail and
+image rectangles. No default reader, preferences or saved progress changed. Slider-preview following,
+thumbnail failure interaction, background/rotation while browsing and Koma derivation remain unaccepted.
+
 ## Display mapping and anchors (D2)
 
 `ReaderDisplayMap` is an additive, platform-free API. D3 renders its selected

@@ -3,6 +3,7 @@ import { ReaderPagerSurface } from './ReaderPagerSurface'
 import { ReaderContinuousSurface } from './ReaderContinuousSurface'
 import { ReaderChrome } from './ReaderChrome'
 import { ReaderPageStatus } from './ReaderPageStatus'
+import { ReaderThumbnailRail } from './ReaderThumbnailRail'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -18,6 +19,7 @@ export struct ReaderSurface {
   @Event onChromeVisible: (visible: boolean) => void = () => {}
   @Local private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
   @Local private chromeVisible: boolean = true
+  @Local private thumbnailsVisible: boolean = false
 
   aboutToAppear(): void {
     this.session.setNeighborPreload(true)
@@ -103,8 +105,20 @@ export struct ReaderSurface {
         }.width('100%').height('100%').justifyContent(FlexAlign.Center).padding(24)
       }
       if (this.chromeVisible) {
+        if (this.thumbnailsVisible && this.active && this.state.phase === 'ready') {
+          Column() {
+            ReaderThumbnailRail({ session: this.session, snapshot: this.state, accent: this.accent,
+              onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
+                this.session.seekSource(index, unit, navigation)
+              },
+            })
+          }.width('100%').height(156).padding({ top: 8, bottom: 8 })
+            .margin({ bottom: this.bottomInset + 112 }).backgroundColor('#CC000000').clip(true)
+        }
         ReaderChrome({ snapshot: this.state, active: this.active, topInset: this.topInset,
           bottomInset: this.bottomInset, accent: this.accent, onClose: this.onClose,
+          thumbnailsVisible: this.thumbnailsVisible,
+          onThumbnails: (): void => { this.thumbnailsVisible = !this.thumbnailsVisible },
           onPolicy: (policy: ReaderDisplayPolicy): void => { this.session.setPolicy(policy) },
           onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
             const accepted = this.session.seekSource(index, unit, navigation)

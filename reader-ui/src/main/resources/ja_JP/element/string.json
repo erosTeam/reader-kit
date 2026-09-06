@@ -1,5 +1,6 @@
 {
   "string": [
+    { "name": "rkit_thumbnail_unavailable", "value": "プレビューなし" },
     { "name": "rkit_close", "value": "戻る" },
     { "name": "rkit_runtime_settings", "value": "閲覧モード（今回のみ）" },
     { "name": "rkit_seek_page", "value": "ページへ移動" },

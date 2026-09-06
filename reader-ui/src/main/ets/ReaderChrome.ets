@@ -8,6 +8,8 @@ export struct ReaderChrome {
   @Param topInset: number = 0
   @Param bottomInset: number = 0
   @Param accent: ResourceColor = '#D93646'
+  @Param thumbnailsVisible: boolean = false
+  @Event onThumbnails: () => void = () => {}
   @Event onClose: () => void = () => {}
   @Event onPolicy: (policy: ReaderDisplayPolicy) => void = () => {}
   @Event onSeek: (index: number, unit: ReaderUnitKey, navigation: number) => void = () => {}
@@ -125,8 +127,14 @@ export struct ReaderChrome {
             .fontSize(14).fontColor(Color.White).constraintSize({ minWidth: 30 }).maxLines(1).textAlign(TextAlign.End)
         }.width('100%').alignItems(VerticalAlign.Center)
         Row() {
-          // Host image actions, auto-reading and the thumbnail rail are later capability slices.
-          // Keep the reference's trailing layout group; do not invent working-looking actions.
+          // Host image actions and auto-reading remain separate capability slices.
+          Button({ type: ButtonType.Circle }) {
+            SymbolGlyph($r('sys.symbol.rectangle_grid_2x1')).fontSize(22)
+              .fontColor([this.thumbnailsVisible ? this.accent : Color.White])
+          }.width(44).height(44).backgroundColor(Color.Transparent)
+            .enabled(this.active && this.snapshot.phase === 'ready')
+            .id('rkit-toggle-thumbnails').accessibilityText($r('app.string.rkit_thumbnail'))
+            .onClick(this.onThumbnails)
           Blank()
           Button({ type: ButtonType.Circle }) {
             SymbolGlyph($r('sys.symbol.book')).fontSize(22)
