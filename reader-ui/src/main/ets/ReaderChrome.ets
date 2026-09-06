@@ -13,6 +13,7 @@ export struct ReaderChrome {
   @Event onClose: () => void = () => {}
   @Event onPolicy: (policy: ReaderDisplayPolicy) => void = () => {}
   @Event onSeek: (index: number, unit: ReaderUnitKey, navigation: number) => void = () => {}
+  @Event onPreview: (index: number, unit: ReaderUnitKey | null, navigation: number) => void = () => {}
   @Local private preview: number = -1
   private seekUnit: ReaderUnitKey | null = null
   private seekNavigation: number = -1
@@ -24,7 +25,13 @@ export struct ReaderChrome {
         this.snapshot.navigationRevision !== this.seekNavigation)) this.cancelSeek()
   }
 
-  private cancelSeek(): void { this.preview = -1; this.seekUnit = null; this.seekNavigation = -1 }
+  aboutToDisappear(): void { this.cancelSeek() }
+
+  private cancelSeek(): void {
+    const hadPreview = this.seekUnit !== null
+    this.preview = -1; this.seekUnit = null; this.seekNavigation = -1
+    if (hadPreview) this.onPreview(-1, null, -1)
+  }
   private count(): number { return this.snapshot.unit?.pageCount ?? 0 }
   private page(): number { return this.count() > 0 ? (this.snapshot.anchor?.sourceIndexHint ?? 0) + 1 : 0 }
   private value(): number { return this.preview >= 1 ? this.preview : this.page() }
@@ -38,14 +45,19 @@ export struct ReaderChrome {
   private commitSeek(value: number): void {
     const unit = this.seekUnit
     const navigation = this.seekNavigation
+    const current = this.active && this.snapshot.phase === 'ready' && unit !== null &&
+      this.snapshot.unit?.key.equals(unit) && this.snapshot.navigationRevision === navigation
+    if (current && unit !== null) this.onSeek(Math.round(value) - 1, unit, navigation)
     this.cancelSeek()
-    if (unit !== null && this.active) this.onSeek(Math.round(value) - 1, unit, navigation)
   }
 
   private sliderChanged(value: number, mode: SliderChangeMode): void {
     if (mode === SliderChangeMode.Begin) this.beginSeek()
     if (mode === SliderChangeMode.Begin || mode === SliderChangeMode.Moving) {
-      if (this.seekUnit !== null) this.preview = Math.round(value)
+      if (this.seekUnit !== null && this.preview !== Math.round(value)) {
+        this.preview = Math.round(value)
+        this.onPreview(this.preview - 1, this.seekUnit.copy(), this.seekNavigation)
+      }
     } else if (mode === SliderChangeMode.Click) {
       if (this.seekUnit === null) this.beginSeek()
       this.commitSeek(value)
@@ -123,6 +135,9 @@ export struct ReaderChrome {
             .enabled(this.active && this.snapshot.phase === 'ready' && this.count() > 1)
             .id('rkit-source-slider').accessibilityText($r('app.string.rkit_seek_page'))
             .onChange((value: number, mode: SliderChangeMode): void => { this.sliderChanged(value, mode) })
+            .onTouch((event: TouchEvent): void => {
+              if (event.type === TouchType.Cancel) this.cancelSeek()
+            })
           Text(`${this.snapshot.policy.direction === 'rtl' ? this.value() : this.count()}`)
             .fontSize(14).fontColor(Color.White).constraintSize({ minWidth: 30 }).maxLines(1).textAlign(TextAlign.End)
         }.width('100%').alignItems(VerticalAlign.Center)

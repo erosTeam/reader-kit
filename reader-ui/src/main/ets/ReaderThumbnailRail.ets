@@ -17,6 +17,7 @@ export struct ReaderThumbnailRail {
   @Require @Param session: ReaderPagedSession
   @Require @Param snapshot: ReaderPagedSnapshot
   @Param accent: ResourceColor = '#D93646'
+  @Param previewIndex: number = -1
   @Event onSeek: (index: number, unit: ReaderUnitKey, navigation: number) => void = () => {}
   @Local private frames: ReaderThumbnailFrame[] = []
   private source: ThumbnailIndexSource = new ThumbnailIndexSource(0)
@@ -39,9 +40,17 @@ export struct ReaderThumbnailRail {
   onSnapshotChanged(): void {
     if (this.alive && this.navigation !== this.snapshot.navigationRevision) {
       this.navigation = this.snapshot.navigationRevision
-      this.range(this.current(), this.current())
       this.scroller.scrollToIndex(this.current(), false, ScrollAlign.START)
     }
+  }
+
+  @Monitor('previewIndex')
+  onPreviewChanged(): void {
+    if (!this.alive) return
+    const previewing = this.previewIndex >= 0 && this.previewIndex < this.source.totalCount()
+    // The gesture supplies the moving target. Retargeted scroll animations can lag until
+    // release on long lists; position this preview directly and keep native range ownership.
+    this.scroller.scrollToIndex(previewing ? this.previewIndex : this.current(), false)
   }
 
   private current(): number { return this.snapshot.anchor?.sourceIndexHint ?? 0 }

@@ -82,6 +82,26 @@ spread selection displays/highlights both original pages; E P117/P118 matches th
 image rectangles. No default reader, preferences or saved progress changed. Slider-preview following,
 thumbnail failure interaction, background/rotation while browsing and Koma derivation remain unaccepted.
 
+## Transient source seek (D6)
+
+Slider Begin/Moving publishes a unit/navigation-scoped UI preview. It positions the
+auxiliary rail directly without navigating the original or publishing reading progress.
+End/Click commits only a still-current capture; cancellation, inactive/unmounted chrome
+and changed navigation discard it. The native List owns its visible resource range, so
+release does not retire already visible neighboring thumbnails before the List reports.
+
+Device237 N/E candidate3 native interruption suites each pass one real background/resume
+and RTL-release sequence, with all five whole screenshots and roots inspected per host.
+N's271-frame recording follows preview1→9 while original1 stays fixed until release;
+visible thumbnails remain loaded. E's288-frame sustained long-list recording follows
+preview117→396 while original117 stays fixed until release; unknown previews may still
+load. The earlier animated candidate did not follow during E's sustained gesture.
+79 core regressions pass; these are bounded native observations, not complete parity.
+Rotation/unit replacement during an active drag, thumbnail failure/tap arbitration,
+Koma trial chrome and production host capabilities remain open. Defaults and persistence
+are unchanged. Earlier slice limitations above are chronological, superseded only by
+these explicitly observed paths.
+
 ## Display mapping and anchors (D2)
 
 `ReaderDisplayMap` is an additive, platform-free API. D3 renders its selected

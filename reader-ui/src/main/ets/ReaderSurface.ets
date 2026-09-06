@@ -20,6 +20,7 @@ export struct ReaderSurface {
   @Local private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
   @Local private chromeVisible: boolean = true
   @Local private thumbnailsVisible: boolean = false
+  @Local private previewIndex: number = -1
 
   aboutToAppear(): void {
     this.session.setNeighborPreload(true)
@@ -31,11 +32,15 @@ export struct ReaderSurface {
   aboutToDisappear(): void { this.session.close() }
 
   @Monitor('active')
-  onActiveChanged(): void { this.session.setViewportActive(this.active) }
+  onActiveChanged(): void {
+    if (!this.active) this.previewIndex = -1
+    this.session.setViewportActive(this.active)
+  }
 
   private toggleChrome(): void {
     if (!this.active) return
     this.chromeVisible = !this.chromeVisible
+    if (!this.chromeVisible) this.previewIndex = -1
     this.onChromeVisible(this.chromeVisible)
     console.info(`[ReaderSurface] chrome=${this.chromeVisible}`)
   }
@@ -108,6 +113,7 @@ export struct ReaderSurface {
         if (this.thumbnailsVisible && this.active && this.state.phase === 'ready') {
           Column() {
             ReaderThumbnailRail({ session: this.session, snapshot: this.state, accent: this.accent,
+              previewIndex: this.previewIndex,
               onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
                 this.session.seekSource(index, unit, navigation)
               },
@@ -120,6 +126,11 @@ export struct ReaderSurface {
           thumbnailsVisible: this.thumbnailsVisible,
           onThumbnails: (): void => { this.thumbnailsVisible = !this.thumbnailsVisible },
           onPolicy: (policy: ReaderDisplayPolicy): void => { this.session.setPolicy(policy) },
+          onPreview: (index: number, unit: ReaderUnitKey | null, navigation: number): void => {
+            this.previewIndex = this.active && this.chromeVisible && unit !== null &&
+              this.state.unit?.key.equals(unit) && this.state.navigationRevision === navigation ? index : -1
+            console.info(`[ReaderSurface] preview_source=${this.previewIndex} reading_source=${this.state.anchor?.sourceIndexHint ?? -1}`)
+          },
           onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
             const accepted = this.session.seekSource(index, unit, navigation)
             console.info(`[ReaderSurface] seek_source=${index} accepted=${accepted}`)
