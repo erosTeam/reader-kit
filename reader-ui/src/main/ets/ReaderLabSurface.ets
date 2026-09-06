@@ -24,6 +24,7 @@ export struct ReaderLabSurface {
   @Param initialIndex: number = 0
   /** Explicit debug Want only; inject one render failure, never a network fault or cache mutation. */
   @Param failurePage: number = -1
+  @Param failureLayout: string = 'continuous'
   @Param delayedMetricsPage: number = -1
   @Local private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
   @Local private heldMetrics: ReaderLabHeldMetrics | null = null
@@ -50,8 +51,7 @@ export struct ReaderLabSurface {
   }
 
   private error(): string {
-    if (this.state.policy.layout === 'continuous') return this.state.error
-    return this.state.error || this.state.frames.find((frame: ReaderPagedFrame) => frame.asset.error.length > 0)?.asset.error || ''
+    return this.state.error
   }
 
   private presented(slot: number, request: number, success: boolean, width: number, height: number): void {
@@ -65,17 +65,19 @@ export struct ReaderLabSurface {
       height = 0
     }
     this.session.reportPresentation(slot, request, success, width, height)
-    if (!success || this.failureInjected || this.failurePage < 0 || this.state.policy.layout !== 'continuous') return
+    if (!success || this.failureInjected || this.failurePage < 0 || this.state.policy.layout !== this.failureLayout) return
     const state = this.session.snapshot()
     const item = state.window.find((value) => value.frames.some((frame: ReaderPagedFrame) =>
       frame.slotId === slot && frame.asset.assetRequestId === request &&
       frame.part.sourceIndex === this.failurePage && frame.asset.phase === 'displayed'))
     if (item === undefined) return
+    const fragment = item.frames.find((frame: ReaderPagedFrame) =>
+      frame.slotId === slot && frame.asset.assetRequestId === request)!.part.fragment
     this.failureInjected = true
     this.failureTimer = setTimeout((): void => {
       this.failureTimer = 0
-      this.session.reportCachedRenderFailure(state.topologyRevision, item.key, slot, request, 'whole')
-      console.info(`[ReaderLab] injected_render_failure page=${this.failurePage + 1} slot=${slot} request=${request}`)
+      this.session.reportCachedRenderFailure(state.topologyRevision, item.key, slot, request, fragment)
+      console.info(`[ReaderLab] injected_render_failure page=${this.failurePage + 1} slot=${slot} request=${request} fragment=${fragment}`)
     }, 0)
   }
 
@@ -170,6 +172,11 @@ export struct ReaderLabSurface {
       } else {
         ReaderPagerSurface({
           snapshot: this.state, active: this.active,
+          onRetry: (topology: number, key: string, slot: number, request: number): void => {
+            void this.session.retryItem(topology, key, slot, request).then((accepted: boolean): void => {
+              console.info(`[ReaderLab] item_retry key=${key} slot=${slot} request=${request} accepted=${accepted}`)
+            })
+          },
           onSelect: (index: number, topologyRevision: number, navigationRevision: number): void => {
             const accepted = this.session.selectDisplay(index, topologyRevision, navigationRevision)
             console.info(`[ReaderLab] pager_selection index=${index} accepted=${accepted}`)
@@ -230,7 +237,7 @@ export struct ReaderLabSurface {
           .id('rkit-release-metrics').onClick((): void => { this.releaseMetrics() })
       }
       Text(`D3 · cancellation=${this.session.cancellationMode()}` +
-        (this.failurePage >= 0 ? ` · failure-probe=P${this.failurePage + 1}` : '') +
+        (this.failurePage >= 0 ? ` · failure-probe=P${this.failurePage + 1}/${this.failureLayout}` : '') +
         (this.delayedMetricsPage >= 0 ? ` · delay-metrics=P${this.delayedMetricsPage + 1}` : ''))
         .fontSize(11).fontColor($r('sys.color.font_secondary'))
     }

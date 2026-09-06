@@ -1,5 +1,6 @@
 import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPart, ReaderSnapshot, ReaderUnitKey, ReaderFragment } from '@reader-kit/core'
 import { ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/core'
+import { ReaderFailurePanel } from './ReaderFailurePanel'
 
 function partRatio(frame: ReaderPagedFrame): number {
   const page = frame.asset.page
@@ -19,10 +20,13 @@ export struct ReaderPagedViewport {
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
+  @Event onRetry: (slotId: number, requestId: number) => void = () => {}
   @Local private viewportWidth: number = 1
   @Local private viewportHeight: number = 1
   @Local private zoomState: ReaderViewportTransform = new ReaderViewportTransform()
   @Local private zoomAnimating: boolean = false
+  @Local private recovering: boolean = false
+  private recoveryIdentity: string = ''
   private transformIdentity: string = ''
   private gestureIdentity: string = ''
   private pinchStart: ReaderViewportTransform = new ReaderViewportTransform()
@@ -43,8 +47,17 @@ export struct ReaderPagedViewport {
 
   @Monitor('snapshot', 'active', 'selected')
   onContentChanged(): void {
+    const recoveryIdentity = `${this.snapshot.topologyRevision}:${this.snapshot.displayIndex}:${this.snapshot.kind}`
+    if (recoveryIdentity !== this.recoveryIdentity) {
+      this.recoveryIdentity = recoveryIdentity
+      this.recovering = false
+    }
+    const failed = this.snapshot.frames.some((frame: ReaderPagedFrame) => frame.asset.phase === 'failed')
+    if (failed) this.recovering = true
+    else if (this.snapshot.frames.length > 0 && this.snapshot.frames.every((frame: ReaderPagedFrame) =>
+      frame.asset.phase === 'displayed')) this.recovering = false
     const identity = this.identity()
-    if (identity !== this.transformIdentity || !this.selected) {
+    if (identity !== this.transformIdentity || !this.selected || failed) {
       this.cancelGesture()
       this.transformIdentity = identity
       this.zoomState = new ReaderViewportTransform()
@@ -57,6 +70,7 @@ export struct ReaderPagedViewport {
     }
   }
 
+  aboutToAppear(): void { this.onContentChanged() }
   aboutToDisappear(): void { this.cancelGesture() }
 
   @Monitor('zoomState', 'zoomAnimating', 'pinching', 'active', 'selected')
@@ -178,14 +192,18 @@ export struct ReaderPagedViewport {
             snapshot: this.snapshot, slotId: frame.slotId,
             assetRequestId: frame.asset.assetRequestId,
             renderedFragment: frame.part.fragment,
-            frameHeight: this.frameHeight(), active: this.selected && this.active && !this.zoomAnimating && this.zoomState.scale === 1,
+            // Zero leaves the fitted width to the cell's current reactive frame, not this stable-key closure.
+            frameWidth: this.recovering ? this.viewportWidth / this.snapshot.frames.length : 0,
+            frameHeight: this.recovering ? this.viewportHeight : this.frameHeight(),
+            active: this.selected && this.active && !this.zoomAnimating && this.zoomState.scale === 1,
             onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
+            onRetry: this.onRetry,
           })
         }, (frame: ReaderPagedFrame): string => `${frame.slotId}:${frame.asset.assetRequestId}:${frame.part.fragment}`)
       }
       .direction(Direction.Ltr)
-      .width(this.frameHeight() * this.totalRatio())
-      .height(this.frameHeight())
+      .width(this.recovering ? this.viewportWidth : this.frameHeight() * this.totalRatio())
+      .height(this.recovering ? this.viewportHeight : this.frameHeight())
       .scale({ x: this.zoomState.scale, y: this.zoomState.scale })
       .translate({ x: this.zoomState.x, y: this.zoomState.y })
       .animation({ duration: this.zoomAnimating ? 180 : 0, curve: Curve.FastOutSlowIn })
@@ -226,11 +244,13 @@ struct ReaderPagedCell {
   @Require @Param slotId: number
   @Require @Param assetRequestId: number
   @Require @Param renderedFragment: ReaderFragment
+  @Require @Param frameWidth: number
   @Require @Param frameHeight: number
   @Require @Param active: boolean
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
+  @Event onRetry: (slotId: number, requestId: number) => void = () => {}
 
   private frame(): ReaderPagedFrame {
     return this.snapshot.frames.find((frame: ReaderPagedFrame) => frame.slotId === this.slotId &&
@@ -238,22 +258,31 @@ struct ReaderPagedCell {
       new ReaderPagedFrame(0, new ReaderDisplayPart(new ReaderUnitKey('', '', ''), null, 0), new ReaderSnapshot())
   }
 
+  private cellWidth(): number { return this.frameWidth > 0 ? this.frameWidth : this.frameHeight * partRatio(this.frame()) }
+  private imageHeight(): number { return Math.min(this.frameHeight, this.cellWidth() / partRatio(this.frame())) }
+
   build() {
     Stack() {
-      if (this.frame().asset.uri.length > 0) {
+      if (this.frame().asset.phase === 'failed') {
+        ReaderFailurePanel({
+          page: this.frame().part.sourceIndex + 1, compact: this.snapshot.frames.length > 1,
+          retryEnabled: this.active,
+          onRetry: (): void => { this.onRetry(this.slotId, this.frame().asset.requestId) },
+        })
+      } else if (this.frame().asset.uri.length > 0) {
         ReaderPagedImage({
           frame: this.frame(), selectionId: this.snapshot.selectionId,
           slotId: this.slotId, assetRequestId: this.assetRequestId,
           renderedFragment: this.renderedFragment,
           active: this.active && this.snapshot.phase === 'ready',
           onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
-        })
+        }).width(this.imageHeight() * partRatio(this.frame())).height(this.imageHeight())
       }
       if (this.frame().asset.phase === 'idle' || this.frame().asset.phase === 'asset' || this.frame().asset.phase === 'decoding') {
         LoadingProgress().width(32).height(32)
       }
     }
-    .width(this.frameHeight * partRatio(this.frame()))
+    .width(this.cellWidth())
     .height(this.frameHeight).clip(true)
     .id(`rkit-part-${this.frame().part.sourceIndex}-${this.frame().part.fragment}`)
   }

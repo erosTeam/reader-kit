@@ -7,13 +7,16 @@ export class ReaderLabRequest {
   pageIndex: number
   failurePage: number
   delayedMetricsPage: number
+  failureLayout: string
 
-  constructor(work: string, unit: string, pageIndex: number, failurePage: number = -1, delayedMetricsPage: number = -1) {
+  constructor(work: string, unit: string, pageIndex: number, failurePage: number = -1,
+    delayedMetricsPage: number = -1, failureLayout: string = 'continuous') {
     this.work = work
     this.unit = unit
     this.pageIndex = pageIndex
     this.failurePage = failurePage
     this.delayedMetricsPage = delayedMetricsPage
+    this.failureLayout = failureLayout
   }
 }
 
@@ -46,6 +49,7 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
   const page = want.parameters['readerLabPage']
   const failurePage = want.parameters['readerLabFailPage']
   const delayedPage = want.parameters['readerLabDelayMetricsPage']
+  const failureLayout = want.parameters['readerLabFailureLayout']
   if (typeof work !== 'string' || work.length === 0) return
   const index = typeof page === 'string' ? Number(page) : (typeof page === 'number' ? page : 0)
   const failureIndex = typeof failurePage === 'string' ? Number(failurePage) :
@@ -57,5 +61,6 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
     Number.isFinite(index) ? Math.max(0, Math.floor(index)) : 0,
     Number.isSafeInteger(failureIndex) && failureIndex >= 0 ? failureIndex : -1,
     Number.isSafeInteger(delayedIndex) && delayedIndex >= 0 ? delayedIndex : -1,
+    failureLayout === 'single' ? 'single' : failureLayout === 'spread' ? 'spread' : 'continuous',
   ))
 }

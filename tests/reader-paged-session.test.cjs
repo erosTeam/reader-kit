@@ -524,3 +524,53 @@ test('late metrics for a previous continuous row preserve the core current origi
   assert.equal(refined.pageMetadata.find(p => p.sourceIndex === 0).height, 700)
   session.close()
 })
+
+test('paged retry keeps the selected physical half and rejects the other half action', async () => {
+  const { session, key, calls } = setup({ wide: [0] })
+  session.setPolicy(policy({ splitWidePages: true })); session.setNeighborPreload(true)
+  await session.open(key); await tick()
+  decode(session, session.snapshot().frames[0]); session.move('next')
+  const before = session.snapshot(), frame = before.frames[0]
+  assert.equal(frame.part.fragment, 'right')
+  session.reportCachedRenderFailure(before.topologyRevision, '0:right', frame.slotId,
+    frame.asset.assetRequestId, 'right')
+  const failed = session.snapshot().frames[0]
+  assert.equal(failed.asset.phase, 'failed')
+  assert.equal(await session.retryItem(before.topologyRevision, '0:left', failed.slotId, failed.asset.requestId), false)
+  assert.equal(await session.retryItem(before.topologyRevision, '0:right', failed.slotId, failed.asset.requestId), true)
+  const after = session.snapshot()
+  assert.equal(after.displayIndex, before.displayIndex)
+  assert.equal(after.anchor.fragment, 'right'); assert.equal(after.anchor.x, 0.75)
+  assert.equal(after.frames[0].slotId, frame.slotId)
+  session.reportCachedRenderFailure(before.topologyRevision, '0:right', frame.slotId,
+    frame.asset.assetRequestId, 'right')
+  assert.equal(session.snapshot().frames[0].asset.phase, after.frames[0].asset.phase)
+  assert.equal(session.snapshot().frames[0].asset.assetRequestId, after.frames[0].asset.assetRequestId)
+  assert.deepEqual(calls.load.filter(call => call[2]), [['A-0', 'original', true]])
+  decode(session, after.frames[0])
+  assert.equal(session.reportVisible(after.selectionId, after.frames[0].slotId,
+    after.frames[0].asset.assetRequestId, 'right'), true)
+  session.close()
+})
+
+test('paged neighbor retry retains the healthy selected original and its observed anchor', async () => {
+  const { session, key, calls } = setup()
+  session.setPolicy(policy({ layout: 'spread' })); await session.open(key); await tick()
+  const initial = session.snapshot()
+  initial.frames.forEach(frame => decode(session, frame))
+  const before = session.snapshot(), healthy = before.frames[0], other = before.frames[1]
+  assert.equal(session.reportVisible(before.selectionId, healthy.slotId, healthy.asset.assetRequestId, 'whole'), true)
+  session.reportCachedRenderFailure(before.topologyRevision, before.displayKeys[before.displayIndex],
+    other.slotId, other.asset.assetRequestId, 'whole')
+  const failed = session.snapshot().frames[1]
+  assert.equal(await session.retryItem(before.topologyRevision, before.displayKeys[before.displayIndex],
+    failed.slotId, failed.asset.requestId), true)
+  const after = session.snapshot()
+  assert.equal(after.anchor.pageKey, 'A-0'); assert.equal(after.observedAnchor.pageKey, 'A-0')
+  assert.equal(after.frames[0].slotId, healthy.slotId)
+  assert.equal(after.frames[0].asset.assetRequestId, healthy.asset.assetRequestId)
+  assert.equal(after.frames[0].asset.phase, 'displayed')
+  assert.deepEqual(calls.load.filter(call => call[2]), [['A-1', 'original', true]])
+  assert.equal(calls.open.length, 1)
+  session.close()
+})

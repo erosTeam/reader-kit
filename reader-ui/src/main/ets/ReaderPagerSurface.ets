@@ -20,6 +20,7 @@ export struct ReaderPagerSurface {
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
+  @Event onRetry: (topologyRevision: number, itemKey: string, slotId: number, requestId: number) => void = () => {}
 
   build() {
     Stack() {
@@ -28,6 +29,7 @@ export struct ReaderPagerSurface {
           ReaderNativePager({
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
             onSelect: this.onSelect, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
+            onRetry: this.onRetry,
           })
         }, (revision: number): string => `${revision}`)
       } else if (this.snapshot.phase === 'idle' || this.snapshot.phase === 'catalog') {
@@ -47,6 +49,7 @@ struct ReaderNativePager {
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
+  @Event onRetry: (topologyRevision: number, itemKey: string, slotId: number, requestId: number) => void = () => {}
   private source: ReaderPagerIndexSource = new ReaderPagerIndexSource([])
   @Local private inputLocked: boolean = false
   @Local private moving: boolean = false
@@ -117,6 +120,9 @@ struct ReaderNativePager {
           },
           onPresented: this.onPresented,
           onVisible: this.onVisible,
+          onRetry: (slotId: number, requestId: number): void => {
+            this.onRetry(this.createdRevision, key, slotId, requestId)
+          },
           onFailed: (_selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {
             this.onFailed(this.createdRevision, key, slotId, requestId, fragment)
           },

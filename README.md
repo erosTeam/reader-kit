@@ -159,7 +159,7 @@ Each failed continuous row owns a compact `ReaderFailurePanel`, instead of relyi
 selected-page-only button outside the viewport. The native row uses the reference220vp
 minimum on failure; healthy image ratios are unchanged. Failure and loading/image branches
 are exclusive. The shared material preserves the reference196vp compact card and120x40vp
-text action; catalog-level failure remains separate. Paged per-pane failure UI is still pending.
+text action; catalog-level failure remains separate. Paged recovery is described below.
 
 `retryItem` takes topology, item, slot and the current request epoch, including acquisition
 failures whose assetRequestId is still0. It retries only a visible failed asset without
@@ -172,6 +172,21 @@ Lab request; ordinary entries and release builds do not enable it. The probe doe
 caches or downloads. The user's Retry then uses the real provider's forceReload path.
 This exercises failure UI and retry routing, not natural network-timeout handling or quota
 classification. Koma does not yet forward the probe parameter.
+
+### Paged per-pane failure and retry
+
+Paged cells use the same failure panel and exact `retryItem` event path. An error is
+laid out in the full single viewport or equal independent spread panes, not inside
+a long original's narrow fitted width or a landscape spread's short image frame.
+Healthy sibling images remain contained at their own aspect ratio. Recovery geometry
+persists while retries load; all displayed panes restore the normal joined frame.
+Healthy keyed native image subtrees and asset requests are retained during a sibling
+retry. Failure resets image zoom and leaves paging available; cards cannot be zoomed.
+
+`readerLabFailureLayout=single|spread` extends the explicit N/E failure probe; omitted
+or invalid values retain its existing Continuous-only default.64 actual core tests
+include physical-half retry identity and a healthy selected spread sibling. Current
+device acceptance is recorded by the consuming app, not inferred from shared source.
 
 ### Delayed original dimensions diagnostic
 
