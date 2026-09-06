@@ -1,6 +1,14 @@
 {
   "string": [
     {
+      "name": "rkit_image_failed",
+      "value": "图片加载失败"
+    },
+    {
+      "name": "rkit_image_retry_hint",
+      "value": "请重试，重新获取这张图片。"
+    },
+    {
       "name": "rkit_lab_title",
       "value": "共享阅读器 · D3"
     },

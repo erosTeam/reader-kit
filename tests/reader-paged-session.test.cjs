@@ -431,3 +431,71 @@ test('continuous range rejects invalid or inactive demand without acquiring reso
   assert.equal(session.snapshot().anchor.sourceIndexHint, 0)
   session.close()
 })
+
+test('visible neighbor failure retries exactly that request without changing the continuous anchor', async () => {
+  const { session, key, calls } = setup({ fail: [1] })
+  session.setPolicy(policy({ layout: 'continuous' })); session.setNeighborPreload(true)
+  await session.open(key); await tick()
+  let s = session.snapshot(); session.setContinuousRange(0, 1, s.topologyRevision, s.navigationRevision)
+  decode(session, s.frames[0]); s = session.snapshot()
+  session.reportContinuousVisible(s.topologyRevision, s.navigationRevision, '0:whole',
+    s.frames[0].slotId, s.frames[0].asset.assetRequestId, 0.5, 0.8)
+  s = session.snapshot()
+  const failed = s.window.find(w => w.index === 1).frames[0]
+  assert.equal(failed.asset.phase, 'failed'); assert.equal(failed.asset.assetRequestId, 0)
+  assert.equal(await session.retryItem(s.topologyRevision, '1:whole', failed.slotId, failed.asset.requestId), true)
+  const recovered = session.snapshot()
+  assert.equal(recovered.displayIndex, 0)
+  assert.equal(recovered.observedAnchor.y, 0.8)
+  assert.equal(recovered.frames[0].slotId, s.frames[0].slotId)
+  assert.equal(recovered.frames[0].asset.phase, 'displayed')
+  assert.equal(recovered.window.find(w => w.index === 1).frames[0].asset.phase, 'decoding')
+  assert.deepEqual(calls.load.filter(c => c[2]), [['A-1', 'original', true]])
+  assert.equal(calls.release.length, 0); assert.equal(calls.open.length, 1)
+  session.close()
+})
+
+test('item retry rejects cached-only, wrong, duplicate, retired and inactive requests', async () => {
+  const { session, key, calls } = setup({ fail: [1] })
+  session.setPolicy(policy({ layout: 'continuous' })); session.setNeighborPreload(true)
+  await session.open(key); await tick()
+  let s = session.snapshot(); session.setContinuousRange(0, 0, s.topologyRevision, s.navigationRevision)
+  let failed = s.window.find(w => w.index === 1).frames[0]
+  assert.equal(await session.retryItem(s.topologyRevision, '1:whole', failed.slotId, failed.asset.requestId), false)
+  session.setContinuousRange(0, 1, s.topologyRevision, s.navigationRevision); await tick()
+  s = session.snapshot(); failed = s.window.find(w => w.index === 1).frames[0]
+  for (const args of [[s.topologyRevision + 1, '1:whole', failed.slotId, failed.asset.requestId],
+    [s.topologyRevision, '0:whole', failed.slotId, failed.asset.requestId],
+    [s.topologyRevision, '1:whole', failed.slotId + 100, failed.asset.requestId],
+    [s.topologyRevision, '1:whole', failed.slotId, failed.asset.requestId + 100]]) {
+    assert.equal(await session.retryItem(...args), false)
+  }
+  session.setViewportActive(false)
+  assert.equal(await session.retryItem(s.topologyRevision, '1:whole', failed.slotId, failed.asset.requestId), false)
+  session.setViewportActive(true)
+  const retry = session.retryItem(s.topologyRevision, '1:whole', failed.slotId, failed.asset.requestId)
+  assert.equal(await session.retryItem(s.topologyRevision, '1:whole', failed.slotId, failed.asset.requestId), false)
+  assert.equal(await retry, true)
+  const current = session.snapshot().window.find(w => w.index === 1).frames[0]
+  decode(session, current)
+  session.reportCachedRenderFailure(s.topologyRevision, '1:whole', current.slotId, current.asset.assetRequestId, 'whole')
+  assert.equal(await session.retryItem(s.topologyRevision, '1:whole', failed.slotId, failed.asset.requestId), false)
+  session.move('next'); session.move('next'); session.move('next'); await tick()
+  assert.equal(await session.retryItem(s.topologyRevision, '1:whole', current.slotId, current.asset.requestId), false)
+  assert.equal(calls.load.filter(c => c[2]).length, 1)
+  session.close()
+})
+
+test('item retry can target one failed spread pane and leaves the other failure untouched', async () => {
+  const { session, key, calls } = setup({ fail: [0, 1] })
+  session.setPolicy(policy({ layout: 'spread', direction: 'rtl' }))
+  await session.open(key); await tick()
+  const s = session.snapshot(), right = s.frames.find(f => f.part.sourceIndex === 0)
+  assert.equal(await session.retryItem(s.topologyRevision, s.displayKeys[0], right.slotId, right.asset.requestId), true)
+  const current = session.snapshot()
+  assert.equal(current.frames.find(f => f.part.sourceIndex === 0).asset.phase, 'decoding')
+  assert.equal(current.frames.find(f => f.part.sourceIndex === 1).asset.phase, 'failed')
+  assert.deepEqual(calls.load.filter(c => c[2]), [['A-0', 'original', true]])
+  assert.equal(current.observedAnchor, null)
+  session.close()
+})

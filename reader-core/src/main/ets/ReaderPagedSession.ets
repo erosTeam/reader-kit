@@ -291,6 +291,22 @@ export class ReaderPagedSession {
       .map((slot: ReaderPageSlot) => slot.session.retry()))
   }
 
+  /** Retry one visible failed asset without selecting it or reopening its host unit. */
+  async retryItem(topologyRevision: number, itemKey: string, slotId: number, requestId: number): Promise<boolean> {
+    if (this.disposed || !this.active || this.state.phase !== 'ready' || topologyRevision !== this.topologyRevision) return false
+    const index = this.displayKeys.indexOf(itemKey)
+    const visible = this.state.policy.layout === 'continuous'
+      ? this.continuousStart >= 0 && index >= this.continuousStart && index <= this.continuousEnd
+      : index === this.state.displayIndex
+    if (!visible) return false
+    const frame = this.framesAt(index).find((candidate: ReaderPagedFrame) => candidate.slotId === slotId &&
+      candidate.asset.requestId === requestId && candidate.asset.phase === 'failed')
+    const slot = frame === undefined ? undefined : this.slots.find((candidate: ReaderPageSlot) => candidate.id === slotId)
+    if (slot === undefined) return false
+    await slot.session.retry()
+    return true
+  }
+
   private rebuild(): void {
     if (this.state.unit === null || this.state.anchor === null) return
     this.map = new ReaderDisplayMap(this.state.unit, Array.from(this.pages.values()), this.state.policy)

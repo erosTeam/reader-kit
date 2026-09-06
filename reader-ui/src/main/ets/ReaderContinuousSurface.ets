@@ -1,6 +1,7 @@
 import { LengthMetrics } from '@kit.ArkUI'
 import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderFragment } from '@reader-kit/core'
 import { ReaderPagedImage } from './ReaderPagedViewport'
+import { ReaderFailurePanel } from './ReaderFailurePanel'
 
 class ReaderContinuousIndexSource implements IDataSource {
   private keys: string[]
@@ -20,6 +21,7 @@ export struct ReaderContinuousSurface {
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (topology: number, navigation: number, key: string, slot: number, request: number, x: number, y: number) => void = () => {}
   @Event onFailed: (topology: number, key: string, slot: number, request: number, fragment: ReaderFragment) => void = () => {}
+  @Event onRetry: (topology: number, key: string, slot: number, request: number) => void = () => {}
 
   build() {
     Stack() {
@@ -28,6 +30,7 @@ export struct ReaderContinuousSurface {
           ReaderContinuousList({
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
             onRange: this.onRange, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
+            onRetry: this.onRetry,
           })
         }, (revision: number): string => `${revision}`)
       } else if (this.snapshot.phase === 'idle' || this.snapshot.phase === 'catalog') {
@@ -46,6 +49,7 @@ struct ReaderContinuousList {
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (topology: number, navigation: number, key: string, slot: number, request: number, x: number, y: number) => void = () => {}
   @Event onFailed: (topology: number, key: string, slot: number, request: number, fragment: ReaderFragment) => void = () => {}
+  @Event onRetry: (topology: number, key: string, slot: number, request: number) => void = () => {}
   private source: ReaderContinuousIndexSource = new ReaderContinuousIndexSource([])
   private scroller: ListScroller = new ListScroller()
   private nativeReady: Map<string, string> = new Map()
@@ -92,7 +96,10 @@ struct ReaderContinuousList {
     return width > 0 && height > 0 ? this.viewWidth * height / width : this.viewWidth / 0.75
   }
 
-  private rowHeight(index: number): number { return Math.max(220, this.imageHeight(index)) }
+  private rowHeight(index: number): number {
+    const frame = this.snapshot.forItem(this.snapshot.displayKeys[index]).frames[0]
+    return frame?.asset.phase === 'failed' ? 220 : Math.max(220, this.imageHeight(index))
+  }
 
   private schedulePosition(): void {
     if (this.positionTimer !== 0 || !this.active || this.viewWidth <= 1 || this.snapshot.phase !== 'ready') return
@@ -143,7 +150,11 @@ struct ReaderContinuousList {
         ListItem() {
           ReaderContinuousCell({
             snapshot: this.snapshot.forItem(key),
+            active: this.active,
             imageHeight: this.imageHeight(this.snapshot.displayKeys.indexOf(key)),
+            onRetry: (slot: number, request: number): void => {
+              this.onRetry(this.createdRevision, key, slot, request)
+            },
             onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
               const current = this.snapshot.forItem(key).frames[0]
               if (current === undefined || current.slotId !== slot || current.asset.assetRequestId !== request) return
@@ -193,14 +204,22 @@ struct ReaderContinuousList {
 struct ReaderContinuousCell {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param imageHeight: number
+  @Require @Param active: boolean
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onFailed: (slot: number, request: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetired: (slot: number, request: number) => void = () => {}
+  @Event onRetry: (slot: number, request: number) => void = () => {}
 
   build() {
     Stack() {
       ForEach(this.snapshot.frames, (frame: ReaderPagedFrame) => {
-        if (this.snapshot.frames[0].asset.uri.length > 0) {
+        if (this.snapshot.frames[0].asset.phase === 'failed') {
+          ReaderFailurePanel({
+            page: frame.part.sourceIndex + 1, compact: true, retryEnabled: this.active,
+            // Failed acquisition can keep assetRequestId=0 across attempts; read the current epoch.
+            onRetry: (): void => { this.onRetry(frame.slotId, this.snapshot.frames[0].asset.requestId) },
+          })
+        } else if (this.snapshot.frames[0].asset.uri.length > 0) {
           ReaderPagedImage({
             frame: this.snapshot.frames[0], slotId: frame.slotId, assetRequestId: frame.asset.assetRequestId,
             selectionId: this.snapshot.selectionId, renderedFragment: frame.part.fragment, active: false,

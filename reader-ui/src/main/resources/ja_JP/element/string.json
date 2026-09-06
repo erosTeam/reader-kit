@@ -1,6 +1,14 @@
 {
   "string": [
     {
+      "name": "rkit_image_failed",
+      "value": "画像の読み込みに失敗"
+    },
+    {
+      "name": "rkit_image_retry_hint",
+      "value": "再試行して画像を読み込み直します。"
+    },
+    {
       "name": "rkit_lab_title",
       "value": "共有リーダー · D3"
     },

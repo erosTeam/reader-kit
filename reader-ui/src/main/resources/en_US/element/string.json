@@ -1,6 +1,14 @@
 {
   "string": [
     {
+      "name": "rkit_image_failed",
+      "value": "Image failed to load"
+    },
+    {
+      "name": "rkit_image_retry_hint",
+      "value": "Retry to reload this image."
+    },
+    {
       "name": "rkit_lab_title",
       "value": "Shared reader · D3"
     },

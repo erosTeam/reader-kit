@@ -153,6 +153,26 @@ was rejected: a 4000x300 canvas was compressed to parsed4000x284. The corrected 
 leaf is inspected in both continuous and paged viewports with the same200x122 crop.
 Koma's previous selected-item evidence does not accept its current continuous viewport.
 
+### Continuous page failure and retry
+
+Each failed continuous row owns a compact `ReaderFailurePanel`, instead of relying on a
+selected-page-only button outside the viewport. The native row uses the reference220vp
+minimum on failure; healthy image ratios are unchanged. Failure and loading/image branches
+are exclusive. The shared material preserves the reference196vp compact card and120x40vp
+text action; catalog-level failure remains separate. Paged per-pane failure UI is still pending.
+
+`retryItem` takes topology, item, slot and the current request epoch, including acquisition
+failures whose assetRequestId is still0. It retries only a visible failed asset without
+selecting it, reloading healthy siblings or reopening a chapter.61 actual core tests cover
+retry isolation, stale/duplicate/inactive requests and independent spread-pane commands.
+
+N/E debug Want `readerLabFailPage` accepts a zero-based original index and injects one
+explicitly labeled render failure after native decode in Continuous. It is scoped to that
+Lab request; ordinary entries and release builds do not enable it. The probe does not corrupt
+caches or downloads. The user's Retry then uses the real provider's forceReload path.
+This exercises failure UI and retry routing, not natural network-timeout handling or quota
+classification. Koma does not yet forward the probe parameter.
+
 ## Selected-item zoom and pan (D3)
 
 `ReaderViewportTransform` is pure fitted-content/focal-point math. The ArkUI

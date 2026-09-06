@@ -4,3 +4,4 @@ export { ReaderLabLaunchState, ReaderLabRequest, captureReaderLabWant, connectRe
 export { ReaderPagedViewport } from './src/main/ets/ReaderPagedViewport'
 export { ReaderPagerSurface } from './src/main/ets/ReaderPagerSurface'
 export { ReaderContinuousSurface } from './src/main/ets/ReaderContinuousSurface'
+export { ReaderFailurePanel } from './src/main/ets/ReaderFailurePanel'
