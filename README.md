@@ -119,6 +119,27 @@ readiness evidence. No additional gesture interception or visible layout change
 was warranted.79 core tests pass. Remaining host inputs/actions and lifecycle
 combinations are still separate replacement-readiness work.
 
+## Host input boundary (D8)
+
+`ReaderInputPort` delivers synchronous logical previous/next intents to the current
+surface connection. It has no platform key codes or queued commands; a retired
+connection cannot detach a new owner. `ReaderSurface` arbitrates native viewport
+locks, active state, touch, menu and seek preview before forwarding to its session.
+`ReaderVolumeKeys` is an optional platform lease instantiated by the host route.
+It registers distinct callbacks and removes each exact callback on hide/background/close.
+N/E Debug hosts enable it only with explicit `readerLabChrome=true` and
+`readerLabVolumeKeys=true`; no existing preference or default reader is changed.
+
+81 core tests pass. N/E237 each pass the named native paging/menu/zoom/background/
+pinch-reset/continuous/close sequence with all nine whole captures and roots inspected.
+Separate release tests show unchanged system volume while reading and an actual system
+media-volume panel after close; the one-step change is restored to the read baseline4.
+Three whole captures per host verify ordinary-host and system-panel ownership.
+The earlier double-tap-reset test assumption was rejected: the real cycle includes
+native scale. Active-drag/seek/rotation key combinations, platform registration failure
+injection and Koma input runtime remain unaccepted. These bounded results are not
+complete replacement readiness.
+
 ## Display mapping and anchors (D2)
 
 `ReaderDisplayMap` is an additive, platform-free API. D3 renders its selected

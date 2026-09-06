@@ -10,6 +10,7 @@ export struct ReaderChrome {
   @Param accent: ResourceColor = '#D93646'
   @Param thumbnailsVisible: boolean = false
   @Event onThumbnails: () => void = () => {}
+  @Event onMenuVisible: (visible: boolean) => void = () => {}
   @Event onClose: () => void = () => {}
   @Event onPolicy: (policy: ReaderDisplayPolicy) => void = () => {}
   @Event onSeek: (index: number, unit: ReaderUnitKey, navigation: number) => void = () => {}
@@ -25,7 +26,7 @@ export struct ReaderChrome {
         this.snapshot.navigationRevision !== this.seekNavigation)) this.cancelSeek()
   }
 
-  aboutToDisappear(): void { this.cancelSeek() }
+  aboutToDisappear(): void { this.cancelSeek(); this.onMenuVisible(false) }
 
   private cancelSeek(): void {
     const hadPreview = this.seekUnit !== null
@@ -115,7 +116,10 @@ export struct ReaderChrome {
           }.width(44).height(44).backgroundColor(Color.Transparent)
             .id('rkit-runtime-settings').accessibilityText($r('app.string.rkit_runtime_settings'))
             .enabled(this.active && this.snapshot.phase === 'ready')
-            .bindMenu(this.RuntimeMenu)
+            .bindMenu(this.RuntimeMenu, {
+              aboutToAppear: (): void => { this.onMenuVisible(true) },
+              onDisappear: (): void => { this.onMenuVisible(false) },
+            })
         }.width('100%').height(56).alignItems(VerticalAlign.Center)
         Text(`${this.page()} / ${this.count()}`).fontSize(14).fontColor(Color.White)
           .maxLines(1).textAlign(TextAlign.Center).hitTestBehavior(HitTestMode.None)
@@ -164,7 +168,10 @@ export struct ReaderChrome {
           }.width(44).height(44).backgroundColor(Color.Transparent)
             .enabled(this.active && this.snapshot.phase === 'ready')
             .id('rkit-reading-mode').accessibilityText($r('app.string.rkit_runtime_settings'))
-            .bindMenu(this.RuntimeMenu)
+            .bindMenu(this.RuntimeMenu, {
+              aboutToAppear: (): void => { this.onMenuVisible(true) },
+              onDisappear: (): void => { this.onMenuVisible(false) },
+            })
         }.width('100%').alignItems(VerticalAlign.Center)
       }.width('100%').height(this.bottomInset + 112)
         .padding({ left: 16, right: 16, top: 8, bottom: this.bottomInset + 8 })

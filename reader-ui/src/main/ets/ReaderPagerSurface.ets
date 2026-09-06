@@ -16,6 +16,7 @@ class ReaderPagerIndexSource implements IDataSource {
 export struct ReaderPagerSurface {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
+  @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
   @Event onTap: (xFraction: number) => void = () => {}
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
@@ -29,6 +30,7 @@ export struct ReaderPagerSurface {
         ForEach([this.snapshot.topologyRevision], (revision: number) => {
           ReaderNativePager({
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
+            onInputLockChange: this.onInputLockChange,
             onSelect: this.onSelect, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onRetry: this.onRetry,
             onTap: this.onTap,
@@ -46,6 +48,7 @@ export struct ReaderPagerSurface {
 struct ReaderNativePager {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
+  @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
   @Event onTap: (xFraction: number) => void = () => {}
   @Require @Param createdRevision: number
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
@@ -63,10 +66,16 @@ struct ReaderNativePager {
   aboutToAppear(): void {
     this.source = new ReaderPagerIndexSource(this.snapshot.displayKeys)
     this.lastNavigation = this.snapshot.navigationRevision
+    this.reportExternalLock()
   }
   aboutToDisappear(): void {
     if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
     this.pendingChange = 0
+  }
+
+  @Monitor('inputLocked', 'moving', 'active')
+  reportExternalLock(): void {
+    this.onInputLockChange(!this.active || this.inputLocked || this.moving, this.createdRevision)
   }
 
   @Monitor('snapshot')

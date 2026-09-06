@@ -10,6 +10,7 @@ export class ReaderLabRequest {
   failureLayout: string
   readingChrome: boolean = false
   thumbnailFailurePage: number = -1
+  volumeKeys: boolean = false
 
   constructor(work: string, unit: string, pageIndex: number, failurePage: number = -1,
     delayedMetricsPage: number = -1, failureLayout: string = 'continuous') {
@@ -70,5 +71,6 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
   const thumbnailIndex = typeof thumbnailFailure === 'string' ? Number(thumbnailFailure) :
     (typeof thumbnailFailure === 'number' ? thumbnailFailure : -1)
   request.thumbnailFailurePage = Number.isSafeInteger(thumbnailIndex) && thumbnailIndex >= 0 ? thumbnailIndex : -1
+  request.volumeKeys = want.parameters['readerLabVolumeKeys'] === 'true' || want.parameters['readerLabVolumeKeys'] === true
   connectReaderLabLaunch().publish(request)
 }

@@ -1,6 +1,7 @@
 export { ReaderLabSurface } from './src/main/ets/ReaderLabSurface'
 export { ReaderLabAssetProbe } from './src/main/ets/ReaderLabAssetProbe'
 export { ReaderSurface } from './src/main/ets/ReaderSurface'
+export { ReaderVolumeKeys } from './src/main/ets/ReaderVolumeKeys'
 export { ReaderChrome } from './src/main/ets/ReaderChrome'
 export { ReaderTrialWindow } from './src/main/ets/ReaderTrialWindow'
 export { ReaderLabVisibilityState, connectReaderLabVisibility, updateReaderLabForeground } from './src/main/ets/ReaderLabVisibility'

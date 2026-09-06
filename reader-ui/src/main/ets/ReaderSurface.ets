@@ -1,4 +1,5 @@
-import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy } from '@reader-kit/core'
+import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy,
+  ReaderInputPort, ReaderMoveIntent } from '@reader-kit/core'
 import { ReaderPagerSurface } from './ReaderPagerSurface'
 import { ReaderContinuousSurface } from './ReaderContinuousSurface'
 import { ReaderChrome } from './ReaderChrome'
@@ -15,25 +16,35 @@ export struct ReaderSurface {
   @Param topInset: number = 0
   @Param bottomInset: number = 0
   @Param accent: ResourceColor = '#D93646'
+  @Param input: ReaderInputPort | null = null
   @Event onClose: () => void = () => {}
   @Event onChromeVisible: (visible: boolean) => void = () => {}
   @Local private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
   @Local private chromeVisible: boolean = true
   @Local private thumbnailsVisible: boolean = false
   @Local private previewIndex: number = -1
+  private inputConnection: number = 0
+  private inputLocked: boolean = true
+  private inputTopology: number = -1
+  private touching: boolean = false
+  private menuVisible: boolean = false
 
   aboutToAppear(): void {
     this.session.setNeighborPreload(true)
     this.session.setViewportActive(this.active)
     this.session.subscribe((state: ReaderPagedSnapshot): void => { this.state = state })
+    this.inputConnection = this.input?.connect((intent: ReaderMoveIntent): boolean => this.externalMove(intent)) ?? 0
     void this.session.open(this.initialUnit, this.initialIndex)
   }
 
-  aboutToDisappear(): void { this.session.close() }
+  aboutToDisappear(): void {
+    this.input?.disconnect(this.inputConnection)
+    this.session.close()
+  }
 
   @Monitor('active')
   onActiveChanged(): void {
-    if (!this.active) this.previewIndex = -1
+    if (!this.active) { this.previewIndex = -1; this.touching = false }
     this.session.setViewportActive(this.active)
   }
 
@@ -58,11 +69,26 @@ export struct ReaderSurface {
     void this.session.retryItem(topology, key, slot, request)
   }
 
+  private externalMove(intent: ReaderMoveIntent): boolean {
+    if (!this.active || this.state.phase !== 'ready' || this.touching || this.menuVisible ||
+      this.previewIndex >= 0 || this.inputTopology !== this.state.topologyRevision || this.inputLocked) return false
+    const navigation = this.session.snapshot().navigationRevision
+    this.session.move(intent)
+    return this.session.snapshot().navigationRevision !== navigation
+  }
+
+  private reportInputLock(locked: boolean, topology: number): void {
+    if (topology !== this.state.topologyRevision) return
+    this.inputTopology = topology
+    this.inputLocked = locked
+  }
+
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
       if (this.state.policy.layout === 'continuous') {
         ReaderContinuousSurface({
           snapshot: this.state, active: this.active,
+          onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
           onTap: (): void => { this.toggleChrome() },
           onRange: (start: number, end: number, topology: number, navigation: number): void => {
             this.session.setContinuousRange(start, end, topology, navigation)
@@ -83,6 +109,7 @@ export struct ReaderSurface {
       } else {
         ReaderPagerSurface({
           snapshot: this.state, active: this.active,
+          onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
           onTap: (x: number): void => { this.pageTap(x) },
           onSelect: (index: number, topology: number, navigation: number): void => {
             this.session.selectDisplay(index, topology, navigation)
@@ -124,6 +151,7 @@ export struct ReaderSurface {
         ReaderChrome({ snapshot: this.state, active: this.active, topInset: this.topInset,
           bottomInset: this.bottomInset, accent: this.accent, onClose: this.onClose,
           thumbnailsVisible: this.thumbnailsVisible,
+          onMenuVisible: (visible: boolean): void => { this.menuVisible = visible },
           onThumbnails: (): void => { this.thumbnailsVisible = !this.thumbnailsVisible },
           onPolicy: (policy: ReaderDisplayPolicy): void => { this.session.setPolicy(policy) },
           onPreview: (index: number, unit: ReaderUnitKey | null, navigation: number): void => {
@@ -141,5 +169,8 @@ export struct ReaderSurface {
           bottomMargin: this.bottomInset + 8 })
       }
     }.width('100%').height('100%').backgroundColor(Color.Black).id('rkit-reading-surface')
+      .onTouch((event: TouchEvent): void => {
+        this.touching = event.type !== TouchType.Up && event.type !== TouchType.Cancel
+      })
   }
 }

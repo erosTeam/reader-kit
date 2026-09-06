@@ -23,6 +23,7 @@ class ReaderContinuousAfterLayout extends FrameCallback {
 export struct ReaderContinuousSurface {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
+  @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
   @Event onTap: () => void = () => {}
   @Event onRange: (start: number, end: number, topology: number, navigation: number) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
@@ -36,6 +37,7 @@ export struct ReaderContinuousSurface {
         ForEach([this.snapshot.topologyRevision], (revision: number) => {
           ReaderContinuousList({
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
+            onInputLockChange: this.onInputLockChange,
             onRange: this.onRange, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onRetry: this.onRetry,
             onTap: this.onTap,
@@ -52,6 +54,7 @@ export struct ReaderContinuousSurface {
 struct ReaderContinuousList {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
+  @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
   @Event onTap: () => void = () => {}
   @Require @Param createdRevision: number
   @Event onRange: (start: number, end: number, topology: number, navigation: number) => void = () => {}
@@ -75,6 +78,7 @@ struct ReaderContinuousList {
   private first: number = 0
   private last: number = 0
   @Local private lockedKey: string = ''
+  @Local private moving: boolean = false
   private lockedIdentity: string = ''
 
   aboutToAppear(): void {
@@ -82,6 +86,7 @@ struct ReaderContinuousList {
     this.lastNavigation = this.snapshot.navigationRevision
     this.first = this.snapshot.displayIndex
     this.last = this.first
+    this.reportExternalLock()
   }
 
   aboutToDisappear(): void {
@@ -91,8 +96,15 @@ struct ReaderContinuousList {
     if (this.measureTimer !== 0) clearTimeout(this.measureTimer)
   }
 
+  @Monitor('lockedKey', 'pendingPosition', 'moving', 'active')
+  reportExternalLock(): void {
+    this.onInputLockChange(!this.active || this.pendingPosition || this.moving || this.lockedKey.length > 0,
+      this.createdRevision)
+  }
+
   @Monitor('snapshot', 'active')
   onSnapshotChanged(): void {
+    if (!this.active) this.moving = false
     if (this.lockedKey.length > 0) {
       const frame = this.snapshot.forItem(this.lockedKey).frames[0]
       if (frame === undefined || frame.asset.phase !== 'displayed' ||
@@ -256,8 +268,11 @@ struct ReaderContinuousList {
       this.last = end
       this.scheduleMeasure()
     })
-    .onDidScroll((): void => { this.scheduleMeasure() })
-    .onScrollStop((): void => { this.scheduleMeasure() })
+    .onDidScroll((_offset: number, state: ScrollState): void => {
+      this.moving = state !== ScrollState.Idle
+      this.scheduleMeasure()
+    })
+    .onScrollStop((): void => { this.moving = false; this.scheduleMeasure() })
   }
 }
 
