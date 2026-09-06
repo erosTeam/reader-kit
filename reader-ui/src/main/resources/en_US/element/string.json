@@ -1,6 +1,10 @@
 {
   "string": [
     {
+      "name": "rkit_release_metrics",
+      "value": "Release dimensions"
+    },
+    {
       "name": "rkit_image_failed",
       "value": "Image failed to load"
     },

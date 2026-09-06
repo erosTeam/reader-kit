@@ -173,6 +173,21 @@ caches or downloads. The user's Retry then uses the real provider's forceReload 
 This exercises failure UI and retry routing, not natural network-timeout handling or quota
 classification. Koma does not yet forward the probe parameter.
 
+### Delayed original dimensions diagnostic
+
+N/E debug Want `readerLabDelayMetricsPage` holds only the selected zero-based original's
+native size notification; it still acknowledges successful native decode and never clears
+authoritative catalog dimensions. The labeled release action forwards the exact held slot/
+asset request and keeps its own layout mounted, so test chrome cannot move the viewport.
+The probe is absent from ordinary/release entries and does not alter List behavior or caches.
+
+62 actual core tests include previous-row metadata refinement without changing the current
+original anchor. On237, E's delayed P1 1280x782 dimensions refined its row from fallback to
+762px while P2 stayed at the exact same native rectangle and normalized point0.11650, also
+after Home/resume. N's already-known720x9245 original stayed16025px high at point0.06705
+before/after release and Home/resume. No List correction was needed for these endpoints.
+This is a controlled callback-order test, not all late-size/rotation/gesture timing coverage.
+
 ## Selected-item zoom and pan (D3)
 
 `ReaderViewportTransform` is pure fitted-content/focal-point math. The ArkUI

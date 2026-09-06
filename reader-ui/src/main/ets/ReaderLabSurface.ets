@@ -2,6 +2,19 @@ import { ReaderPagedSession, ReaderPagedSnapshot, ReaderPagedFrame, ReaderUnitKe
 import { ReaderPagerSurface } from './ReaderPagerSurface'
 import { ReaderContinuousSurface } from './ReaderContinuousSurface'
 
+class ReaderLabHeldMetrics {
+  slot: number
+  request: number
+  width: number
+  height: number
+  constructor(slot: number, request: number, width: number, height: number) {
+    this.slot = slot
+    this.request = request
+    this.width = width
+    this.height = height
+  }
+}
+
 /** Diagnostic controls only; the viewport has no dependency on this chrome. */
 @ComponentV2
 export struct ReaderLabSurface {
@@ -11,7 +24,10 @@ export struct ReaderLabSurface {
   @Param initialIndex: number = 0
   /** Explicit debug Want only; inject one render failure, never a network fault or cache mutation. */
   @Param failurePage: number = -1
+  @Param delayedMetricsPage: number = -1
   @Local private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
+  @Local private heldMetrics: ReaderLabHeldMetrics | null = null
+  @Local private metricsReleased: boolean = false
   private failureInjected: boolean = false
   private failureTimer: number = 0
 
@@ -39,6 +55,15 @@ export struct ReaderLabSurface {
   }
 
   private presented(slot: number, request: number, success: boolean, width: number, height: number): void {
+    if (success && !this.metricsReleased && this.delayedMetricsPage >= 0 && width > 0 && height > 0 &&
+      this.state.window.some((item) => item.frames.some((frame: ReaderPagedFrame) =>
+        frame.slotId === slot && frame.asset.assetRequestId === request && frame.asset.kind === 'original' &&
+        frame.part.sourceIndex === this.delayedMetricsPage))) {
+      this.heldMetrics = new ReaderLabHeldMetrics(slot, request, width, height)
+      console.info(`[ReaderLab] held_metrics page=${this.delayedMetricsPage + 1} slot=${slot} request=${request} width=${width} height=${height}`)
+      width = 0
+      height = 0
+    }
     this.session.reportPresentation(slot, request, success, width, height)
     if (!success || this.failureInjected || this.failurePage < 0 || this.state.policy.layout !== 'continuous') return
     const state = this.session.snapshot()
@@ -52,6 +77,14 @@ export struct ReaderLabSurface {
       this.session.reportCachedRenderFailure(state.topologyRevision, item.key, slot, request, 'whole')
       console.info(`[ReaderLab] injected_render_failure page=${this.failurePage + 1} slot=${slot} request=${request}`)
     }, 0)
+  }
+
+  private releaseMetrics(): void {
+    const held = this.heldMetrics
+    if (held === null || this.metricsReleased || !this.active || this.state.phase !== 'ready') return
+    this.metricsReleased = true
+    this.session.reportPresentation(held.slot, held.request, true, held.width, held.height)
+    console.info(`[ReaderLab] released_metrics page=${this.delayedMetricsPage + 1} slot=${held.slot} request=${held.request} width=${held.width} height=${held.height}`)
   }
 
   private toggleAlignment(): void {
@@ -142,7 +175,7 @@ export struct ReaderLabSurface {
             console.info(`[ReaderLab] pager_selection index=${index} accepted=${accepted}`)
           },
           onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number): void => {
-            this.session.reportPresentation(slotId, requestId, success, width, height)
+            this.presented(slotId, requestId, success, width, height)
           },
           onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment): void => {
             this.session.reportCachedRenderFailure(topologyRevision, itemKey, slotId, requestId, fragment)
@@ -191,8 +224,14 @@ export struct ReaderLabSurface {
             .onClick((): void => { void this.session.switchUnit('next') })
         }
       }
+      if (this.delayedMetricsPage >= 0) {
+        Button($r('app.string.rkit_release_metrics')).height(40).constraintSize({ minWidth: 120 })
+          .enabled(this.active && this.state.phase === 'ready' && this.heldMetrics !== null && !this.metricsReleased)
+          .id('rkit-release-metrics').onClick((): void => { this.releaseMetrics() })
+      }
       Text(`D3 · cancellation=${this.session.cancellationMode()}` +
-        (this.failurePage >= 0 ? ` · failure-probe=P${this.failurePage + 1}` : ''))
+        (this.failurePage >= 0 ? ` · failure-probe=P${this.failurePage + 1}` : '') +
+        (this.delayedMetricsPage >= 0 ? ` · delay-metrics=P${this.delayedMetricsPage + 1}` : ''))
         .fontSize(11).fontColor($r('sys.color.font_secondary'))
     }
     .padding(12).width('100%').height('100%')

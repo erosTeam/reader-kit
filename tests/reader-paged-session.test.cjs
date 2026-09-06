@@ -499,3 +499,28 @@ test('item retry can target one failed spread pane and leaves the other failure 
   assert.equal(current.observedAnchor, null)
   session.close()
 })
+
+test('late metrics for a previous continuous row preserve the core current original point', async () => {
+  const { session, key, catalog } = setup()
+  const originalPage = catalog.page
+  catalog.page = async (...args) => { const page = await originalPage(...args); page.width = 0; page.height = 0; return page }
+  session.setPolicy(policy({ layout: 'continuous' })); session.setNeighborPreload(true)
+  await session.open(key, 1); await tick()
+  let s = session.snapshot()
+  session.setContinuousRange(1, 1, s.topologyRevision, s.navigationRevision)
+  const previous = s.window.find(w => w.index === 0).frames[0]
+  decode(session, previous)
+  decode(session, s.frames[0], 800, 1200)
+  s = session.snapshot()
+  session.reportContinuousVisible(s.topologyRevision, s.navigationRevision, '1:whole',
+    s.frames[0].slotId, s.frames[0].asset.assetRequestId, 0.5, 0.35)
+  decode(session, previous, 1200, 700)
+  const refined = session.snapshot()
+  assert.equal(refined.displayIndex, 1)
+  assert.equal(refined.anchor.pageKey, 'A-1'); assert.equal(refined.anchor.y, 0.35)
+  assert.equal(refined.observedAnchor.y, 0.35)
+  assert.equal(refined.navigationRevision, s.navigationRevision)
+  assert.equal(refined.topologyRevision, s.topologyRevision)
+  assert.equal(refined.pageMetadata.find(p => p.sourceIndex === 0).height, 700)
+  session.close()
+})
