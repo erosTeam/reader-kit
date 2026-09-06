@@ -46,6 +46,8 @@ export class ReaderPagedSnapshot {
   topologyRevision: number = 0
   navigationRevision: number = 0
   window: ReaderPagedItemSnapshot[] = []
+  /** Geometry metadata may outlive an evicted asset; it is never an image lease. */
+  pageMetadata: ReaderPage[] = []
   canPreviousUnit: boolean = false
   canNextUnit: boolean = false
 
@@ -84,7 +86,8 @@ class ReaderPageSlot {
 
 /**
  * One display/anchor owner. Selected-only uses at most two asset slots; the
- * optional neighbor window uses at most six. ReaderSession continues to
+ * paged neighbor window uses at most six. Continuous demand uses the visible
+ * range plus its immediate neighbors. ReaderSession continues to
  * own each request, decoder fence and lease; hosts still own chapter semantics.
  * Metadata is discovered only within the requested window, never by opening every page.
  */
@@ -100,6 +103,8 @@ export class ReaderPagedSession {
   private topologySignature: string = ''
   private topologyRevision: number = 0
   private navigationRevision: number = 0
+  private continuousStart: number = -1
+  private continuousEnd: number = -1
   private slotSerial: number = 0
   private epoch: number = 0
   private cancellation: ReaderCancellation = new ReaderCancellation()
@@ -139,6 +144,7 @@ export class ReaderPagedSession {
     value.topologyRevision = this.topologyRevision
     value.navigationRevision = this.navigationRevision
     value.displayKeys = this.displayKeys.slice()
+    value.pageMetadata = Array.from(this.pages.values()).map((page: ReaderPage) => page.copy())
     value.frames = this.framesAt(this.state.displayIndex)
     value.window = this.windowIndexes().map((index: number) =>
       new ReaderPagedItemSnapshot(this.displayKeys[index], index, this.framesAt(index)))
@@ -160,6 +166,13 @@ export class ReaderPagedSession {
 
   private windowIndexes(): number[] {
     if (this.map === null || this.map.count() === 0) return []
+    if (this.state.policy.layout === 'continuous' && this.continuousStart >= 0) {
+      const indexes: number[] = []
+      for (let index = this.continuousStart; index <= this.continuousEnd; index++) indexes.push(index)
+      if (this.prefetchNeighbors && this.continuousStart > 0) indexes.push(this.continuousStart - 1)
+      if (this.prefetchNeighbors && this.continuousEnd + 1 < this.map.count()) indexes.push(this.continuousEnd + 1)
+      return indexes
+    }
     const indexes: number[] = [this.state.displayIndex]
     if (this.prefetchNeighbors) {
       if (this.state.displayIndex > 0) indexes.push(this.state.displayIndex - 1)
@@ -184,6 +197,8 @@ export class ReaderPagedSession {
     const epoch = ++this.epoch
     const target = key.copy()
     this.navigationRevision += 1
+    this.continuousStart = -1
+    this.continuousEnd = -1
     this.pendingUnit = target
     this.pendingIndex = index
     this.state.phase = 'catalog'
@@ -218,12 +233,13 @@ export class ReaderPagedSession {
 
   setPolicy(policy: ReaderDisplayPolicy): void {
     if (this.disposed) return
-    // No UI may advertise continuous scrolling through a paged-only controller.
-    if (policy.layout === 'continuous' || !Number.isFinite(policy.widePageRatio) || policy.widePageRatio <= 1) {
+    if (!Number.isFinite(policy.widePageRatio) || policy.widePageRatio <= 1) {
       throw new Error('reader_unsupported_paged_policy')
     }
     this.state.policy = policy.copy()
     this.navigationRevision += 1
+    this.continuousStart = -1
+    this.continuousEnd = -1
     if (this.state.phase === 'ready') this.rebuild()
     else this.emit()
   }
@@ -242,6 +258,8 @@ export class ReaderPagedSession {
       !Number.isInteger(index) || index < 0 || index >= this.map.count()) return false
     if (index === this.state.displayIndex) return true
     this.navigationRevision += 1
+    this.continuousStart = -1
+    this.continuousEnd = -1
     this.state.anchor = this.map.anchorAt(index)
     this.rebuild()
     return true
@@ -253,6 +271,8 @@ export class ReaderPagedSession {
       frame.asset.page === null || !frame.asset.page.thumbnail.available)) return
     this.state.kind = kind
     this.navigationRevision += 1
+    this.continuousStart = -1
+    this.continuousEnd = -1
     this.state.selectionId += 1
     this.reconcile()
   }
@@ -380,6 +400,7 @@ export class ReaderPagedSession {
 
   reportVisible(selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): boolean {
     if (!this.active || this.state.phase !== 'ready' || selectionId !== this.state.selectionId ||
+      this.state.policy.layout === 'continuous' ||
       this.state.kind !== 'original' || this.state.anchor === null || this.map === null) return false
     const slot = this.currentRenderSlot(selectionId, slotId, requestId, fragment)
     if (slot === undefined) return false
@@ -390,6 +411,48 @@ export class ReaderPagedSession {
     if (this.state.observedSelectionId === selectionId) return true
     this.state.observedAnchor = anchor.copy()
     this.state.observedSelectionId = selectionId
+    this.emit()
+    return true
+  }
+
+  /** Native visible range drives demand, not proof that any original was displayed. */
+  setContinuousRange(start: number, end: number, topologyRevision: number, navigationRevision: number): boolean {
+    if (!this.active || this.state.phase !== 'ready' || this.state.policy.layout !== 'continuous' ||
+      this.map === null || topologyRevision !== this.topologyRevision || navigationRevision !== this.navigationRevision ||
+      !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || end >= this.map.count()) return false
+    if (start === this.continuousStart && end === this.continuousEnd) return true
+    this.continuousStart = start
+    this.continuousEnd = end
+    if (this.state.displayIndex !== start) {
+      this.state.displayIndex = start
+      this.state.anchor = this.map.anchorAt(start)
+      this.state.selectionId += 1
+    }
+    this.reconcile()
+    return true
+  }
+
+  /** A measured point on the first visible decoded original; never a total-scroll estimate. */
+  reportContinuousVisible(topologyRevision: number, navigationRevision: number, itemKey: string,
+    slotId: number, requestId: number, x: number, y: number): boolean {
+    if (!this.active || this.state.phase !== 'ready' || this.state.policy.layout !== 'continuous' ||
+      this.state.kind !== 'original' || this.map === null || topologyRevision !== this.topologyRevision ||
+      navigationRevision !== this.navigationRevision || this.continuousStart < 0 ||
+      itemKey !== this.displayKeys[this.continuousStart] || !Number.isFinite(x) || !Number.isFinite(y) ||
+      x < 0 || x > 1 || y < 0 || y > 1) return false
+    const frame = this.framesAt(this.continuousStart).find((candidate: ReaderPagedFrame) =>
+      candidate.slotId === slotId && candidate.asset.assetRequestId === requestId &&
+      candidate.asset.phase === 'displayed' && candidate.asset.kind === 'original')
+    if (frame === undefined || requestId === 0) return false
+    const anchor = this.map.anchorAt(this.continuousStart, 0, x, y)
+    if (anchor === null || anchor.pageKey === null) return false
+    const previous = this.state.observedAnchor
+    if (previous !== null && previous.unit.equals(anchor.unit) && previous.pageKey === anchor.pageKey &&
+      previous.x === x && previous.y === y && previous.fragment === 'whole' &&
+      this.state.observedSelectionId === this.state.selectionId) return true
+    this.state.anchor = anchor.copy()
+    this.state.observedAnchor = anchor
+    this.state.observedSelectionId = this.state.selectionId
     this.emit()
     return true
   }

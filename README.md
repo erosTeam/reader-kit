@@ -29,7 +29,8 @@ id. Ordinary launch/deep links and Reader destinations are unchanged.
 The surface supports explicit previous/next display item, single/physical-half/
 joined-spread rendering, LTR/RTL, original/thumbnail, retry, and host-provided
 adjacent units, plus native horizontal swipe paging, double-tap/pinch zoom and zoomed pan.
-It has no continuous viewport, settings, progress persistence, or production toolbar yet.
+It also has an optional native continuous List with original-local visible-position reporting.
+Continuous zoom, settings, progress persistence, and the production toolbar remain pending.
 Koma D1 accepts existing local/downloaded pages only, and does not yet derive
 thumbnails. All adapters honestly declare consumer-only cancellation: stale
 results are detached/released, but existing transfers are not physically aborted.
@@ -37,7 +38,7 @@ results are detached/released, but existing transfers are not physically aborted
 ## Display mapping and anchors (D2)
 
 `ReaderDisplayMap` is an additive, platform-free API. D3 renders its selected
-single/split/spread item; continuous rendering is not implemented. It builds one reading unit at a
+single/split/spread items or its continuous whole-original rows. It builds one reading unit at a
 time from its known page count and a possibly sparse set of `ReaderPage` metadata.
 It never downloads images or reads preferences. Unknown original dimensions do
 not fall back to thumbnail dimensions.
@@ -122,9 +123,35 @@ single/spread/RTL/half restoration and foreground return. Koma237 currently has
 an empty real shelf: only default-entry, missing-catalog/Retry and Back boundaries
 are covered there. Do not call empty-library testing actual reading acceptance.
 The first empty display counter `1 / 0` was rejected and corrected to `0 / 0`.
-Full-reader parity, continuous rendering, transition chrome and migration
+Full-reader parity, complete continuous gesture handling, transition chrome and migration
 remain open. Exact candidate/device limits are recorded in NextN's
 `docs/plans/active/shared-reader-architecture.md` and project-owned manifests.
+
+## Continuous viewport (D3)
+
+`ReaderContinuousSurface` owns the native List and reuses the existing image/sprite renderer.
+Each original uses its full-width intrinsic height; the List, not a fixed-height image cell,
+clips the viewport. Metadata survives asset eviction without retaining its image lease.
+Independent NH previews use their own dimensions; EH sprite regions use their explicit crop.
+The entire sprite canvas uses decoded pixel dimensions at one uniform scale; parsed occupied
+extents are only a pre-decode fallback, not a replacement for any padded canvas dimension.
+The core session keeps only the actual visible range plus immediate neighbors when enabled.
+
+The visible range drives demand but does not establish a reading observation. Only the first
+visible original decoded by the current native cell may publish its measured top-center point.
+ListScroller item bounds provide the local normalized coordinate; total scroll estimates and
+prefetch completion cannot advance it. Topology/navigation/slot/request fences reject old
+callbacks. Explicit page, asset and mode commands restore the anchor through the same core owner.
+All of this remains transient: host chapter completion and persistence are not reader facts.
+
+The first continuous slice has 58 actual core behavior tests and signed N/E consumers. NextN237
+checks include a 16025px original top/middle/tail, the real adjacent-page seam, NH thumbnail ratio,
+mode/asset restoration, rapid explicit navigation and Home/resume. These are bounded endpoint
+checks, not animation/performance, rotation, late-dimension restoration or continuous-zoom proof.
+NextE237 adds neighboring originals and local-anchor restoration. Its first sprite candidate
+was rejected: a 4000x300 canvas was compressed to parsed4000x284. The corrected shared sprite
+leaf is inspected in both continuous and paged viewports with the same200x122 crop.
+Koma's previous selected-item evidence does not accept its current continuous viewport.
 
 ## Selected-item zoom and pan (D3)
 

@@ -3,3 +3,4 @@ export { ReaderLabVisibilityState, connectReaderLabVisibility, updateReaderLabFo
 export { ReaderLabLaunchState, ReaderLabRequest, captureReaderLabWant, connectReaderLabLaunch } from './src/main/ets/ReaderLabLaunch'
 export { ReaderPagedViewport } from './src/main/ets/ReaderPagedViewport'
 export { ReaderPagerSurface } from './src/main/ets/ReaderPagerSurface'
+export { ReaderContinuousSurface } from './src/main/ets/ReaderContinuousSurface'

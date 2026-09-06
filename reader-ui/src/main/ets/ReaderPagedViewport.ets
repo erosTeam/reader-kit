@@ -260,7 +260,7 @@ struct ReaderPagedCell {
 }
 
 @ComponentV2
-struct ReaderPagedImage {
+export struct ReaderPagedImage {
   @Require @Param frame: ReaderPagedFrame
   @Require @Param slotId: number
   @Require @Param assetRequestId: number
@@ -272,6 +272,8 @@ struct ReaderPagedImage {
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Local private viewportWidth: number = 1
   @Local private viewportHeight: number = 1
+  @Local private sheetWidth: number = 0
+  @Local private sheetHeight: number = 0
   private fullyVisible: boolean = false
   private decoded: boolean = false
 
@@ -285,6 +287,14 @@ struct ReaderPagedImage {
   }
 
   private completed(width: number, height: number): void {
+    const thumbnail = this.frame.asset.page?.thumbnail
+    if (this.frame.asset.kind === 'thumbnail' && thumbnail?.kind === 'sprite' &&
+      Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0 &&
+      (this.sheetWidth !== width || this.sheetHeight !== height)) {
+      this.sheetWidth = width
+      this.sheetHeight = height
+      console.info(`[ReaderViewport] sprite_pixels slot=${this.slotId} request=${this.assetRequestId} real=${width}x${height} parsed=${thumbnail.spriteWidth}x${thumbnail.spriteHeight} crop=${thumbnail.width}x${thumbnail.height}`)
+    }
     this.decoded = true
     this.onPresented(this.slotId, this.assetRequestId, true, width, height)
     this.reportVisible()
@@ -306,8 +316,10 @@ struct ReaderPagedImage {
       if (this.frame.asset.kind === 'thumbnail' && this.frame.asset.page?.thumbnail.kind === 'sprite') {
         Stack({ alignContent: Alignment.TopStart }) {
           Image(this.frame.asset.uri)
-            .width(this.frame.asset.page.thumbnail.spriteWidth * this.spriteScale())
-            .height(this.frame.asset.page.thumbnail.spriteHeight * this.spriteScale())
+            // Parsed extents describe the occupied cells, not necessarily the entire canvas.
+            // Keep one pixel scale on both axes, including any decoded sheet padding.
+            .width((this.sheetWidth || this.frame.asset.page.thumbnail.spriteWidth) * this.spriteScale())
+            .height((this.sheetHeight || this.frame.asset.page.thumbnail.spriteHeight) * this.spriteScale())
             .objectFit(ImageFit.Fill)
             .position({
               x: -this.frame.asset.page.thumbnail.offsetX * this.spriteScale(),

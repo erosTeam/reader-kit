@@ -45,6 +45,10 @@
       "value": "見開き"
     },
     {
+      "name": "rkit_continuous",
+      "value": "連続"
+    },
+    {
       "name": "rkit_ltr",
       "value": "左→右"
     },

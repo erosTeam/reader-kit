@@ -177,9 +177,9 @@ test('failed next unit retains old pixels/observed anchor; retry commits only ne
   session.close()
 })
 
-test('final cover-aligned spread stays in unit; unsupported continuous policy is rejected', async () => {
+test('final cover-aligned spread stays in unit; invalid ratio policy is rejected', async () => {
   const { session, key } = setup({ count: 4 })
-  assert.throws(() => session.setPolicy(policy({ layout: 'continuous' })), /unsupported/)
+  assert.throws(() => session.setPolicy(policy({ widePageRatio: 0 })), /unsupported/)
   session.setPolicy(policy({ layout: 'spread', firstPageAlone: true }))
   await session.open(key, 3); await tick()
   assert.equal(session.snapshot().displayCount, 3)
@@ -322,5 +322,112 @@ test('window projections are detached and disabling preload releases only neighb
   session.setNeighborPreload(false)
   assert.deepEqual(calls.release.sort(), ['original:A-1', 'original:A-3'])
   assert.equal(session.snapshot().frames[0].slotId, state.frames[0].slotId)
+  session.close()
+})
+
+test('continuous demand is the visible range plus neighbors, not the entire catalog', async () => {
+  const { session, key, calls } = setup({ count: 30, wide: [2] })
+  session.setPolicy(policy({ layout: 'continuous', splitWidePages: true }))
+  session.setNeighborPreload(true)
+  await session.open(key, 2); await tick()
+  let s = session.snapshot()
+  assert.equal(s.displayCount, 30)
+  assert.equal(session.setContinuousRange(2, 5, s.topologyRevision, s.navigationRevision), true)
+  await tick(); s = session.snapshot()
+  assert.deepEqual(s.window.map(w => w.index), [2, 3, 4, 5, 1, 6])
+  assert.equal(calls.load.length, 6)
+  assert.equal(calls.open.length, 1)
+  assert.equal(s.observedAnchor, null)
+  const slot = s.window.find(w => w.index === 5).frames[0].slotId
+  assert.equal(session.setContinuousRange(5, 5, s.topologyRevision, s.navigationRevision), true)
+  await tick(); s = session.snapshot()
+  assert.deepEqual(s.window.map(w => w.index), [5, 4, 6])
+  assert.equal(s.frames[0].slotId, slot)
+  assert.deepEqual(calls.release.sort(), ['original:A-1', 'original:A-2', 'original:A-3'])
+  assert.equal(s.pageMetadata.find(p => p.sourceIndex === 2).width, 1800)
+  s.pageMetadata[0].width = -5
+  assert.ok(session.snapshot().pageMetadata.every(p => p.width > 0))
+  session.close()
+})
+
+test('continuous observations require decoded active first-visible original and valid point', async () => {
+  const { session, key } = setup()
+  session.setPolicy(policy({ layout: 'continuous' })); session.setNeighborPreload(true)
+  await session.open(key); await tick()
+  let s = session.snapshot()
+  session.setContinuousRange(0, 1, s.topologyRevision, s.navigationRevision)
+  await tick(); s = session.snapshot()
+  const current = s.frames[0], next = s.window.find(w => w.index === 1).frames[0]
+  const observe = (f, index, y) => session.reportContinuousVisible(s.topologyRevision, s.navigationRevision,
+    `${index}:whole`, f.slotId, f.asset.assetRequestId, 0.5, y)
+  assert.equal(observe(current, 0, 0.25), false)
+  decode(session, current); decode(session, next)
+  assert.equal(session.snapshot().observedAnchor, null)
+  assert.equal(observe(next, 1, 0), false)
+  for (const y of [-0.1, 1.1, NaN, Infinity]) assert.equal(observe(current, 0, y), false)
+  assert.equal(session.reportVisible(s.selectionId, current.slotId, current.asset.assetRequestId, 'whole'), false)
+  assert.equal(observe(current, 0, 0.25), true)
+  assert.equal(session.snapshot().anchor.y, 0.25)
+  assert.equal(session.snapshot().observedAnchor.y, 0.25)
+  assert.equal(observe(current, 0, 0.75), true)
+  session.setViewportActive(false)
+  assert.equal(observe(current, 0, 0.9), false)
+  assert.equal(session.snapshot().observedAnchor.y, 0.75)
+  session.close()
+})
+
+test('old continuous demand and geometry cannot undo a navigation or mode command', async () => {
+  const { session, key } = setup()
+  session.setPolicy(policy({ layout: 'continuous' }))
+  await session.open(key); await tick()
+  let s = session.snapshot(); session.setContinuousRange(0, 0, s.topologyRevision, s.navigationRevision)
+  decode(session, s.frames[0]); s = session.snapshot()
+  const f = s.frames[0]
+  session.move('next'); await tick()
+  assert.equal(session.setContinuousRange(0, 0, s.topologyRevision, s.navigationRevision), false)
+  assert.equal(session.reportContinuousVisible(s.topologyRevision, s.navigationRevision,
+    '0:whole', f.slotId, f.asset.assetRequestId, 0.5, 0.4), false)
+  assert.equal(session.snapshot().anchor.sourceIndexHint, 1)
+  const newer = session.snapshot()
+  session.setPolicy(policy({ layout: 'single' }))
+  assert.equal(session.setContinuousRange(1, 1, newer.topologyRevision, newer.navigationRevision), false)
+  session.close()
+})
+
+test('continuous normalized original anchor survives thumbnail and layout transitions', async () => {
+  const { session, key } = setup()
+  session.setPolicy(policy({ layout: 'continuous' }))
+  await session.open(key); await tick()
+  let s = session.snapshot();session.setContinuousRange(0, 0, s.topologyRevision, s.navigationRevision)
+  decode(session, s.frames[0]);s = session.snapshot()
+  assert.equal(session.reportContinuousVisible(s.topologyRevision, s.navigationRevision,
+    '0:whole', s.frames[0].slotId, s.frames[0].asset.assetRequestId, 0.5, 0.6), true)
+  session.setAssetKind('thumbnail');await tick()
+  s = session.snapshot();session.setContinuousRange(0, 0, s.topologyRevision, s.navigationRevision)
+  decode(session, s.frames[0]);s = session.snapshot()
+  assert.equal(session.reportContinuousVisible(s.topologyRevision, s.navigationRevision,
+    '0:whole', s.frames[0].slotId, s.frames[0].asset.assetRequestId, 0.5, 0), false)
+  assert.equal(session.snapshot().observedAnchor.y, 0.6)
+  session.setAssetKind('original'); await tick()
+  assert.equal(session.snapshot().anchor.y, 0.6)
+  session.setPolicy(policy({ layout: 'spread' }))
+  assert.equal(session.snapshot().anchor.y, 0.6)
+  session.setPolicy(policy({ layout: 'continuous' }))
+  assert.equal(session.snapshot().anchor.y, 0.6)
+  session.close()
+})
+
+test('continuous range rejects invalid or inactive demand without acquiring resources', async () => {
+  const { session, key, calls } = setup()
+  session.setPolicy(policy({ layout: 'continuous' }))
+  await session.open(key); await tick()
+  const s = session.snapshot()
+  for (const [start, end] of [[-1, 0], [2, 1], [0, 5], [0.5, 1], [0, Infinity]]) {
+    assert.equal(session.setContinuousRange(start, end, s.topologyRevision, s.navigationRevision), false)
+  }
+  session.setViewportActive(false)
+  assert.equal(session.setContinuousRange(1, 2, s.topologyRevision, s.navigationRevision), false)
+  assert.equal(calls.load.length, 1)
+  assert.equal(session.snapshot().anchor.sourceIndexHint, 0)
   session.close()
 })

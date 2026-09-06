@@ -45,6 +45,10 @@
       "value": "Spread"
     },
     {
+      "name": "rkit_continuous",
+      "value": "Continuous"
+    },
+    {
       "name": "rkit_ltr",
       "value": "LTR"
     },

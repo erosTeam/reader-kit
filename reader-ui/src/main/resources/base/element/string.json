@@ -45,6 +45,10 @@
       "value": "双页"
     },
     {
+      "name": "rkit_continuous",
+      "value": "连续"
+    },
+    {
       "name": "rkit_ltr",
       "value": "左→右"
     },
