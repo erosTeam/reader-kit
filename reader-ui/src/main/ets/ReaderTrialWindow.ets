@@ -6,29 +6,46 @@ import { window } from '@kit.ArkUI'
  * It does not change status visibility, orientation or stored preferences.
  */
 export class ReaderTrialWindow {
+  private static operations: Promise<void> = Promise.resolve()
+  private started: boolean = false
   private closed: boolean = false
   private mainWindow: window.Window | null = null
   private previous: window.SystemBarProperties | null = null
-  private opening: Promise<void> = Promise.resolve()
+  private closing: Promise<void> | null = null
+
+  private static enqueue(operation: () => Promise<void>, failure: string): Promise<void> {
+    const completion = ReaderTrialWindow.operations.then(operation).catch((error: Error): void => {
+      console.warn(`[ReaderTrialWindow] ${failure}=${error.message}`)
+    })
+    // Each submitted platform operation settles before another lease reads or writes colors.
+    // The observed failure is handled here so legacy void consumers cannot leak a rejection.
+    ReaderTrialWindow.operations = completion
+    return completion
+  }
 
   open(context: common.UIAbilityContext): void {
-    this.opening = window.getLastWindow(context).then(async (mainWindow: window.Window): Promise<void> => {
+    if (this.started || this.closed) return
+    this.started = true
+    ReaderTrialWindow.enqueue(async (): Promise<void> => {
+      if (this.closed) return
+      const mainWindow = await window.getLastWindow(context)
       if (this.closed) return
       this.mainWindow = mainWindow
       this.previous = mainWindow.getWindowSystemBarProperties()
       await mainWindow.setWindowSystemBarProperties({ statusBarContentColor: '#FFFFFFFF' })
       console.info('[ReaderTrialWindow] status_content=light')
-    }).catch((error: Error): void => { console.warn(`[ReaderTrialWindow] open_failed=${error.message}`) })
+    }, 'open_failed')
   }
 
-  close(): void {
-    if (this.closed) return
+  close(): Promise<void> {
+    if (this.closing !== null) return this.closing
     this.closed = true
-    void this.opening.then(async (): Promise<void> => {
+    this.closing = ReaderTrialWindow.enqueue(async (): Promise<void> => {
       if (this.mainWindow !== null && this.previous !== null) {
         await this.mainWindow.setWindowSystemBarProperties(this.previous)
         console.info('[ReaderTrialWindow] status_properties_restored')
       }
-    }).catch((error: Error): void => { console.warn(`[ReaderTrialWindow] restore_failed=${error.message}`) })
+    }, 'restore_failed')
+    return this.closing
   }
 }
