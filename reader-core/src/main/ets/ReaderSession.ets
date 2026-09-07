@@ -1,5 +1,6 @@
 import { ReaderUnitKey, ReaderUnit, ReaderPage } from './ReaderContent'
 import { ReaderReadingAnchor } from './ReaderDisplayMap'
+import { ReaderImageInformation, ReaderImageInformationSource } from './ReaderImageInformation'
 export { ReaderUnitKey, ReaderUnit, ReaderPage, ReaderThumbnail } from './ReaderContent'
 
 export type ReaderAssetKind = 'original' | 'thumbnail'
@@ -22,9 +23,12 @@ export class ReaderAsset {
   private released: boolean = false
   private releaseResource: () => void
 
-  constructor(uri: string, releaseResource: () => void = () => {}) {
+  information: ReaderImageInformationSource | null
+
+  constructor(uri: string, releaseResource: () => void = () => {}, information: ReaderImageInformationSource | null = null) {
     this.uri = uri
     this.releaseResource = releaseResource
+    this.information = information
   }
 
   release(): void {
@@ -41,6 +45,7 @@ export interface ReaderCatalog {
 }
 
 export interface ReaderAssetProvider {
+  informationSupported?: boolean
   /** D1 exposes existing service limits instead of claiming detached requests were aborted. */
   cancellationMode: 'consumer-only' | 'transport'
   load(page: ReaderPage, kind: ReaderAssetKind, cancellation: ReaderCancellation, forceReload: boolean): Promise<ReaderAsset>
@@ -56,6 +61,7 @@ export class ReaderSnapshot {
   requestId: number = 0
   /** Identity of uri/page, retained while a different unit is only being prepared. */
   assetRequestId: number = 0
+  informationAvailable: boolean = false
   error: string = ''
   canPreviousUnit: boolean = false
   canNextUnit: boolean = false
@@ -73,6 +79,7 @@ export class ReaderSnapshot {
     value.uri = this.uri
     value.requestId = this.requestId
     value.assetRequestId = this.assetRequestId
+    value.informationAvailable = this.informationAvailable
     value.error = this.error
     value.canPreviousUnit = this.canPreviousUnit
     value.canNextUnit = this.canNextUnit
@@ -110,6 +117,19 @@ export class ReaderSession {
   }
 
   snapshot(): ReaderSnapshot { return this.state.copy() }
+  async imageInformation(requestId: number): Promise<ReaderImageInformation | null> {
+    const asset = this.asset
+    if (!this.current(requestId) || this.state.phase !== 'displayed' || this.state.kind !== 'original' ||
+      this.state.assetRequestId !== requestId || asset?.information === null || asset === null) return null
+    try {
+      const information = await asset.information.read()
+      return this.current(requestId) && this.asset === asset && this.state.phase === 'displayed'
+        ? information.copy() : null
+    } catch (_error) {
+      // Metadata failure is not an image load failure.
+      return null
+    }
+  }
   cancellationMode(): string { return this.assets.cancellationMode }
   setViewportActive(active: boolean): void { this.viewportActive = !this.disposed && active }
 
@@ -200,6 +220,7 @@ export class ReaderSession {
     this.state.sourceIndex = index
     this.state.kind = kind
     this.state.page = null
+    this.state.informationAvailable = false
     this.state.uri = ''
     this.state.assetRequestId = 0
     this.releaseAsset()
@@ -223,6 +244,7 @@ export class ReaderSession {
       }
       this.asset = asset
       this.state.uri = asset.uri
+      this.state.informationAvailable = asset.information !== null
       this.state.assetRequestId = epoch
       this.state.phase = 'decoding'
       this.emit()
@@ -285,6 +307,7 @@ export class ReaderSession {
     this.epoch += 1
     this.releaseAsset()
     this.state.phase = 'closed'
+    this.state.informationAvailable = false
     this.state.uri = ''
     this.state.assetRequestId = 0
     this.emit()

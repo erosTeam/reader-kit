@@ -3,6 +3,7 @@ import { ReaderAsset, ReaderAssetKind, ReaderAssetProvider, ReaderCancellation, 
 /** Explicit Debug-lab probe. One missing URI exercises native decode failure, not transport failure. */
 export class ReaderLabAssetProbe implements ReaderAssetProvider {
   cancellationMode: 'consumer-only' | 'transport'
+  informationSupported: boolean
   private provider: ReaderAssetProvider
   private thumbnailIndex: number
   private injected: boolean = false
@@ -11,6 +12,7 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
     this.provider = provider
     this.thumbnailIndex = thumbnailIndex
     this.cancellationMode = provider.cancellationMode
+    this.informationSupported = provider.informationSupported === true
   }
 
   async load(page: ReaderPage, kind: ReaderAssetKind, cancellation: ReaderCancellation,

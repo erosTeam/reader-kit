@@ -4,6 +4,7 @@ import {
 } from './ReaderSession'
 import { ReaderDisplayMap, ReaderDisplayPolicy, ReaderDisplayPart, ReaderReadingAnchor, ReaderFragment } from './ReaderDisplayMap'
 import { ReaderThumbnailWindow } from './ReaderThumbnailWindow'
+import { ReaderImageInformation } from './ReaderImageInformation'
 
 export class ReaderPagedFrame {
   slotId: number
@@ -113,6 +114,7 @@ export class ReaderPagedSession {
   private pendingIndex: number = 0
   private disposed: boolean = false
   private active: boolean = false
+  private activityEpoch: number = 0
   private listener: ((snapshot: ReaderPagedSnapshot) => void) | null = null
 
   constructor(catalog: ReaderCatalog, assets: ReaderAssetProvider) {
@@ -121,9 +123,26 @@ export class ReaderPagedSession {
   }
 
   cancellationMode(): string { return this.assets.cancellationMode }
+  informationSupported(): boolean { return this.assets.informationSupported === true }
+  async imageInformation(slotId: number, requestId: number, unit: ReaderUnitKey,
+    navigation: number): Promise<ReaderImageInformation | null> {
+    const expectedUnit = unit.copy()
+    const activity = this.activityEpoch
+    const selected = (): boolean => this.active && !this.disposed && this.state.phase === 'ready' &&
+      activity === this.activityEpoch && this.state.kind === 'original' && this.state.unit?.key.equals(expectedUnit) === true &&
+      this.navigationRevision === navigation && this.framesAt(this.state.displayIndex)
+        .some((frame: ReaderPagedFrame): boolean => frame.slotId === slotId && frame.asset.assetRequestId === requestId)
+    if (!selected()) return null
+    const slot = this.slots.find((value: ReaderPageSlot): boolean => value.id === slotId)
+    const information = await slot?.session.imageInformation(requestId) ?? null
+    return selected() ? information : null
+  }
   /** The caller owns and closes the auxiliary preview leases, never reading progress. */
   createThumbnailWindow(): ReaderThumbnailWindow { return new ReaderThumbnailWindow(this.catalog, this.assets) }
-  setViewportActive(active: boolean): void { this.active = active && !this.disposed }
+  setViewportActive(active: boolean): void {
+    if (this.active && !active) this.activityEpoch += 1
+    this.active = active && !this.disposed
+  }
   subscribe(listener: (snapshot: ReaderPagedSnapshot) => void): void {
     this.listener = listener
     this.emit()

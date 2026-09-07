@@ -1,4 +1,6 @@
-import { ReaderPagedSnapshot, ReaderDisplayPolicy, ReaderUnitKey } from '@reader-kit/core'
+import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPolicy, ReaderUnitKey } from '@reader-kit/core'
+import { uiMaterial } from '@kit.ArkUI'
+import { deviceInfo } from '@kit.BasicServicesKit'
 
 /** Default overlay chrome. It emits intentions; it never opens a catalog or writes preferences. */
 @ComponentV2
@@ -11,6 +13,10 @@ export struct ReaderChrome {
   @Param thumbnailsVisible: boolean = false
   @Param shareAvailable: boolean = false
   @Param shareBusy: boolean = false
+  @Param informationBusy: boolean = false
+  @Param informationPreparing: boolean = false
+  @Param informationAvailable: boolean = false
+  @Event onInformation: (frame: ReaderPagedFrame) => void = () => {}
   @Event onShare: () => void = () => {}
   @Event onThumbnails: () => void = () => {}
   @Event onMenuVisible: (visible: boolean) => void = () => {}
@@ -19,6 +25,7 @@ export struct ReaderChrome {
   @Event onSeek: (index: number, unit: ReaderUnitKey, navigation: number) => void = () => {}
   @Event onPreview: (index: number, unit: ReaderUnitKey | null, navigation: number) => void = () => {}
   @Local private preview: number = -1
+  @Local private moreShown: boolean = false
   private seekUnit: ReaderUnitKey | null = null
   private seekNavigation: number = -1
 
@@ -72,6 +79,45 @@ export struct ReaderChrome {
     const policy = this.snapshot.policy.copy()
     policy.layout = layout
     this.onPolicy(policy)
+  }
+
+  private informationFrames(): ReaderPagedFrame[] {
+    return this.snapshot.frames.filter((frame: ReaderPagedFrame): boolean =>
+      frame.asset.kind === 'original' && frame.asset.phase === 'displayed' && frame.asset.informationAvailable)
+  }
+
+  private selectInformation(frame: ReaderPagedFrame): void {
+    this.moreShown = false
+    this.onInformation(frame)
+  }
+
+  @Builder
+  private InformationChoice() {
+    Menu() {
+      ForEach(this.snapshot.frames, (frame: ReaderPagedFrame, index: number) => {
+        MenuItem({ content: index === 0 ? $r('app.string.rkit_info_left', frame.part.sourceIndex + 1) :
+          $r('app.string.rkit_info_right', frame.part.sourceIndex + 1) })
+          .enabled(frame.asset.kind === 'original' && frame.asset.phase === 'displayed' && frame.asset.informationAvailable)
+          .id(`rkit-info-source-${frame.part.sourceIndex}`)
+          .onClick((): void => { this.selectInformation(frame) })
+      }, (frame: ReaderPagedFrame): string => `${frame.slotId}`)
+    }
+  }
+
+  @Builder
+  private MoreMenu() {
+    Menu() {
+      if (this.snapshot.frames.length > 1) {
+        MenuItem({ content: $r('app.string.rkit_image_info'), builder: this.InformationChoice })
+          .id('rkit-image-info')
+      } else {
+        MenuItem({ content: $r('app.string.rkit_image_info') }).id('rkit-image-info')
+          .onClick((): void => {
+            const frame = this.informationFrames()[0]
+            if (frame !== undefined) this.selectInformation(frame)
+          })
+      }
+    }
   }
 
   @Builder
@@ -135,6 +181,25 @@ export struct ReaderChrome {
               aboutToAppear: (): void => { this.onMenuVisible(true) },
               onDisappear: (): void => { this.onMenuVisible(false) },
             })
+          if (this.informationAvailable) {
+            Button({ type: ButtonType.Circle }) {
+              if (this.informationPreparing) {
+                LoadingProgress().width(22).height(22).color(Color.White)
+              } else {
+                SymbolGlyph($r('sys.symbol.dot_grid_2x2')).fontSize(22).fontColor([Color.White])
+              }
+            }.width(44).height(44).backgroundColor(Color.Transparent)
+              .id('rkit-more').accessibilityText($r('app.string.rkit_more'))
+              .enabled(this.active && this.informationFrames().length > 0 && !this.informationBusy && !this.shareBusy)
+              .onClick((): void => { this.moreShown = true })
+              .bindMenu(this.moreShown, this.MoreMenu, {
+                placement: Placement.BottomRight,
+                systemMaterial: deviceInfo.apiAvailable('26.0.0') ?
+                  new uiMaterial.ImmersiveMaterial({ style: uiMaterial.ImmersiveStyle.THICK }) : undefined,
+                aboutToAppear: (): void => { this.onMenuVisible(true) },
+                onDisappear: (): void => { this.moreShown = false; this.onMenuVisible(false) },
+              })
+          }
         }.width('100%').height(56).alignItems(VerticalAlign.Center)
         Text(`${this.page()} / ${this.count()}`).fontSize(14).fontColor(Color.White)
           .maxLines(1).textAlign(TextAlign.Center).hitTestBehavior(HitTestMode.None)

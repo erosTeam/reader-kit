@@ -389,6 +389,29 @@ qualitative sequence evidence, not clean-motion or pixel-geometry acceptance.
 Pinch-to-remaining-finger continuity, rotation, concurrent topology change during
 drag, Koma pager behavior and all later migration work remain unverified.
 
+## Asset-bound image information (D10)
+
+Hosts may attach a read-only `ReaderImageInformationSource` to a retained
+`ReaderAsset`. Core exposes it only for a currently displayed original and fences
+the result by slot, request, unit, navigation and foreground generation. It never
+derives file dimensions or format from catalog/thumbnail metadata, and metadata
+failure does not fail the displayed image. The optional platform file adapter
+reads ImageSource headers without fetching or decoding another full image.
+
+The shared chrome uses a native more-menu and visual left/right source choices
+for spreads, then a system information dialog. Preparation indication ends when
+the dialog appears; modal input remains locked until dismissal. The composed
+HAR strings use host resource names, not numeric IDs from a different main/test
+package. Unsupported hosts keep the capability absent.
+
+92 core tests cover actual file facts, error recovery, stale requests, LTR/RTL
+source identity and delayed results after navigation/background/close. The N/E
+native ordinary path is single information, both spread sources, dismissal,
+fresh page movement and route close; its current results and screenshots live in
+NextN's D10 acceptance ledger. Native metadata failure/delay probes, continuous
+and physical-half combinations, Koma metadata and full replacement remain open.
+No production reader, settings or progress migration is enabled.
+
 Run core behavioral tests with `node --test tests/*.test.cjs`.
 They execute the actual platform-free ArkTS core through the DevEco TypeScript
 compiler. Set `READER_KIT_TYPESCRIPT` if that compiler is installed elsewhere.

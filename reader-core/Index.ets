@@ -12,5 +12,6 @@ export { ReaderPagedSession, ReaderPagedSnapshot, ReaderPagedFrame, ReaderPagedI
 export { ReaderViewportGeometry, ReaderViewportTransform } from './src/main/ets/ReaderViewportTransform'
 export { ReaderThumbnailWindow, ReaderThumbnailFrame } from './src/main/ets/ReaderThumbnailWindow'
 export { ReaderInputPort, ReaderMoveIntent } from './src/main/ets/ReaderInputPort'
+export { ReaderImageInformation, ReaderImageInformationSource } from './src/main/ets/ReaderImageInformation'
 export { ReaderImageShareTarget, ReaderImageSharePresentation, ReaderImageShareHost,
   ReaderImageShareOutcome, ReaderImageShareController } from './src/main/ets/ReaderImageShare'
