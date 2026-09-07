@@ -2,6 +2,16 @@ import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPart, ReaderSnapsho
 import { ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/core'
 import { ReaderFailurePanel } from './ReaderFailurePanel'
 import { ReaderTapSequence } from './ReaderTapSequence'
+import { ReaderEntryRect, ReaderEntryTarget, ReaderEntryTransition } from './ReaderEntryTransition'
+
+/** One monotonic layout clock also survives a selected leaf being remounted. */
+class ReaderEntryLayoutRevision {
+  private static current: number = 0
+  static next(previous: number): number {
+    ReaderEntryLayoutRevision.current = Math.max(ReaderEntryLayoutRevision.current, previous) + 1
+    return ReaderEntryLayoutRevision.current
+  }
+}
 
 function partRatio(frame: ReaderPagedFrame): number {
   const page = frame.asset.page
@@ -16,6 +26,7 @@ function partRatio(frame: ReaderPagedFrame): number {
 export struct ReaderPagedViewport {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
+  @Param entryTransition: ReaderEntryTransition | null = null
   @Param selected: boolean = true
   @Event onTap: (xFraction: number) => void = () => {}
   @Event onInputLockChange: (locked: boolean) => void = () => {}
@@ -25,6 +36,7 @@ export struct ReaderPagedViewport {
   @Event onRetry: (slotId: number, requestId: number) => void = () => {}
   @Local private viewportWidth: number = 1
   @Local private viewportHeight: number = 1
+  @Local private entryViewportLaidOut: boolean = false
   @Local private zoomState: ReaderViewportTransform = new ReaderViewportTransform()
   @Local private zoomAnimating: boolean = false
   @Local private recovering: boolean = false
@@ -56,6 +68,23 @@ export struct ReaderPagedViewport {
       this.recovering = false
     }
     const failed = this.snapshot.frames.some((frame: ReaderPagedFrame) => frame.asset.phase === 'failed')
+    if (failed && this.selected && this.active && this.entryTransition?.pending()) {
+      const source = this.snapshot.frames.find((frame: ReaderPagedFrame) =>
+        this.entryTransition?.matches(frame.part) === true && frame.asset.phase === 'failed')
+      if (source !== undefined) {
+        const target = new ReaderEntryTarget(source.part)
+        target.selectionId = this.snapshot.selectionId
+        target.topologyRevision = this.snapshot.topologyRevision
+        target.navigationRevision = this.snapshot.navigationRevision
+        target.slotId = source.slotId
+        target.assetRequestId = source.asset.assetRequestId
+        target.layoutRevision = ReaderEntryLayoutRevision.next(this.entryTransition.target?.layoutRevision ?? 0)
+        target.failed = true
+        this.entryTransition.publishTarget(target)
+      }
+      // Recovery changes joined image geometry into equal failure slots.
+      this.entryTransition.cancel()
+    }
     if (failed) this.recovering = true
     else if (this.snapshot.frames.length > 0 && this.snapshot.frames.every((frame: ReaderPagedFrame) =>
       frame.asset.phase === 'displayed')) this.recovering = false
@@ -78,6 +107,8 @@ export struct ReaderPagedViewport {
 
   @Monitor('zoomState', 'zoomAnimating', 'pinching', 'active', 'selected')
   onInputStateChanged(): void {
+    if (this.selected && (this.zoomState.zoomed() || this.zoomAnimating || this.pinching ||
+      this.zoomState.x !== 0 || this.zoomState.y !== 0)) this.entryTransition?.cancel()
     this.onInputLockChange(this.selected && this.active &&
       (this.zoomState.zoomed() || this.zoomAnimating || this.pinching))
   }
@@ -195,6 +226,8 @@ export struct ReaderPagedViewport {
           // resolved from the current snapshot so same-key updates are not lost.
           ReaderPagedCell({
             snapshot: this.snapshot, slotId: frame.slotId,
+            entryTransition: this.entryTransition,
+            entryGeometryReady: this.entryViewportLaidOut,
             assetRequestId: frame.asset.assetRequestId,
             renderedFragment: frame.part.fragment,
             // Zero leaves the fitted width to the cell's current reactive frame, not this stable-key closure.
@@ -222,9 +255,13 @@ export struct ReaderPagedViewport {
     .id(this.selected ? 'rkit-image-viewport' : `rkit-cached-viewport-${this.snapshot.displayIndex}`)
     .onTouch((event: TouchEvent): void => { this.tapSequence.touch(event) })
     .onAreaChange((_old: Area, area: Area): void => {
+      if (this.entryViewportLaidOut && this.entryTransition !== null && this.entryTransition.target !== null &&
+        (this.viewportWidth !== Math.max(1, Number(area.width)) ||
+          this.viewportHeight !== Math.max(1, Number(area.height)))) this.entryTransition.cancel()
       this.cancelGesture()
       this.viewportWidth = Math.max(1, Number(area.width))
       this.viewportHeight = Math.max(1, Number(area.height))
+      this.entryViewportLaidOut = true
       this.zoomState = this.zoomState.settled(this.geometry())
     })
     .gesture(GestureGroup(GestureMode.Parallel,
@@ -254,6 +291,8 @@ export struct ReaderPagedViewport {
 @ComponentV2
 struct ReaderPagedCell {
   @Require @Param snapshot: ReaderPagedSnapshot
+  @Param entryTransition: ReaderEntryTransition | null = null
+  @Param entryGeometryReady: boolean = false
   @Require @Param slotId: number
   @Require @Param assetRequestId: number
   @Require @Param renderedFragment: ReaderFragment
@@ -285,6 +324,11 @@ struct ReaderPagedCell {
       } else if (this.frame().asset.uri.length > 0) {
         ReaderPagedImage({
           frame: this.frame(), selectionId: this.snapshot.selectionId,
+          topologyRevision: this.snapshot.topologyRevision, navigationRevision: this.snapshot.navigationRevision,
+          entryTransition: this.entryTransition,
+          entryPhase: this.entryTransition?.phase ?? 'finished',
+          entryLayoutWidth: this.entryGeometryReady ? this.imageHeight() * partRatio(this.frame()) : 0,
+          entryLayoutHeight: this.entryGeometryReady ? this.imageHeight() : 0,
           slotId: this.slotId, assetRequestId: this.assetRequestId,
           renderedFragment: this.renderedFragment,
           active: this.active && this.snapshot.phase === 'ready',
@@ -309,6 +353,12 @@ export struct ReaderPagedImage {
   @Require @Param selectionId: number
   @Require @Param renderedFragment: ReaderFragment
   @Require @Param active: boolean
+  @Param topologyRevision: number = 0
+  @Param navigationRevision: number = 0
+  @Param entryTransition: ReaderEntryTransition | null = null
+  @Param entryPhase: string = 'finished'
+  @Param entryLayoutWidth: number = 0
+  @Param entryLayoutHeight: number = 0
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -318,12 +368,110 @@ export struct ReaderPagedImage {
   @Local private sheetHeight: number = 0
   private fullyVisible: boolean = false
   private decoded: boolean = false
+  private entryLeafLaidOut: boolean = false
+  private entryLayoutRevision: number = 0
+  private decodedWidth: number = 0
+  private decodedHeight: number = 0
+  private entryMounted: boolean = false
+  private measuredEntryId: number = -1
+  private measuredEntryRect: ReaderEntryRect | null = null
+
+  aboutToAppear(): void { this.entryMounted = true }
+  aboutToDisappear(): void { this.entryMounted = false }
 
   @Monitor('active', 'selectionId')
-  onSelectionChanged(): void { this.reportVisible() }
+  onSelectionChanged(): void { this.publishEntryTarget(); this.reportVisible() }
+
+  @Monitor('frame', 'entryTransition', 'entryLayoutWidth', 'entryLayoutHeight', 'topologyRevision', 'navigationRevision')
+  onEntryLayoutChanged(): void { this.publishEntryTarget() }
+
+  @Monitor('entryPhase')
+  onEntryPhaseChanged(): void { this.reportVisible() }
+
+  private entryLeafId(): string {
+    return `rkit-entry-image-${this.entryTransition?.entryId ?? 0}-${this.slotId}-${this.assetRequestId}`
+  }
+
+  private publishEntryTarget(failed: boolean = false): void {
+    const transition = this.entryTransition
+    if (transition === null || !transition.pending() || !this.entryMounted || !this.active ||
+      !transition.matches(this.frame.part)) return
+    if (this.measuredEntryId !== transition.entryId) {
+      this.measuredEntryId = transition.entryId
+      this.measuredEntryRect = null
+      this.entryLayoutRevision = 0
+    }
+    const target = new ReaderEntryTarget(this.frame.part)
+    target.selectionId = this.selectionId
+    target.topologyRevision = this.topologyRevision
+    target.navigationRevision = this.navigationRevision
+    target.slotId = this.slotId
+    target.assetRequestId = this.assetRequestId
+    target.failed = failed
+    target.decodedReady = this.decoded
+    target.layoutRevision = Math.max(this.entryLayoutRevision, transition.target?.layoutRevision ?? 0)
+    if (failed) { transition.publishTarget(target); return }
+    const page = this.frame.asset.page
+    // Sprite/fragment clipping and unknown original geometry need a different
+    // content contract; never advertise their outer wrapper as the image bounds.
+    if (this.frame.asset.kind !== 'original' || this.renderedFragment !== 'whole' || page === null ||
+      !Number.isFinite(page.width) || !Number.isFinite(page.height) || page.width <= 0 || page.height <= 0) {
+      transition.cancel(); return
+    }
+    if (!this.entryLeafLaidOut || this.entryLayoutWidth <= 0 || this.entryLayoutHeight <= 0) return
+    try {
+      const context = this.getUIContext()
+      const leaf = context.getComponentUtils().getRectangleById(this.entryLeafId())
+      const viewport = context.getComponentUtils().getRectangleById('rkit-image-viewport')
+      const rect = new ReaderEntryRect(context.px2vp(leaf.windowOffset.x), context.px2vp(leaf.windowOffset.y),
+        context.px2vp(leaf.size.width), context.px2vp(leaf.size.height))
+      if (!rect.valid()) return
+      // Parent/child area callbacks have no guaranteed order. Wait until this
+      // leaf has actually applied the current cell fit before publishing it.
+      if (Math.abs(leaf.size.width - context.vp2px(this.entryLayoutWidth)) > 1 ||
+        Math.abs(leaf.size.height - context.vp2px(this.entryLayoutHeight)) > 1) {
+        if (transition.target !== null) transition.cancel()
+        return
+      }
+      if (leaf.windowOffset.x < viewport.windowOffset.x - 1 || leaf.windowOffset.y < viewport.windowOffset.y - 1 ||
+        leaf.windowOffset.x + leaf.size.width > viewport.windowOffset.x + viewport.size.width + 1 ||
+        leaf.windowOffset.y + leaf.size.height > viewport.windowOffset.y + viewport.size.height + 1) {
+        transition.cancel(); return
+      }
+      // Contain must occupy the measured Image itself. Unexpected decoded
+      // proportions are not permission to stretch a thumbnail to this box.
+      if (this.decoded && this.decodedWidth > 0 && this.decodedHeight > 0 &&
+        Math.abs(leaf.size.width - leaf.size.height * this.decodedWidth / this.decodedHeight) > 1) {
+        transition.cancel(); return
+      }
+      const previous = transition.target
+      const priorRect = previous?.contentRect ?? this.measuredEntryRect
+      const moved = priorRect !== null && (priorRect.x !== rect.x || priorRect.y !== rect.y ||
+        priorRect.width !== rect.width || priorRect.height !== rect.height)
+      if (moved && transition.phase !== 'layout') { transition.cancel(); return }
+      const sameIdentity = previous !== null && previous.selectionId === target.selectionId &&
+        previous.topologyRevision === target.topologyRevision && previous.navigationRevision === target.navigationRevision &&
+        previous.slotId === target.slotId && previous.assetRequestId === target.assetRequestId
+      // A publication redraws the optional presenter. Identical leaf reports
+      // must not feed that redraw back into another target publication.
+      if (sameIdentity && !moved && previous !== null && previous.geometryReady &&
+        previous.decodedReady === target.decodedReady && !previous.failed) return
+      if (previous === null || moved || !sameIdentity) {
+        target.layoutRevision = ReaderEntryLayoutRevision.next(target.layoutRevision)
+      }
+      this.entryLayoutRevision = target.layoutRevision
+      this.measuredEntryRect = rect.copy()
+      target.contentRect = rect
+      target.geometryReady = true
+      transition.publishTarget(target)
+    } catch (_error) {
+      transition.cancel()
+    }
+  }
 
   private reportVisible(): void {
-    if (this.active && this.fullyVisible && this.decoded && this.frame.asset.kind === 'original') {
+    if (this.active && this.fullyVisible && this.decoded && this.frame.asset.kind === 'original' &&
+      (this.entryTransition === null || !this.entryTransition.pending())) {
       this.onVisible(this.selectionId, this.slotId, this.assetRequestId, this.renderedFragment)
     }
   }
@@ -338,12 +486,16 @@ export struct ReaderPagedImage {
       console.info(`[ReaderViewport] sprite_pixels slot=${this.slotId} request=${this.assetRequestId} real=${width}x${height} parsed=${thumbnail.spriteWidth}x${thumbnail.spriteHeight} crop=${thumbnail.width}x${thumbnail.height}`)
     }
     this.decoded = true
+    this.decodedWidth = width
+    this.decodedHeight = height
     this.onPresented(this.slotId, this.assetRequestId, true, width, height)
+    this.publishEntryTarget()
     this.reportVisible()
   }
 
   private failed(): void {
     this.decoded = false
+    this.publishEntryTarget(true)
     this.onFailed(this.selectionId, this.slotId, this.assetRequestId, this.renderedFragment)
   }
 
@@ -391,6 +543,11 @@ export struct ReaderPagedImage {
         Image(this.frame.asset.uri)
           .width('100%').height('100%')
           .objectFit(ImageFit.Contain)
+          .id(this.entryLeafId())
+          .onAreaChange((): void => {
+            this.entryLeafLaidOut = true
+            this.publishEntryTarget()
+          })
           .onComplete((event): void => {
             if (event?.loadingStatus === 1) this.completed(event.width, event.height)
           })
@@ -398,6 +555,7 @@ export struct ReaderPagedImage {
       }
     }
     .width('100%').height('100%')
+    .opacity(this.entryTransition?.opacity(this.frame.part) ?? 1)
     .onVisibleAreaChange([0, 1], (_expanding: boolean, ratio: number): void => {
       this.fullyVisible = ratio >= 1
       this.reportVisible()

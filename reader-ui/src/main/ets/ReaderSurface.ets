@@ -7,6 +7,8 @@ import { ReaderChrome } from './ReaderChrome'
 import { ReaderPageStatus } from './ReaderPageStatus'
 import { ReaderThumbnailRail } from './ReaderThumbnailRail'
 import { BusinessError } from '@kit.BasicServicesKit'
+import { ReaderEntryTransition } from './ReaderEntryTransition'
+import { ReaderEntryPreview, ReaderEntryPreviewSource } from './ReaderEntryPreview'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -20,6 +22,8 @@ export struct ReaderSurface {
   @Param accent: ResourceColor = '#D93646'
   @Param input: ReaderInputPort | null = null
   @Param imageShare: ReaderImageShareHost | null = null
+  @Param entryTransition: ReaderEntryTransition | null = null
+  @Param entryPreview: ReaderEntryPreviewSource | null = null
   @Event onClose: () => void = () => {}
   @Event onChromeVisible: (visible: boolean) => void = () => {}
   @Local private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
@@ -47,6 +51,7 @@ export struct ReaderSurface {
         this.informationEpoch += 1; this.informationBusy = false
       }
       this.state = state
+      this.entryTransition?.update(state)
       this.shareController.update(ReaderImageShareTarget.from(state), this.active)
     })
     this.inputConnection = this.input?.connect((intent: ReaderMoveIntent): boolean => this.externalMove(intent)) ?? 0
@@ -54,6 +59,7 @@ export struct ReaderSurface {
   }
 
   aboutToDisappear(): void {
+    this.entryTransition?.cancel()
     this.informationEpoch += 1
     this.shareController.close()
     this.input?.disconnect(this.inputConnection)
@@ -63,6 +69,7 @@ export struct ReaderSurface {
   @Monitor('active')
   onActiveChanged(): void {
     if (!this.active) {
+      this.entryTransition?.cancel()
       this.previewIndex = -1; this.touching = false
       if (!this.informationPresented) { this.informationEpoch += 1; this.informationBusy = false }
     }
@@ -207,6 +214,7 @@ export struct ReaderSurface {
       } else {
         ReaderPagerSurface({
           snapshot: this.state, active: this.active,
+          entryTransition: this.entryTransition,
           onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
           onTap: (x: number): void => { this.pageTap(x) },
           onSelect: (index: number, topology: number, navigation: number): void => {
@@ -225,6 +233,9 @@ export struct ReaderSurface {
             this.session.reportVisible(selection, slot, request, fragment)
           },
         })
+      }
+      if (this.entryTransition !== null && this.entryPreview !== null) {
+        ReaderEntryPreview({ entry: this.entryTransition, source: this.entryPreview })
       }
       if (this.state.error.length > 0) {
         Column({ space: 16 }) {

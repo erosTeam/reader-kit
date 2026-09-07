@@ -13,6 +13,9 @@ export class ReaderLabRequest {
   volumeKeys: boolean = false
   shareProbe: string = ''
   informationProbe: string = ''
+  thumbnailEntry: boolean = false
+  entryLayout: string = 'single'
+  entryDirection: string = 'ltr'
 
   constructor(work: string, unit: string, pageIndex: number, failurePage: number = -1,
     delayedMetricsPage: number = -1, failureLayout: string = 'continuous') {
@@ -80,5 +83,9 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
   const informationProbe = want.parameters['readerLabInformationProbe']
   request.informationProbe = typeof informationProbe === 'string' &&
     (informationProbe === 'fail-once' || informationProbe === 'delay-once') ? informationProbe : ''
+  request.thumbnailEntry = request.readingChrome &&
+    (want.parameters['readerLabThumbnailEntry'] === true || want.parameters['readerLabThumbnailEntry'] === 'true')
+  request.entryLayout = want.parameters['readerLabEntryLayout'] === 'spread' ? 'spread' : 'single'
+  request.entryDirection = want.parameters['readerLabEntryDirection'] === 'rtl' ? 'rtl' : 'ltr'
   connectReaderLabLaunch().publish(request)
 }

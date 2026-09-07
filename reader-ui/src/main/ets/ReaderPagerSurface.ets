@@ -1,5 +1,6 @@
 import { ReaderPagedSnapshot, ReaderFragment } from '@reader-kit/core'
 import { ReaderPagedViewport } from './ReaderPagedViewport'
+import { ReaderEntryTransition } from './ReaderEntryTransition'
 
 /** Immutable within one topology revision; a changed topology gets a new native pager. */
 class ReaderPagerIndexSource implements IDataSource {
@@ -16,6 +17,7 @@ class ReaderPagerIndexSource implements IDataSource {
 export struct ReaderPagerSurface {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
+  @Param entryTransition: ReaderEntryTransition | null = null
   @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
   @Event onTap: (xFraction: number) => void = () => {}
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
@@ -30,6 +32,7 @@ export struct ReaderPagerSurface {
         ForEach([this.snapshot.topologyRevision], (revision: number) => {
           ReaderNativePager({
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
+            entryTransition: this.entryTransition,
             onInputLockChange: this.onInputLockChange,
             onSelect: this.onSelect, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onRetry: this.onRetry,
@@ -48,6 +51,7 @@ export struct ReaderPagerSurface {
 struct ReaderNativePager {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
+  @Param entryTransition: ReaderEntryTransition | null = null
   @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
   @Event onTap: (xFraction: number) => void = () => {}
   @Require @Param createdRevision: number
@@ -98,6 +102,7 @@ struct ReaderNativePager {
   }
 
   private beginMotion(): void {
+    this.entryTransition?.cancel()
     if (this.gestureNavigation < 0) this.gestureNavigation = this.snapshot.navigationRevision
     this.moving = true
   }
@@ -125,6 +130,7 @@ struct ReaderNativePager {
       LazyForEach(this.source, (key: string) => {
         ReaderPagedViewport({
           snapshot: this.snapshot.forItem(key),
+          entryTransition: key === this.snapshot.displayKeys[this.snapshot.displayIndex] ? this.entryTransition : null,
           selected: key === this.snapshot.displayKeys[this.snapshot.displayIndex],
           active: this.active && !this.moving && key === this.snapshot.displayKeys[this.snapshot.displayIndex],
           onInputLockChange: (locked: boolean): void => {
@@ -150,6 +156,7 @@ struct ReaderNativePager {
     .onGestureSwipe((): void => { this.beginMotion() })
     .onAnimationStart((): void => { this.beginMotion() })
     .onScrollStateChanged((state: ScrollState): void => {
+      if (state !== ScrollState.Idle) this.entryTransition?.cancel()
       this.moving = state !== ScrollState.Idle
     })
     .onAnimationEnd((): void => { this.moving = false })
