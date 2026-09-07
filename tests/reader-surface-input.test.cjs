@@ -1,0 +1,89 @@
+const assert = require('node:assert/strict')
+const { test } = require('node:test')
+const fs = require('node:fs')
+const path = require('node:path')
+const vm = require('node:vm')
+const ts = require(process.env.READER_KIT_TYPESCRIPT || '/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/node_modules/typescript')
+const load = require('./load-core.cjs')
+const core = { ...load('ReaderContent'), ...load('ReaderSession'), ...load('ReaderDisplayMap'),
+  ...load('ReaderPagedSession'), ...load('ReaderInputPort'), ...load('ReaderImageShare') }
+const uiPath = path.join(__dirname, '../reader-ui/src/main/ets')
+function evaluate(source) {
+  const exports = {}
+  vm.runInNewContext(ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, experimentalDecorators: true },
+  }).outputText, {
+    exports, require: name => { assert.equal(name, '@reader-kit/core'); return core },
+    ObservedV2: value => value, ComponentV2: value => value,
+    Trace() {}, Param() {}, Require() {}, Event() {}, Local() {}, Monitor: () => () => {},
+    console: { info() {} },
+  })
+  return exports
+}
+const { ReaderEntryTransition } = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderEntryTransition.ets'), 'utf8'))
+const source = fs.readFileSync(path.join(uiPath, 'ReaderSurface.ets'), 'utf8')
+// Execute actual surface methods, excluding only ArkUI declarative build syntax.
+// The session below records calls; no rendering, hardware delivery or UI acceptance is simulated.
+const methods = source.slice(0, source.indexOf('\n  build() {'))
+  .replace('export struct ReaderSurface {', 'export class ReaderSurface {') + '\n}\n'
+const { ReaderSurface } = evaluate(methods)
+function scenario(phase = null) {
+  const surface = new ReaderSurface()
+  surface.active = true; surface.state.phase = 'ready'; surface.state.topologyRevision = 7
+  surface.inputTopology = 7; surface.inputLocked = false
+  const moves = []; let navigation = 10; let reads = 0
+  surface.session = {
+    snapshot() { reads++; return { navigationRevision: navigation } },
+    move(intent) { moves.push(intent); navigation++ },
+  }
+  const part = new core.ReaderDisplayPart(new core.ReaderUnitKey('eh', 'work', 'work'), null, 0)
+  if (phase !== null) {
+    surface.entryTransition = new ReaderEntryTransition(1, part)
+    surface.entryTransition.phase = phase
+  }
+  const input = new core.ReaderInputPort()
+  input.connect(intent => surface.externalMove(intent))
+  return { surface, input, moves, reads: () => reads }
+}
+
+test('actual externalMove rejects layout before touching the session, including already queued input', () => {
+  const value = scenario('moving')
+  const queued = () => value.input.move('next')
+  value.surface.entryTransition.phase = 'layout'
+  assert.equal(queued(), false)
+  assert.equal(value.input.move('previous'), false)
+  assert.deepEqual(value.moves, []); assert.equal(value.reads(), 0)
+  assert.equal(value.surface.entryTransition.phase, 'layout')
+})
+
+test('leaving layout restores the existing move path without changing active or replacing the input owner', () => {
+  const value = scenario('layout')
+  assert.equal(value.input.move('next'), false)
+  value.surface.entryTransition.phase = 'moving'
+  assert.equal(value.input.move('next'), true)
+  assert.equal(value.surface.active, true); assert.deepEqual(value.moves, ['next'])
+})
+
+test('null, moving, waiting, revealing and terminal entries retain the existing logical input semantics', () => {
+  for (const phase of [null, 'moving', 'waiting', 'revealing', 'finished', 'cancelled']) {
+    const value = scenario(phase)
+    assert.equal(value.input.move('next'), true, phase)
+    assert.equal(value.input.move('previous'), true, phase)
+    assert.deepEqual(value.moves, ['next', 'previous'])
+  }
+  const edge = scenario()
+  edge.surface.session.move = intent => edge.moves.push(intent)
+  assert.equal(edge.input.move('next'), false)
+  assert.deepEqual(edge.moves, ['next'])
+})
+
+test('the pre-existing active, session, interaction and topology locks still reject external moves', () => {
+  for (const [field, locked] of [['active', false], ['touching', true], ['menuVisible', true],
+    ['shareBusy', true], ['informationBusy', true], ['previewIndex', 0], ['inputTopology', 6], ['inputLocked', true]]) {
+    const value = scenario('waiting'); value.surface[field] = locked
+    assert.equal(value.input.move('next'), false, field)
+    assert.deepEqual(value.moves, []); assert.equal(value.reads(), 0)
+  }
+  const opening = scenario(); opening.surface.state.phase = 'opening'
+  assert.equal(opening.input.move('next'), false); assert.deepEqual(opening.moves, [])
+})

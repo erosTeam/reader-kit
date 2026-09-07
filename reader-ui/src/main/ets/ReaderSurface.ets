@@ -175,7 +175,8 @@ export struct ReaderSurface {
   }
 
   private externalMove(intent: ReaderMoveIntent): boolean {
-    if (!this.active || this.state.phase !== 'ready' || this.touching || this.menuVisible || this.shareBusy || this.informationBusy ||
+    if (this.entryTransition?.phase === 'layout' || !this.active || this.state.phase !== 'ready' ||
+      this.touching || this.menuVisible || this.shareBusy || this.informationBusy ||
       this.previewIndex >= 0 || this.inputTopology !== this.state.topologyRevision || this.inputLocked) return false
     const navigation = this.session.snapshot().navigationRevision
     this.session.move(intent)
