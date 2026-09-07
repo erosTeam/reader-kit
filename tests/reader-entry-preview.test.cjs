@@ -32,7 +32,7 @@ const { ReaderEntryTransition, ReaderEntryTarget, ReaderEntryRect } = transition
 function pixels() {
   return { releases: 0, release() { this.releases++; return Promise.resolve() } }
 }
-function scenario(guard = null) {
+function scenario(guard = null, coverage = undefined) {
   const part = new core.ReaderDisplayPart(new core.ReaderUnitKey('nh', 'work', 'work'), 'page-0', 0)
   const state = new core.ReaderPagedSnapshot()
   state.phase = 'ready'; state.selectionId = 2; state.topologyRevision = 1; state.navigationRevision = 1
@@ -45,7 +45,7 @@ function scenario(guard = null) {
   target.geometryReady = true; target.contentRect = new ReaderEntryRect(100, 150, 400, 600)
   entry.publishTarget(target)
   const bitmap = pixels()
-  const previewSource = new ReaderEntryPreviewSource(bitmap, new ReaderEntryRect(40, 55, 100, 150), guard)
+  const previewSource = new ReaderEntryPreviewSource(bitmap, new ReaderEntryRect(40, 55, 100, 150), guard, coverage)
   const preview = new ReaderEntryPreview()
   preview.entry = entry; preview.source = previewSource; preview.mounted = true; preview.firstFrame = true
   preview.x = 40; preview.y = 55
@@ -66,6 +66,18 @@ test('source defaults to allowing legacy callers and forwards the exact entry id
   const value = new ReaderEntryPreviewSource(pixels(), new ReaderEntryRect(), id => { ids.push(id); return true })
   assert.equal(value.authorizeDeparture(19), true)
   assert.deepEqual(ids, [19])
+})
+
+test('source coverage defaults to unknown and preserves an explicit producer declaration independently of ratio', () => {
+  const rect = new ReaderEntryRect(0, 0, 100, 150)
+  assert.equal(new ReaderEntryPreviewSource(pixels(), rect).coverage, 'unknown')
+  for (const coverage of ['unknown', 'whole-page']) {
+    const value = new ReaderEntryPreviewSource(pixels(), rect, null, coverage)
+    assert.equal(value.coverage, coverage)
+    assert.equal(value.rect, rect)
+    value.release()
+    assert.equal(value.coverage, coverage)
+  }
 })
 
 test('source denies false, thrown, released and synchronously released authorization', () => {
@@ -138,3 +150,54 @@ test('legacy null guard still starts the existing flight', () => {
   value.preview.advance()
   assert.equal(value.entry.phase, 'moving'); assert.equal(value.animations.length, 1)
 })
+
+for (const coverage of ['unknown', 'whole-page']) {
+  test(`${coverage}: actual advance preserves flight and selects the declared handoff opacity`, () => {
+    const value = scenario(null, coverage)
+    assert.equal(value.preview.previewOpacity, 1)
+    value.preview.advance()
+    assert.equal(value.animations[0].duration, 280)
+    assert.equal(value.preview.previewScale, 4)
+    assert.equal(value.preview.x, 100); assert.equal(value.preview.y, 150)
+    assert.equal(value.preview.previewOpacity, 1)
+    value.animations[0].onFinish()
+    assert.equal(value.entry.phase, 'waiting')
+    assert.equal(value.preview.previewOpacity, 1)
+    value.target.decodedReady = true; value.entry.publishTarget(value.target); value.preview.advance()
+    const reveal = value.animations.at(-1)
+    assert.equal(reveal.duration, 140); assert.equal(reveal.curve, 'linear')
+    assert.equal(value.entry.phase, 'revealing')
+    assert.equal(value.entry.selectedOpacity, 1)
+    assert.equal(value.preview.previewOpacity, coverage === 'unknown' ? 0 : 1)
+    const count = value.animations.length
+    value.preview.advance()
+    assert.equal(value.animations.length, count)
+    reveal.onFinish(); value.preview.advance()
+    assert.equal(value.entry.phase, 'finished'); assert.equal(value.entry.pending(), false)
+    assert.equal(value.animations.length, count)
+  })
+
+  test(`${coverage}: cancelled flight and retired reveal callbacks cannot revive the entry`, () => {
+    const flight = scenario(null, coverage)
+    flight.preview.advance(); flight.entry.cancel(); flight.animations[0].onFinish(); flight.preview.advance()
+    assert.equal(flight.entry.phase, 'cancelled'); assert.equal(flight.entry.pending(), false)
+    assert.equal(flight.animations.length, 1); assert.equal(flight.preview.previewOpacity, 1)
+    for (const retire of [value => value.entry.cancel(), value => value.preview.aboutToDisappear()]) {
+      const value = scenario(null, coverage)
+      value.preview.advance(); value.animations[0].onFinish()
+      value.target.decodedReady = true; value.entry.publishTarget(value.target); value.preview.advance()
+      const finish = value.animations.at(-1).onFinish
+      const count = value.animations.length
+      retire(value); finish(); value.preview.advance()
+      assert.equal(value.entry.phase, 'cancelled'); assert.equal(value.entry.pending(), false)
+      assert.equal(value.animations.length, count)
+    }
+    const stale = scenario(null, coverage)
+    stale.preview.advance(); stale.animations[0].onFinish()
+    stale.target.decodedReady = true; stale.entry.publishTarget(stale.target); stale.preview.advance()
+    const staleFinish = stale.animations.at(-1).onFinish
+    stale.preview.epoch++
+    staleFinish()
+    assert.equal(stale.entry.phase, 'revealing')
+  })
+}

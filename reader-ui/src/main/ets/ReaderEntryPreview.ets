@@ -2,15 +2,18 @@ import { image } from '@kit.ImageKit'
 import { FrameCallback, UIUtils } from '@kit.ArkUI'
 import { ReaderEntryRect, ReaderEntryTransition } from './ReaderEntryTransition'
 
-/** Host-owned snapshot of the displayed thumbnail. Its pixels do not claim original coverage. */
+/** Host-owned snapshot; whole-page coverage must be asserted by the producer, never inferred from its ratio. */
 export class ReaderEntryPreviewSource {
   private released: boolean = false
   private departureGuard: ((entryId: number) => boolean) | null
   pixels: image.PixelMap
   rect: ReaderEntryRect
+  readonly coverage: 'unknown' | 'whole-page'
   constructor(pixels: image.PixelMap, rect: ReaderEntryRect,
-    departureGuard: ((entryId: number) => boolean) | null = null) {
+    departureGuard: ((entryId: number) => boolean) | null = null,
+    coverage: 'unknown' | 'whole-page' = 'unknown') {
     this.pixels = pixels; this.rect = rect; this.departureGuard = departureGuard
+    this.coverage = coverage
   }
 
   authorizeDeparture(entryId: number): boolean {
@@ -95,7 +98,12 @@ export struct ReaderEntryPreview {
           if (this.mounted && epoch === this.epoch) this.entry.finish()
         },
       }, (): void => {
-        UIUtils.applySync((): void => { this.entry.reveal(); this.previewOpacity = 0 })
+        // Keep a known whole-page underlay opaque during the upper original fade.
+        // Unknown coverage retains the existing dual fade rather than a brighter crop overlap.
+        UIUtils.applySync((): void => {
+          this.entry.reveal()
+          if (this.source.coverage === 'unknown') this.previewOpacity = 0
+        })
       })
     }
   }

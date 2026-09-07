@@ -192,7 +192,7 @@ export struct ReaderSurface {
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
       // The existing cell feedback stays above the optional source preview.
-      // Real image opacity still controls its later handoff to the same content.
+      // The preview's declared coverage controls its fade beneath the original image.
       if (this.entryTransition !== null && this.entryPreview !== null) {
         ReaderEntryPreview({ entry: this.entryTransition, source: this.entryPreview })
       }
