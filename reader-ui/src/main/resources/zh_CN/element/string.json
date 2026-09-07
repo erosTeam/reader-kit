@@ -1,5 +1,7 @@
 {
   "string": [
+    { "name": "rkit_share_image", "value": "分享当前图片" },
+    { "name": "rkit_share_failed", "value": "暂时无法分享，请重试" },
     { "name": "rkit_thumbnail_unavailable", "value": "无缩略图" },
     { "name": "rkit_close", "value": "返回" },
     { "name": "rkit_runtime_settings", "value": "阅读模式（仅本次）" },

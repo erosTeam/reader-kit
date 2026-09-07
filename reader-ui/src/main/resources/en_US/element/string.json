@@ -1,5 +1,7 @@
 {
   "string": [
+    { "name": "rkit_share_image", "value": "Share current image" },
+    { "name": "rkit_share_failed", "value": "Could not share. Please try again." },
     { "name": "rkit_thumbnail_unavailable", "value": "No preview" },
     { "name": "rkit_close", "value": "Back" },
     { "name": "rkit_runtime_settings", "value": "Reading mode (this session)" },

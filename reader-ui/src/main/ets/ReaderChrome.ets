@@ -9,6 +9,9 @@ export struct ReaderChrome {
   @Param bottomInset: number = 0
   @Param accent: ResourceColor = '#D93646'
   @Param thumbnailsVisible: boolean = false
+  @Param shareAvailable: boolean = false
+  @Param shareBusy: boolean = false
+  @Event onShare: () => void = () => {}
   @Event onThumbnails: () => void = () => {}
   @Event onMenuVisible: (visible: boolean) => void = () => {}
   @Event onClose: () => void = () => {}
@@ -111,6 +114,18 @@ export struct ReaderChrome {
             .id('rkit-close').accessibilityText($r('app.string.rkit_close'))
             .onClick((): void => { this.onClose() })
           Blank()
+          if (this.shareAvailable) {
+            Button({ type: ButtonType.Circle }) {
+              if (this.shareBusy) {
+                LoadingProgress().width(22).height(22).color(Color.White)
+              } else {
+                SymbolGlyph($r('sys.symbol.share')).fontSize(22).fontColor([Color.White])
+              }
+            }.width(44).height(44).backgroundColor(Color.Transparent)
+              .id('rkit-share-image').accessibilityText($r('app.string.rkit_share_image'))
+              .enabled(this.active && this.snapshot.phase === 'ready' && !this.shareBusy)
+              .onClick(this.onShare)
+          }
           Button({ type: ButtonType.Circle }) {
             SymbolGlyph($r('sys.symbol.gearshape')).fontSize(22).fontColor([Color.White])
           }.width(44).height(44).backgroundColor(Color.Transparent)

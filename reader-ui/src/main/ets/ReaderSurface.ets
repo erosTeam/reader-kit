@@ -1,5 +1,6 @@
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy,
-  ReaderInputPort, ReaderMoveIntent } from '@reader-kit/core'
+  ReaderInputPort, ReaderMoveIntent, ReaderImageShareHost, ReaderImageShareTarget,
+  ReaderImageShareController } from '@reader-kit/core'
 import { ReaderPagerSurface } from './ReaderPagerSurface'
 import { ReaderContinuousSurface } from './ReaderContinuousSurface'
 import { ReaderChrome } from './ReaderChrome'
@@ -17,12 +18,15 @@ export struct ReaderSurface {
   @Param bottomInset: number = 0
   @Param accent: ResourceColor = '#D93646'
   @Param input: ReaderInputPort | null = null
+  @Param imageShare: ReaderImageShareHost | null = null
   @Event onClose: () => void = () => {}
   @Event onChromeVisible: (visible: boolean) => void = () => {}
   @Local private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
   @Local private chromeVisible: boolean = true
   @Local private thumbnailsVisible: boolean = false
   @Local private previewIndex: number = -1
+  @Local private shareBusy: boolean = false
+  private shareController: ReaderImageShareController = new ReaderImageShareController()
   private inputConnection: number = 0
   private inputLocked: boolean = true
   private inputTopology: number = -1
@@ -32,12 +36,17 @@ export struct ReaderSurface {
   aboutToAppear(): void {
     this.session.setNeighborPreload(true)
     this.session.setViewportActive(this.active)
-    this.session.subscribe((state: ReaderPagedSnapshot): void => { this.state = state })
+    this.shareController.subscribe((busy: boolean): void => { this.shareBusy = busy })
+    this.session.subscribe((state: ReaderPagedSnapshot): void => {
+      this.state = state
+      this.shareController.update(ReaderImageShareTarget.from(state), this.active)
+    })
     this.inputConnection = this.input?.connect((intent: ReaderMoveIntent): boolean => this.externalMove(intent)) ?? 0
     void this.session.open(this.initialUnit, this.initialIndex)
   }
 
   aboutToDisappear(): void {
+    this.shareController.close()
     this.input?.disconnect(this.inputConnection)
     this.session.close()
   }
@@ -45,7 +54,18 @@ export struct ReaderSurface {
   @Monitor('active')
   onActiveChanged(): void {
     if (!this.active) { this.previewIndex = -1; this.touching = false }
+    this.shareController.update(ReaderImageShareTarget.from(this.session.snapshot()), this.active)
     this.session.setViewportActive(this.active)
+  }
+
+  private async shareImage(): Promise<void> {
+    const host = this.imageShare
+    if (host === null || !this.active || this.previewIndex >= 0 || this.menuVisible) return
+    this.shareController.update(ReaderImageShareTarget.from(this.session.snapshot()), this.active)
+    const outcome = await this.shareController.share(host)
+    if (outcome === 'failed' && this.active) {
+      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.rkit_share_failed') })
+    }
   }
 
   private toggleChrome(): void {
@@ -70,7 +90,7 @@ export struct ReaderSurface {
   }
 
   private externalMove(intent: ReaderMoveIntent): boolean {
-    if (!this.active || this.state.phase !== 'ready' || this.touching || this.menuVisible ||
+    if (!this.active || this.state.phase !== 'ready' || this.touching || this.menuVisible || this.shareBusy ||
       this.previewIndex >= 0 || this.inputTopology !== this.state.topologyRevision || this.inputLocked) return false
     const navigation = this.session.snapshot().navigationRevision
     this.session.move(intent)
@@ -151,6 +171,8 @@ export struct ReaderSurface {
         ReaderChrome({ snapshot: this.state, active: this.active, topInset: this.topInset,
           bottomInset: this.bottomInset, accent: this.accent, onClose: this.onClose,
           thumbnailsVisible: this.thumbnailsVisible,
+          shareAvailable: this.imageShare !== null, shareBusy: this.shareBusy,
+          onShare: (): void => { void this.shareImage() },
           onMenuVisible: (visible: boolean): void => { this.menuVisible = visible },
           onThumbnails: (): void => { this.thumbnailsVisible = !this.thumbnailsVisible },
           onPolicy: (policy: ReaderDisplayPolicy): void => { this.session.setPolicy(policy) },

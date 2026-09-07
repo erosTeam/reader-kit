@@ -1,5 +1,7 @@
 {
   "string": [
+    { "name": "rkit_share_image", "value": "現在の画像を共有" },
+    { "name": "rkit_share_failed", "value": "共有できませんでした。もう一度お試しください。" },
     { "name": "rkit_thumbnail_unavailable", "value": "プレビューなし" },
     { "name": "rkit_close", "value": "戻る" },
     { "name": "rkit_runtime_settings", "value": "閲覧モード（今回のみ）" },
