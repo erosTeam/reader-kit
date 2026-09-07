@@ -15,12 +15,16 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
   private provider: ReaderAssetProvider
   private thumbnailIndex: number
   private injected: boolean = false
+  private originalFailureIndex: number
+  private originalInjected: boolean = false
   private informationMode: string
   private informationInjected: boolean = false
 
-  constructor(provider: ReaderAssetProvider, thumbnailIndex: number, informationMode: string = '') {
+  constructor(provider: ReaderAssetProvider, thumbnailIndex: number, informationMode: string = '',
+    originalFailureIndex: number = -1) {
     this.provider = provider
     this.thumbnailIndex = thumbnailIndex
+    this.originalFailureIndex = originalFailureIndex
     this.cancellationMode = provider.cancellationMode
     this.informationSupported = provider.informationSupported === true
     this.informationMode = informationMode
@@ -34,6 +38,12 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
       this.injected = true
       console.info(`[ReaderLabAssetProbe] native_thumbnail_decode_failure source=${page.sourceIndex}`)
       return new ReaderAsset('file:///data/storage/el2/base/cache/rkit-probe-missing-thumbnail')
+    }
+    if (!this.originalInjected && this.originalFailureIndex >= 0 && kind === 'original' &&
+      page.sourceIndex === this.originalFailureIndex) {
+      this.originalInjected = true
+      console.info(`[ReaderLabAssetProbe] native_original_decode_failure source=${page.sourceIndex}`)
+      return new ReaderAsset('file:///data/storage/el2/base/cache/rkit-probe-missing-original')
     }
     const asset = await this.provider.load(page, kind, cancellation, forceReload)
     const source = asset.information
