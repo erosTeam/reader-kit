@@ -190,6 +190,11 @@ export struct ReaderSurface {
 
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
+      // The existing cell feedback stays above the optional source preview.
+      // Real image opacity still controls its later handoff to the same content.
+      if (this.entryTransition !== null && this.entryPreview !== null) {
+        ReaderEntryPreview({ entry: this.entryTransition, source: this.entryPreview })
+      }
       // This content owns a black canvas even when its host (or the separate Lab) is light.
       WithTheme({ colorMode: ThemeColorMode.DARK }) {
         if (this.state.policy.layout === 'continuous') {
@@ -236,9 +241,6 @@ export struct ReaderSurface {
             },
           })
         }
-      }
-      if (this.entryTransition !== null && this.entryPreview !== null) {
-        ReaderEntryPreview({ entry: this.entryTransition, source: this.entryPreview })
       }
       if (this.state.error.length > 0) {
         Column({ space: 16 }) {
