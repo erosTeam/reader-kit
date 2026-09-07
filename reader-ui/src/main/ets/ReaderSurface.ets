@@ -190,49 +190,52 @@ export struct ReaderSurface {
 
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
-      if (this.state.policy.layout === 'continuous') {
-        ReaderContinuousSurface({
-          snapshot: this.state, active: this.active,
-          onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
-          onTap: (): void => { this.toggleChrome() },
-          onRange: (start: number, end: number, topology: number, navigation: number): void => {
-            this.session.setContinuousRange(start, end, topology, navigation)
-          },
-          onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
-            this.session.reportPresentation(slot, request, success, width, height)
-          },
-          onRetry: (topology: number, key: string, slot: number, request: number): void => {
-            this.retry(topology, key, slot, request)
-          },
-          onFailed: (topology: number, key: string, slot: number, request: number, fragment: ReaderFragment): void => {
-            this.session.reportCachedRenderFailure(topology, key, slot, request, fragment)
-          },
-          onVisible: (topology: number, navigation: number, key: string, slot: number, request: number, x: number, y: number): void => {
-            this.session.reportContinuousVisible(topology, navigation, key, slot, request, x, y)
-          },
-        })
-      } else {
-        ReaderPagerSurface({
-          snapshot: this.state, active: this.active,
-          entryTransition: this.entryTransition,
-          onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
-          onTap: (x: number): void => { this.pageTap(x) },
-          onSelect: (index: number, topology: number, navigation: number): void => {
-            this.session.selectDisplay(index, topology, navigation)
-          },
-          onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
-            this.session.reportPresentation(slot, request, success, width, height)
-          },
-          onRetry: (topology: number, key: string, slot: number, request: number): void => {
-            this.retry(topology, key, slot, request)
-          },
-          onFailed: (topology: number, key: string, slot: number, request: number, fragment: ReaderFragment): void => {
-            this.session.reportCachedRenderFailure(topology, key, slot, request, fragment)
-          },
-          onVisible: (selection: number, slot: number, request: number, fragment: ReaderFragment): void => {
-            this.session.reportVisible(selection, slot, request, fragment)
-          },
-        })
+      // This content owns a black canvas even when its host (or the separate Lab) is light.
+      WithTheme({ colorMode: ThemeColorMode.DARK }) {
+        if (this.state.policy.layout === 'continuous') {
+          ReaderContinuousSurface({
+            snapshot: this.state, active: this.active,
+            onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
+            onTap: (): void => { this.toggleChrome() },
+            onRange: (start: number, end: number, topology: number, navigation: number): void => {
+              this.session.setContinuousRange(start, end, topology, navigation)
+            },
+            onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
+              this.session.reportPresentation(slot, request, success, width, height)
+            },
+            onRetry: (topology: number, key: string, slot: number, request: number): void => {
+              this.retry(topology, key, slot, request)
+            },
+            onFailed: (topology: number, key: string, slot: number, request: number, fragment: ReaderFragment): void => {
+              this.session.reportCachedRenderFailure(topology, key, slot, request, fragment)
+            },
+            onVisible: (topology: number, navigation: number, key: string, slot: number, request: number, x: number, y: number): void => {
+              this.session.reportContinuousVisible(topology, navigation, key, slot, request, x, y)
+            },
+          })
+        } else {
+          ReaderPagerSurface({
+            snapshot: this.state, active: this.active,
+            entryTransition: this.entryTransition,
+            onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
+            onTap: (x: number): void => { this.pageTap(x) },
+            onSelect: (index: number, topology: number, navigation: number): void => {
+              this.session.selectDisplay(index, topology, navigation)
+            },
+            onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
+              this.session.reportPresentation(slot, request, success, width, height)
+            },
+            onRetry: (topology: number, key: string, slot: number, request: number): void => {
+              this.retry(topology, key, slot, request)
+            },
+            onFailed: (topology: number, key: string, slot: number, request: number, fragment: ReaderFragment): void => {
+              this.session.reportCachedRenderFailure(topology, key, slot, request, fragment)
+            },
+            onVisible: (selection: number, slot: number, request: number, fragment: ReaderFragment): void => {
+              this.session.reportVisible(selection, slot, request, fragment)
+            },
+          })
+        }
       }
       if (this.entryTransition !== null && this.entryPreview !== null) {
         ReaderEntryPreview({ entry: this.entryTransition, source: this.entryPreview })
