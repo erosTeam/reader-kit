@@ -1,4 +1,12 @@
-import { ReaderAsset, ReaderAssetKind, ReaderAssetProvider, ReaderCancellation, ReaderPage } from '@reader-kit/core'
+import { ReaderAsset, ReaderAssetKind, ReaderAssetProvider, ReaderCancellation, ReaderPage,
+  ReaderImageInformation, ReaderImageInformationSource } from '@reader-kit/core'
+import { ReaderFileInformation } from './ReaderFileInformation'
+
+class ReaderLabInformationSource implements ReaderImageInformationSource {
+  private readSource: () => Promise<ReaderImageInformation>
+  constructor(readSource: () => Promise<ReaderImageInformation>) { this.readSource = readSource }
+  read(): Promise<ReaderImageInformation> { return this.readSource() }
+}
 
 /** Explicit Debug-lab probe. One missing URI exercises native decode failure, not transport failure. */
 export class ReaderLabAssetProbe implements ReaderAssetProvider {
@@ -7,12 +15,15 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
   private provider: ReaderAssetProvider
   private thumbnailIndex: number
   private injected: boolean = false
+  private informationMode: string
+  private informationInjected: boolean = false
 
-  constructor(provider: ReaderAssetProvider, thumbnailIndex: number) {
+  constructor(provider: ReaderAssetProvider, thumbnailIndex: number, informationMode: string = '') {
     this.provider = provider
     this.thumbnailIndex = thumbnailIndex
     this.cancellationMode = provider.cancellationMode
     this.informationSupported = provider.informationSupported === true
+    this.informationMode = informationMode
   }
 
   async load(page: ReaderPage, kind: ReaderAssetKind, cancellation: ReaderCancellation,
@@ -24,6 +35,29 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
       console.info(`[ReaderLabAssetProbe] native_thumbnail_decode_failure source=${page.sourceIndex}`)
       return new ReaderAsset('file:///data/storage/el2/base/cache/rkit-probe-missing-thumbnail')
     }
-    return this.provider.load(page, kind, cancellation, forceReload)
+    const asset = await this.provider.load(page, kind, cancellation, forceReload)
+    const source = asset.information
+    if (kind !== 'original' || source === null ||
+      (this.informationMode !== 'fail-once' && this.informationMode !== 'delay-once')) return asset
+    const information = new ReaderLabInformationSource((): Promise<ReaderImageInformation> => this.readInformation(source))
+    return new ReaderAsset(asset.uri, (): void => { asset.release() }, information)
+  }
+
+  private async readInformation(source: ReaderImageInformationSource): Promise<ReaderImageInformation> {
+    const inject = !this.informationInjected
+    this.informationInjected = true
+    if (inject && this.informationMode === 'fail-once') {
+      console.info('[ReaderLabAssetProbe] information_header_failure')
+      // Exercise a real missing-file header read without deleting or changing the retained image.
+      return new ReaderFileInformation('/data/storage/el2/base/cache/rkit-probe-missing-information',
+        new ReaderImageInformation()).read()
+    }
+    const information = await source.read()
+    if (inject && this.informationMode === 'delay-once') {
+      console.info('[ReaderLabAssetProbe] information_delay')
+      await new Promise<void>((resolve): void => { setTimeout(resolve, 3000) })
+      console.info('[ReaderLabAssetProbe] information_late_result')
+    }
+    return information
   }
 }

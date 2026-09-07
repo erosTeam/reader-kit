@@ -12,6 +12,7 @@ export class ReaderLabRequest {
   thumbnailFailurePage: number = -1
   volumeKeys: boolean = false
   shareProbe: string = ''
+  informationProbe: string = ''
 
   constructor(work: string, unit: string, pageIndex: number, failurePage: number = -1,
     delayedMetricsPage: number = -1, failureLayout: string = 'continuous') {
@@ -76,5 +77,8 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
   const shareProbe = want.parameters['readerLabShareProbe']
   request.shareProbe = typeof shareProbe === 'string' &&
     (shareProbe === 'fail-once' || shareProbe === 'delay-once') ? shareProbe : ''
+  const informationProbe = want.parameters['readerLabInformationProbe']
+  request.informationProbe = typeof informationProbe === 'string' &&
+    (informationProbe === 'fail-once' || informationProbe === 'delay-once') ? informationProbe : ''
   connectReaderLabLaunch().publish(request)
 }
