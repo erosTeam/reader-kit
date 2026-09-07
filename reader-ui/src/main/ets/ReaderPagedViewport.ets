@@ -13,6 +13,12 @@ class ReaderEntryLayoutRevision {
   }
 }
 
+/** Preserve only the selected entry's measured bounds across asset delivery remounts. */
+class ReaderEntryMeasurement {
+  entryId: number = -1
+  contentRect: ReaderEntryRect | null = null
+}
+
 function partRatio(frame: ReaderPagedFrame): number {
   const page = frame.asset.page
   const width = frame.asset.kind === 'thumbnail' ? page?.thumbnail.width ?? 0 : page?.width ?? 0
@@ -53,6 +59,7 @@ export struct ReaderPagedViewport {
   private pinchAdjusted: boolean = false
   private animationTimer: number = 0
   private tapSequence: ReaderTapSequence = new ReaderTapSequence()
+  private entryMeasurement: ReaderEntryMeasurement = new ReaderEntryMeasurement()
 
   private identity(): string {
     return `${this.snapshot.navigationRevision}:${this.snapshot.kind}:${this.snapshot.policy.layout}:${this.snapshot.policy.direction}:` +
@@ -77,12 +84,21 @@ export struct ReaderPagedViewport {
         target.topologyRevision = this.snapshot.topologyRevision
         target.navigationRevision = this.snapshot.navigationRevision
         target.slotId = source.slotId
+        target.requestId = source.asset.requestId
         target.assetRequestId = source.asset.assetRequestId
         target.layoutRevision = ReaderEntryLayoutRevision.next(this.entryTransition.target?.layoutRevision ?? 0)
         target.failed = true
         this.entryTransition.publishTarget(target)
       }
       // Recovery changes joined image geometry into equal failure slots.
+      this.entryTransition.cancel()
+    }
+    if (this.selected && this.active && this.entryTransition?.pending() &&
+      this.snapshot.frames.some((frame: ReaderPagedFrame) => frame.asset.page !== null &&
+        (!Number.isFinite(partRatio(frame)) || !Number.isFinite(frame.asset.page.width) ||
+          !Number.isFinite(frame.asset.page.height) || frame.asset.page.width <= 0 || frame.asset.page.height <= 0))) {
+      // A returned page with unknown dimensions cannot establish this fit.
+      // A page still being requested is not evidence of invalid metadata.
       this.entryTransition.cancel()
     }
     if (failed) this.recovering = true
@@ -218,6 +234,15 @@ export struct ReaderPagedViewport {
 
   private frameHeight(): number { return Math.min(this.viewportHeight, this.viewportWidth / this.totalRatio()) }
 
+  private entryRatiosReady(): boolean {
+    return this.snapshot.frames.length > 0 && this.snapshot.frames.every((frame: ReaderPagedFrame) => {
+      const page = frame.asset.page
+      return frame.asset.kind === 'original' && page !== null && Number.isFinite(page.width) &&
+        Number.isFinite(page.height) && page.width > 0 && page.height > 0 &&
+        Number.isFinite(partRatio(frame)) && partRatio(frame) > 0
+    })
+  }
+
   build() {
     Stack() {
       Row() {
@@ -227,7 +252,8 @@ export struct ReaderPagedViewport {
           ReaderPagedCell({
             snapshot: this.snapshot, slotId: frame.slotId,
             entryTransition: this.entryTransition,
-            entryGeometryReady: this.entryViewportLaidOut,
+            entryMeasurement: this.entryMeasurement,
+            entryGeometryReady: this.entryViewportLaidOut && this.entryRatiosReady(),
             assetRequestId: frame.asset.assetRequestId,
             renderedFragment: frame.part.fragment,
             // Zero leaves the fitted width to the cell's current reactive frame, not this stable-key closure.
@@ -292,6 +318,7 @@ export struct ReaderPagedViewport {
 struct ReaderPagedCell {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Param entryTransition: ReaderEntryTransition | null = null
+  @Param entryMeasurement: ReaderEntryMeasurement | null = null
   @Param entryGeometryReady: boolean = false
   @Require @Param slotId: number
   @Require @Param assetRequestId: number
@@ -313,6 +340,13 @@ struct ReaderPagedCell {
   private cellWidth(): number { return this.frameWidth > 0 ? this.frameWidth : this.frameHeight * partRatio(this.frame()) }
   private imageHeight(): number { return Math.min(this.frameHeight, this.cellWidth() / partRatio(this.frame())) }
 
+  private entryContentReady(): boolean {
+    const transition = this.entryTransition
+    const frame = this.frame()
+    return this.active && this.entryGeometryReady && transition !== null && transition.pending() &&
+      transition.matches(frame.part) && frame.asset.kind === 'original' && this.renderedFragment === 'whole'
+  }
+
   build() {
     Stack() {
       if (this.frame().asset.phase === 'failed') {
@@ -321,11 +355,12 @@ struct ReaderPagedCell {
           retryEnabled: this.active,
           onRetry: (): void => { this.onRetry(this.slotId, this.frame().asset.requestId) },
         })
-      } else if (this.frame().asset.uri.length > 0) {
+      } else if (this.frame().asset.uri.length > 0 || this.entryContentReady()) {
         ReaderPagedImage({
           frame: this.frame(), selectionId: this.snapshot.selectionId,
           topologyRevision: this.snapshot.topologyRevision, navigationRevision: this.snapshot.navigationRevision,
           entryTransition: this.entryTransition,
+          entryMeasurement: this.entryMeasurement,
           entryPhase: this.entryTransition?.phase ?? 'finished',
           entryLayoutWidth: this.entryGeometryReady ? this.imageHeight() * partRatio(this.frame()) : 0,
           entryLayoutHeight: this.entryGeometryReady ? this.imageHeight() : 0,
@@ -356,6 +391,7 @@ export struct ReaderPagedImage {
   @Param topologyRevision: number = 0
   @Param navigationRevision: number = 0
   @Param entryTransition: ReaderEntryTransition | null = null
+  @Param entryMeasurement: ReaderEntryMeasurement | null = null
   @Param entryPhase: string = 'finished'
   @Param entryLayoutWidth: number = 0
   @Param entryLayoutHeight: number = 0
@@ -368,6 +404,7 @@ export struct ReaderPagedImage {
   @Local private sheetHeight: number = 0
   private fullyVisible: boolean = false
   private decoded: boolean = false
+  private entryContentLaidOut: boolean = false
   private entryLeafLaidOut: boolean = false
   private entryLayoutRevision: number = 0
   private decodedWidth: number = 0
@@ -392,6 +429,10 @@ export struct ReaderPagedImage {
     return `rkit-entry-image-${this.entryTransition?.entryId ?? 0}-${this.slotId}-${this.assetRequestId}`
   }
 
+  private entryContentId(): string {
+    return `rkit-entry-content-${this.entryTransition?.entryId ?? 0}-${this.slotId}-${this.assetRequestId}`
+  }
+
   private publishEntryTarget(failed: boolean = false): void {
     const transition = this.entryTransition
     if (transition === null || !transition.pending() || !this.entryMounted || !this.active ||
@@ -406,6 +447,7 @@ export struct ReaderPagedImage {
     target.topologyRevision = this.topologyRevision
     target.navigationRevision = this.navigationRevision
     target.slotId = this.slotId
+    target.requestId = this.frame.asset.requestId
     target.assetRequestId = this.assetRequestId
     target.failed = failed
     target.decodedReady = this.decoded
@@ -414,14 +456,28 @@ export struct ReaderPagedImage {
     const page = this.frame.asset.page
     // Sprite/fragment clipping and unknown original geometry need a different
     // content contract; never advertise their outer wrapper as the image bounds.
-    if (this.frame.asset.kind !== 'original' || this.renderedFragment !== 'whole' || page === null ||
-      !Number.isFinite(page.width) || !Number.isFinite(page.height) || page.width <= 0 || page.height <= 0) {
+    if (this.frame.asset.kind !== 'original' || this.renderedFragment !== 'whole') {
       transition.cancel(); return
     }
-    if (!this.entryLeafLaidOut || this.entryLayoutWidth <= 0 || this.entryLayoutHeight <= 0) return
+    if (page === null) return
+    if (!Number.isFinite(page.width) || !Number.isFinite(page.height) || page.width <= 0 || page.height <= 0) {
+      transition.cancel(); return
+    }
+    if (!this.entryContentLaidOut || this.entryLayoutWidth <= 0 || this.entryLayoutHeight <= 0) return
+    if (this.frame.asset.uri.length > 0 && !this.entryLeafLaidOut) return
     try {
       const context = this.getUIContext()
-      const leaf = context.getComponentUtils().getRectangleById(this.entryLeafId())
+      // This is the same fitted content Stack that owns the delivered Image,
+      // not the outer cell (which also owns loading and failure presentation).
+      const leaf = context.getComponentUtils().getRectangleById(this.entryContentId())
+      if (this.frame.asset.uri.length > 0) {
+        const image = context.getComponentUtils().getRectangleById(this.entryLeafId())
+        if (Math.abs(image.windowOffset.x - leaf.windowOffset.x) > 1 ||
+          Math.abs(image.windowOffset.y - leaf.windowOffset.y) > 1 ||
+          Math.abs(image.size.width - leaf.size.width) > 1 || Math.abs(image.size.height - leaf.size.height) > 1) {
+          transition.cancel(); return
+        }
+      }
       const viewport = context.getComponentUtils().getRectangleById('rkit-image-viewport')
       const rect = new ReaderEntryRect(context.px2vp(leaf.windowOffset.x), context.px2vp(leaf.windowOffset.y),
         context.px2vp(leaf.size.width), context.px2vp(leaf.size.height))
@@ -445,13 +501,16 @@ export struct ReaderPagedImage {
         transition.cancel(); return
       }
       const previous = transition.target
-      const priorRect = previous?.contentRect ?? this.measuredEntryRect
+      const inheritedRect = this.entryMeasurement?.entryId === transition.entryId ?
+        this.entryMeasurement.contentRect : null
+      const priorRect = previous?.contentRect ?? this.measuredEntryRect ?? inheritedRect
       const moved = priorRect !== null && (priorRect.x !== rect.x || priorRect.y !== rect.y ||
         priorRect.width !== rect.width || priorRect.height !== rect.height)
       if (moved && transition.phase !== 'layout') { transition.cancel(); return }
       const sameIdentity = previous !== null && previous.selectionId === target.selectionId &&
         previous.topologyRevision === target.topologyRevision && previous.navigationRevision === target.navigationRevision &&
-        previous.slotId === target.slotId && previous.assetRequestId === target.assetRequestId
+        previous.slotId === target.slotId && previous.requestId === target.requestId &&
+        previous.assetRequestId === target.assetRequestId
       // A publication redraws the optional presenter. Identical leaf reports
       // must not feed that redraw back into another target publication.
       if (sameIdentity && !moved && previous !== null && previous.geometryReady &&
@@ -464,6 +523,12 @@ export struct ReaderPagedImage {
       target.contentRect = rect
       target.geometryReady = true
       transition.publishTarget(target)
+      // Rejected retired-leaf callbacks must not replace the next leaf's baseline.
+      if (this.entryMeasurement !== null && transition.target?.layoutRevision === target.layoutRevision &&
+        transition.target.requestId === target.requestId && transition.target.assetRequestId === target.assetRequestId) {
+        this.entryMeasurement.entryId = transition.entryId
+        this.entryMeasurement.contentRect = rect.copy()
+      }
     } catch (_error) {
       transition.cancel()
     }
@@ -507,7 +572,8 @@ export struct ReaderPagedImage {
 
   build() {
     Stack() {
-      if (this.frame.asset.kind === 'thumbnail' && this.frame.asset.page?.thumbnail.kind === 'sprite') {
+      if (this.frame.asset.uri.length > 0 && this.frame.asset.kind === 'thumbnail' &&
+        this.frame.asset.page?.thumbnail.kind === 'sprite') {
         Stack({ alignContent: Alignment.TopStart }) {
           Image(this.frame.asset.uri)
             // Parsed extents describe the occupied cells, not necessarily the entire canvas.
@@ -527,7 +593,7 @@ export struct ReaderPagedImage {
         .width(this.frame.asset.page.thumbnail.width * this.spriteScale())
         .height(this.frame.asset.page.thumbnail.height * this.spriteScale())
         .clip(true)
-      } else if (this.frame.asset.kind === 'original' && this.frame.part.fragment !== 'whole') {
+      } else if (this.frame.asset.uri.length > 0 && this.frame.asset.kind === 'original' && this.frame.part.fragment !== 'whole') {
         Stack({ alignContent: Alignment.TopStart }) {
           Image(this.frame.asset.uri)
             .width(this.viewportWidth * 2).height(this.viewportHeight)
@@ -539,7 +605,7 @@ export struct ReaderPagedImage {
             .onError((): void => { this.failed() })
         }
         .width('100%').height('100%').clip(true)
-      } else {
+      } else if (this.frame.asset.uri.length > 0) {
         Image(this.frame.asset.uri)
           .width('100%').height('100%')
           .objectFit(ImageFit.Contain)
@@ -555,6 +621,7 @@ export struct ReaderPagedImage {
       }
     }
     .width('100%').height('100%')
+    .id(this.entryContentId())
     .opacity(this.entryTransition?.opacity(this.frame.part) ?? 1)
     .onVisibleAreaChange([0, 1], (_expanding: boolean, ratio: number): void => {
       this.fullyVisible = ratio >= 1
@@ -563,6 +630,8 @@ export struct ReaderPagedImage {
     .onAreaChange((_old: Area, area: Area): void => {
       this.viewportWidth = Math.max(1, Number(area.width))
       this.viewportHeight = Math.max(1, Number(area.height))
+      this.entryContentLaidOut = true
+      this.publishEntryTarget()
     })
   }
 }

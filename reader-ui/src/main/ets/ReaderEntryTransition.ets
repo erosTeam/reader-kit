@@ -24,6 +24,7 @@ export class ReaderEntryTarget {
   topologyRevision: number = 0
   navigationRevision: number = 0
   slotId: number = 0
+  requestId: number = 0
   assetRequestId: number = 0
   layoutRevision: number = 0
   contentRect: ReaderEntryRect = new ReaderEntryRect()
@@ -39,6 +40,7 @@ export class ReaderEntryTarget {
     value.topologyRevision = this.topologyRevision
     value.navigationRevision = this.navigationRevision
     value.slotId = this.slotId
+    value.requestId = this.requestId
     value.assetRequestId = this.assetRequestId
     value.layoutRevision = this.layoutRevision
     value.contentRect = this.contentRect.copy()
@@ -64,7 +66,8 @@ export class ReaderEntryTransition {
   private selection: number = -1
   private topology: number = -1
   private slot: number = -1
-  private request: number = -1
+  private loadRequest: number = -1
+  private assetRequest: number = -1
 
   constructor(entryId: number, requestedPart: ReaderDisplayPart) {
     this.entryId = entryId
@@ -89,23 +92,32 @@ export class ReaderEntryTransition {
     if (this.navigation >= 0 && this.navigation !== snapshot.navigationRevision) {
       this.cancel(); return
     }
+    // Metadata and its content node can precede asset delivery. Only this exact
+    // load may promote assetRequestId=0 to its own epoch without replacing the entry.
+    const delivered = this.slot === frame.slotId && this.loadRequest > 0 &&
+      this.loadRequest === frame.asset.requestId && this.assetRequest === 0 &&
+      frame.asset.assetRequestId === this.loadRequest
     if (this.phase !== 'layout' && this.slot >= 0 &&
-      (this.slot !== frame.slotId || this.request !== frame.asset.assetRequestId)) {
+      (this.slot !== frame.slotId || this.loadRequest !== frame.asset.requestId ||
+        (this.assetRequest !== frame.asset.assetRequestId && !delivered))) {
       this.cancel(); return
     }
     if (this.selection !== snapshot.selectionId || this.topology !== snapshot.topologyRevision ||
-      this.slot !== frame.slotId || this.request !== frame.asset.assetRequestId) this.target = null
+      this.slot !== frame.slotId || this.loadRequest !== frame.asset.requestId ||
+      this.assetRequest !== frame.asset.assetRequestId) this.target = null
     this.navigation = snapshot.navigationRevision
     this.selection = snapshot.selectionId
     this.topology = snapshot.topologyRevision
     this.slot = frame.slotId
-    this.request = frame.asset.assetRequestId
+    this.loadRequest = frame.asset.requestId
+    this.assetRequest = frame.asset.assetRequestId
   }
 
   publishTarget(value: ReaderEntryTarget): void {
     if (!this.pending() || !this.matches(value.part) || value.navigationRevision !== this.navigation ||
       value.selectionId !== this.selection || value.topologyRevision !== this.topology ||
-      value.slotId !== this.slot || value.assetRequestId !== this.request) return
+      value.slotId !== this.slot || value.requestId !== this.loadRequest ||
+      value.assetRequestId !== this.assetRequest) return
     const previous = this.target
     if (previous !== null && value.layoutRevision < previous.layoutRevision) return
     this.target = value.copy()
