@@ -24,9 +24,13 @@ const source = fs.readFileSync(path.join(uiPath, 'ReaderEntryPreview.ets'), 'utf
 // Run the real source class and presenter methods, excluding only declarative build syntax.
 // Platform animation is a callback recorder: these are state/ownership tests, not visual acceptance.
 const methods = source.slice(0, source.indexOf('\n  build() {')).replace('export struct ReaderEntryPreview {', 'export class ReaderEntryPreview {') + '\n}\n'
+let syncDepth = 0
 const { ReaderEntryPreviewSource, ReaderEntryPreview } = evaluate(methods, {
   './ReaderEntryTransition': transition,
-  '@kit.ArkUI': { FrameCallback: class {}, UIUtils: { applySync: callback => callback() } },
+  '@kit.ArkUI': { FrameCallback: class {}, UIUtils: { applySync: callback => {
+    syncDepth++
+    try { callback() } finally { syncDepth-- }
+  } } },
 })
 const { ReaderEntryTransition, ReaderEntryTarget, ReaderEntryRect } = transition
 function pixels() {
@@ -140,8 +144,9 @@ test('allowed departure authorizes once; duplicate advances and decode handoff n
   value.animations[0].onFinish()
   assert.equal(value.entry.phase, 'waiting'); assert.equal(calls, 1)
   value.target.decodedReady = true; value.entry.publishTarget(value.target); value.preview.advance()
-  assert.equal(value.entry.phase, 'revealing'); assert.equal(calls, 1)
-  value.animations.at(-1).onFinish(); value.preview.advance()
+  assert.equal(value.entry.phase, 'finished'); assert.equal(calls, 1)
+  assert.equal(value.animations.at(-1).onFinish, undefined)
+  value.preview.advance()
   assert.equal(value.entry.phase, 'finished'); assert.equal(calls, 1)
 })
 
@@ -165,19 +170,22 @@ for (const coverage of ['unknown', 'whole-page']) {
     assert.equal(value.preview.previewOpacity, 1)
     value.target.decodedReady = true; value.entry.publishTarget(value.target); value.preview.advance()
     const reveal = value.animations.at(-1)
-    assert.equal(reveal.duration, 140); assert.equal(reveal.curve, 'linear')
-    assert.equal(value.entry.phase, 'revealing')
+    assert.equal(reveal.duration, coverage === 'unknown' ? 0 : 140)
+    assert.equal(reveal.curve, coverage === 'unknown' ? undefined : 'linear')
+    assert.equal(value.entry.phase, coverage === 'unknown' ? 'finished' : 'revealing')
     assert.equal(value.entry.selectedOpacity, 1)
     assert.equal(value.preview.previewOpacity, coverage === 'unknown' ? 0 : 1)
     const count = value.animations.length
     value.preview.advance()
     assert.equal(value.animations.length, count)
-    reveal.onFinish(); value.preview.advance()
+    if (coverage === 'whole-page') reveal.onFinish()
+    else assert.equal(reveal.onFinish, undefined)
+    value.preview.advance()
     assert.equal(value.entry.phase, 'finished'); assert.equal(value.entry.pending(), false)
     assert.equal(value.animations.length, count)
   })
 
-  test(`${coverage}: cancelled flight and retired reveal callbacks cannot revive the entry`, () => {
+  test(`${coverage}: cancelled flight and retired waiting presenters cannot revive the entry`, () => {
     const flight = scenario(null, coverage)
     flight.preview.advance(); flight.entry.cancel(); flight.animations[0].onFinish(); flight.preview.advance()
     assert.equal(flight.entry.phase, 'cancelled'); assert.equal(flight.entry.pending(), false)
@@ -185,19 +193,87 @@ for (const coverage of ['unknown', 'whole-page']) {
     for (const retire of [value => value.entry.cancel(), value => value.preview.aboutToDisappear()]) {
       const value = scenario(null, coverage)
       value.preview.advance(); value.animations[0].onFinish()
-      value.target.decodedReady = true; value.entry.publishTarget(value.target); value.preview.advance()
-      const finish = value.animations.at(-1).onFinish
       const count = value.animations.length
-      retire(value); finish(); value.preview.advance()
+      retire(value)
+      value.target.decodedReady = true; value.entry.publishTarget(value.target); value.preview.advance()
       assert.equal(value.entry.phase, 'cancelled'); assert.equal(value.entry.pending(), false)
       assert.equal(value.animations.length, count)
     }
-    const stale = scenario(null, coverage)
-    stale.preview.advance(); stale.animations[0].onFinish()
-    stale.target.decodedReady = true; stale.entry.publishTarget(stale.target); stale.preview.advance()
-    const staleFinish = stale.animations.at(-1).onFinish
-    stale.preview.epoch++
-    staleFinish()
-    assert.equal(stale.entry.phase, 'revealing')
   })
 }
+
+test('whole-page: retired and stale reveal callbacks retain their existing fences', () => {
+  for (const retire of [value => value.entry.cancel(), value => value.preview.aboutToDisappear()]) {
+    const value = scenario(null, 'whole-page')
+    value.preview.advance(); value.animations[0].onFinish()
+    value.target.decodedReady = true; value.entry.publishTarget(value.target); value.preview.advance()
+    const finish = value.animations.at(-1).onFinish
+    const count = value.animations.length
+    retire(value); finish(); value.preview.advance()
+    assert.equal(value.entry.phase, 'cancelled'); assert.equal(value.entry.pending(), false)
+    assert.equal(value.animations.length, count)
+  }
+  const stale = scenario(null, 'whole-page')
+  stale.preview.advance(); stale.animations[0].onFinish()
+  stale.target.decodedReady = true; stale.entry.publishTarget(stale.target); stale.preview.advance()
+  const staleFinish = stale.animations.at(-1).onFinish
+  stale.preview.epoch++
+  staleFinish()
+  assert.equal(stale.entry.phase, 'revealing')
+})
+
+test('unknown: reveal and finish execute inside one zero-duration synchronous UI commit', () => {
+  const value = scenario()
+  value.preview.advance(); value.animations[0].onFinish()
+  let duration = null
+  const calls = []
+  for (const method of ['reveal', 'finish']) {
+    const actual = value.entry[method].bind(value.entry)
+    value.entry[method] = () => {
+      calls.push({ method, duration, syncDepth })
+      actual()
+    }
+  }
+  value.preview.getUIContext = () => ({ animateTo(options, callback) {
+    assert.equal(options.onFinish, undefined)
+    duration = options.duration
+    callback()
+    assert.equal(value.entry.phase, 'finished')
+    assert.equal(value.entry.selectedOpacity, 1); assert.equal(value.preview.previewOpacity, 0)
+    duration = null
+  } })
+  value.target.decodedReady = true; value.entry.publishTarget(value.target); value.preview.advance()
+  assert.deepEqual(calls, [
+    { method: 'reveal', duration: 0, syncDepth: 1 },
+    { method: 'finish', duration: 0, syncDepth: 1 },
+  ])
+})
+
+test('unknown: already decoded content still waits for flight arrival and commits without a completion callback', () => {
+  const value = scenario()
+  value.target.decodedReady = true; value.entry.publishTarget(value.target)
+  value.preview.advance(); value.preview.advance()
+  assert.equal(value.entry.phase, 'moving'); assert.equal(value.entry.selectedOpacity, 0)
+  assert.equal(value.entry.neighborOpacity, 0); assert.equal(value.preview.previewOpacity, 1)
+  assert.equal(value.animations.length, 1)
+  value.animations[0].onFinish()
+  assert.deepEqual(value.animations.map(animation => animation.duration), [280, 140, 0])
+  assert.equal(value.animations.at(-1).onFinish, undefined)
+  assert.equal(value.entry.phase, 'finished'); assert.equal(value.entry.selectedOpacity, 1)
+  assert.equal(value.entry.neighborOpacity, 1); assert.equal(value.preview.previewOpacity, 0)
+  assert.equal(value.bitmap.releases, 0) // The host still owns snapshot release.
+  value.animations[0].onFinish(); value.preview.advance(); value.preview.aboutToDisappear()
+  assert.equal(value.entry.phase, 'finished'); assert.equal(value.animations.length, 3)
+})
+
+test('unknown: failed or changed landing geometry cancels without scheduling the atomic handoff', () => {
+  for (const invalidate of [target => { target.failed = true }, target => { target.contentRect.x += 1 }]) {
+    const value = scenario()
+    value.preview.advance(); value.animations[0].onFinish()
+    value.target.decodedReady = true; invalidate(value.target)
+    value.entry.publishTarget(value.target); value.preview.advance()
+    assert.equal(value.entry.phase, 'cancelled')
+    assert.deepEqual(value.animations.map(animation => animation.duration), [280, 140])
+    assert.equal(value.entry.selectedOpacity, 1); assert.equal(value.entry.neighborOpacity, 1)
+  }
+})

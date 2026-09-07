@@ -93,16 +93,26 @@ export struct ReaderEntryPreview {
       })
     } else if (this.entry.phase === 'waiting' && target.decodedReady) {
       const epoch = ++this.epoch
+      if (this.source.coverage === 'unknown') {
+        // A partial preview has no proven pixel correspondence with the original.
+        // Retire it in the same non-animated commit that exposes the decoded image.
+        this.getUIContext().animateTo({ duration: 0 }, (): void => {
+          UIUtils.applySync((): void => {
+            this.entry.reveal()
+            this.previewOpacity = 0
+            this.entry.finish()
+          })
+        })
+        return
+      }
       this.getUIContext().animateTo({ duration: 140, curve: Curve.Linear,
         onFinish: (): void => {
           if (this.mounted && epoch === this.epoch) this.entry.finish()
         },
       }, (): void => {
         // Keep a known whole-page underlay opaque during the upper original fade.
-        // Unknown coverage retains the existing dual fade rather than a brighter crop overlap.
         UIUtils.applySync((): void => {
           this.entry.reveal()
-          if (this.source.coverage === 'unknown') this.previewOpacity = 0
         })
       })
     }
