@@ -16,6 +16,7 @@ export class ReaderLabRequest {
   thumbnailEntry: boolean = false
   entryLayout: string = 'single'
   entryDirection: string = 'ltr'
+  entryProbe: string = ''
 
   constructor(work: string, unit: string, pageIndex: number, failurePage: number = -1,
     delayedMetricsPage: number = -1, failureLayout: string = 'continuous') {
@@ -87,5 +88,6 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
     (want.parameters['readerLabThumbnailEntry'] === true || want.parameters['readerLabThumbnailEntry'] === 'true')
   request.entryLayout = want.parameters['readerLabEntryLayout'] === 'spread' ? 'spread' : 'single'
   request.entryDirection = want.parameters['readerLabEntryDirection'] === 'rtl' ? 'rtl' : 'ltr'
+  request.entryProbe = request.thumbnailEntry && want.parameters['readerLabEntryProbe'] === 'delay-once' ? 'delay-once' : ''
   connectReaderLabLaunch().publish(request)
 }
