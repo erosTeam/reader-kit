@@ -5,9 +5,24 @@ import { ReaderEntryRect, ReaderEntryTransition } from './ReaderEntryTransition'
 /** Host-owned snapshot of the displayed thumbnail. Its pixels do not claim original coverage. */
 export class ReaderEntryPreviewSource {
   private released: boolean = false
+  private departureGuard: ((entryId: number) => boolean) | null
   pixels: image.PixelMap
   rect: ReaderEntryRect
-  constructor(pixels: image.PixelMap, rect: ReaderEntryRect) { this.pixels = pixels; this.rect = rect }
+  constructor(pixels: image.PixelMap, rect: ReaderEntryRect,
+    departureGuard: ((entryId: number) => boolean) | null = null) {
+    this.pixels = pixels; this.rect = rect; this.departureGuard = departureGuard
+  }
+
+  authorizeDeparture(entryId: number): boolean {
+    if (this.released) return false
+    try {
+      const allowed = this.departureGuard === null || this.departureGuard(entryId)
+      return allowed && !this.released
+    } catch (_error) {
+      return false
+    }
+  }
+
   release(): void {
     if (this.released) return
     this.released = true
@@ -48,6 +63,12 @@ export struct ReaderEntryPreview {
       this.entry.cancel(); return
     }
     if (this.entry.phase === 'layout') {
+      const entry = this.entry
+      const source = this.source
+      if (!source.authorizeDeparture(entry.entryId)) { entry.cancel(); return }
+      // The host may synchronously retire this hidden trial while authorizing its source.
+      if (!this.mounted || this.entry !== entry || this.source !== source || !entry.pending() ||
+        entry.phase !== 'layout' || entry.target !== target) return
       const destination = target.contentRect
       this.destination = destination.copy()
       const scale = Math.min(destination.width / this.source.rect.width, destination.height / this.source.rect.height)
