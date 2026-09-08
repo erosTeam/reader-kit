@@ -2,6 +2,7 @@ import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPolicy, ReaderUnitK
   ReaderImageSaveChoice, ReaderImageSaveTarget } from '@reader-kit/core'
 import { uiMaterial } from '@kit.ArkUI'
 import { deviceInfo } from '@kit.BasicServicesKit'
+import { SymbolGlyphModifier } from '@kit.ArkUI'
 
 /** Default overlay chrome. It emits intentions; it never opens a catalog or writes preferences. */
 @ComponentV2
@@ -17,6 +18,8 @@ export struct ReaderChrome {
   @Param saveAvailable: boolean = false
   @Param saveBusy: boolean = false
   @Param autoReadAvailable: boolean = false
+  @Param originalAvailable: boolean = false
+  @Event onOriginal: (frames: ReaderPagedFrame[], unit: ReaderUnitKey, navigation: number, enabled: boolean) => void = () => {}
   @Param autoReadEnabled: boolean = false
   @Event onAutoRead: () => void = () => {}
   @Event onSave: (choice: ReaderImageSaveChoice) => void = () => {}
@@ -34,6 +37,10 @@ export struct ReaderChrome {
   @Local private preview: number = -1
   @Local private moreShown: boolean = false
   @Local private saveMenuShown: boolean = false
+  @Local private originalMenuShown: boolean = false
+  private originalFrames: ReaderPagedFrame[] = []
+  private originalUnit: ReaderUnitKey | null = null
+  private originalNavigation: number = -1
   private saveLeft: ReaderImageSaveTarget | null = null
   private saveRight: ReaderImageSaveTarget | null = null
   private saveBoth: ReaderImageSaveTarget | null = null
@@ -44,6 +51,7 @@ export struct ReaderChrome {
 
   @Monitor('snapshot', 'active')
   onSnapshotChanged(): void {
+    if (this.originalMenuShown && (!this.active || !this.originalTargetsCurrent())) this.originalMenuShown = false
     if (this.saveMenuShown && (!this.active || !this.saveTargetsCurrent())) this.saveMenuShown = false
     if (!this.active || this.snapshot.phase !== 'ready' ||
       this.seekUnit !== null && (!this.snapshot.unit?.key.equals(this.seekUnit) ||
@@ -95,6 +103,55 @@ export struct ReaderChrome {
     this.onPolicy(policy)
   }
 
+  private canOriginal(frame: ReaderPagedFrame): boolean {
+    const current = this.snapshot.frames.find(value => value.slotId === frame.slotId && value.asset.requestId === frame.asset.requestId)
+    return current !== undefined && current.asset.kind === 'original' && (current.asset.variant === 'original' ||
+      current.asset.phase === 'displayed' && current.asset.originalAvailable)
+  }
+
+  private originalTargetsCurrent(): boolean {
+    return this.originalUnit !== null && this.snapshot.unit?.key.equals(this.originalUnit) === true &&
+      this.originalNavigation === this.snapshot.navigationRevision &&
+      this.originalFrames.length === this.snapshot.frames.length && this.originalFrames.every(frame =>
+        this.snapshot.frames.some(current => current.slotId === frame.slotId &&
+          current.asset.requestId === frame.asset.requestId))
+  }
+
+  private openOriginal(): void {
+    if (!this.active || this.snapshot.originalPreparing || this.saveBusy || this.shareBusy || this.informationBusy ||
+      this.snapshot.unit === null || !this.snapshot.frames.some(frame => this.canOriginal(frame))) return
+    this.originalFrames = this.snapshot.frames.slice()
+    this.originalUnit = this.snapshot.unit.key.copy()
+    this.originalNavigation = this.snapshot.navigationRevision
+    if (this.originalFrames.length > 1) { this.saveMenuShown = false; this.originalMenuShown = true }
+    else this.selectOriginal(this.originalFrames)
+  }
+
+  private selectOriginal(frames: ReaderPagedFrame[]): void {
+    this.originalMenuShown = false
+    if (!this.active || this.snapshot.originalPreparing || !this.originalTargetsCurrent() || this.originalUnit === null ||
+      frames.length === 0 || !frames.every(frame => this.canOriginal(frame))) return
+    this.onOriginal(frames, this.originalUnit.copy(), this.originalNavigation,
+      !frames.every(frame => frame.asset.variant === 'original'))
+  }
+
+  @Builder
+  private OriginalMenu() {
+    Menu() {
+      ForEach(this.originalFrames, (frame: ReaderPagedFrame, index: number) => {
+        MenuItem({ content: index === 0 ? $r('app.string.rkit_info_left', frame.part.sourceIndex + 1) :
+          $r('app.string.rkit_info_right', frame.part.sourceIndex + 1),
+          symbolEndIcon: frame.asset.variant === 'original' ? new SymbolGlyphModifier($r('sys.symbol.checkmark')) : undefined })
+          .id(`rkit-original-source-${frame.part.sourceIndex}`).enabled(this.canOriginal(frame))
+          .onClick((): void => { this.selectOriginal([frame]) })
+      }, (frame: ReaderPagedFrame): string => `${frame.slotId}`)
+      MenuItem({ content: this.originalFrames.every(frame => frame.asset.variant === 'original') ?
+        $r('app.string.rkit_original_disable_both') : $r('app.string.rkit_original_enable_both') })
+        .id('rkit-original-both').enabled(this.originalFrames.every(frame => this.canOriginal(frame)))
+        .onClick((): void => { this.selectOriginal(this.originalFrames) })
+    }
+  }
+
   private saveTarget(choice: ReaderImageSaveChoice): ReaderImageSaveTarget | null {
     return ReaderImageSaveTarget.from(this.snapshot, choice)
   }
@@ -106,7 +163,7 @@ export struct ReaderChrome {
   }
 
   private openSave(): void {
-    if (!this.active || this.saveBusy || this.shareBusy || this.informationBusy) return
+    if (!this.active || this.saveBusy || this.shareBusy || this.informationBusy || this.snapshot.originalPreparing) return
     if (this.snapshot.policy.layout === 'spread' && this.snapshot.frames.length === 2) {
       this.saveLeftIndex = this.snapshot.frames[0].part.sourceIndex
       this.saveRightIndex = this.snapshot.frames[1].part.sourceIndex
@@ -120,7 +177,7 @@ export struct ReaderChrome {
   private selectSave(choice: ReaderImageSaveChoice, expected: ReaderImageSaveTarget | null): void {
     this.saveMenuShown = false
     const current = this.saveTarget(choice)
-    if (this.active && !this.saveBusy && !this.shareBusy && !this.informationBusy &&
+    if (this.active && !this.saveBusy && !this.shareBusy && !this.informationBusy && !this.snapshot.originalPreparing &&
       expected !== null && current !== null && expected.equals(current)) this.onSave(choice)
   }
 
@@ -144,9 +201,14 @@ export struct ReaderChrome {
       frame.asset.kind === 'original' && frame.asset.phase === 'displayed' && frame.asset.informationAvailable)
   }
 
+  private currentInformationFrame(slotId: number): ReaderPagedFrame | undefined {
+    return this.informationFrames().find(frame => frame.slotId === slotId)
+  }
+
   private selectInformation(frame: ReaderPagedFrame): void {
+    const current = this.currentInformationFrame(frame.slotId)
     this.moreShown = false
-    this.onInformation(frame)
+    if (current !== undefined) this.onInformation(current)
   }
 
   @Builder
@@ -155,7 +217,7 @@ export struct ReaderChrome {
       ForEach(this.snapshot.frames, (frame: ReaderPagedFrame, index: number) => {
         MenuItem({ content: index === 0 ? $r('app.string.rkit_info_left', frame.part.sourceIndex + 1) :
           $r('app.string.rkit_info_right', frame.part.sourceIndex + 1) })
-          .enabled(frame.asset.kind === 'original' && frame.asset.phase === 'displayed' && frame.asset.informationAvailable)
+          .enabled(this.currentInformationFrame(frame.slotId) !== undefined)
           .id(`rkit-info-source-${frame.part.sourceIndex}`)
           .onClick((): void => { this.selectInformation(frame) })
       }, (frame: ReaderPagedFrame): string => `${frame.slotId}`)
@@ -227,7 +289,7 @@ export struct ReaderChrome {
               }
             }.width(44).height(44).backgroundColor(Color.Transparent)
               .id('rkit-share-image').accessibilityText($r('app.string.rkit_share_image'))
-              .enabled(this.active && this.snapshot.phase === 'ready' && !this.shareBusy && !this.saveBusy)
+              .enabled(this.active && this.snapshot.phase === 'ready' && !this.shareBusy && !this.saveBusy && !this.snapshot.originalPreparing)
               .onClick(this.onShare)
           }
           Button({ type: ButtonType.Circle }) {
@@ -248,7 +310,7 @@ export struct ReaderChrome {
               }
             }.width(44).height(44).backgroundColor(Color.Transparent)
               .id('rkit-more').accessibilityText($r('app.string.rkit_more'))
-              .enabled(this.active && this.informationFrames().length > 0 && !this.informationBusy && !this.shareBusy && !this.saveBusy)
+              .enabled(this.active && this.informationFrames().length > 0 && !this.informationBusy && !this.shareBusy && !this.saveBusy && !this.snapshot.originalPreparing)
               .onClick((): void => { this.moreShown = true })
               .bindMenu(this.moreShown, this.MoreMenu, {
                 placement: Placement.BottomRight,
@@ -293,7 +355,7 @@ export struct ReaderChrome {
               }
             }.width(44).height(44).backgroundColor(Color.Transparent)
               .id('rkit-save-image').accessibilityText($r('app.string.rkit_save_image'))
-              .enabled(this.active && !this.saveBusy && !this.shareBusy && !this.informationBusy &&
+              .enabled(this.active && !this.saveBusy && !this.shareBusy && !this.informationBusy && !this.snapshot.originalPreparing &&
                 (this.saveTarget('current') !== null || this.saveTarget('left') !== null || this.saveTarget('right') !== null))
               .onClick((): void => { this.openSave() })
               .bindMenu(this.saveMenuShown, this.SaveMenu, {
@@ -302,6 +364,27 @@ export struct ReaderChrome {
                   new uiMaterial.ImmersiveMaterial({ style: uiMaterial.ImmersiveStyle.THICK }) : undefined,
                 aboutToAppear: (): void => { this.onMenuVisible(true) },
                 onDisappear: (): void => { this.saveMenuShown = false; this.onMenuVisible(false) },
+              })
+          }
+          if (this.originalAvailable) {
+            Button({ type: ButtonType.Circle }) {
+              if (this.snapshot.originalPreparing) {
+                LoadingProgress().width(22).height(22).color(this.accent)
+              } else {
+                SymbolGlyph($r('sys.symbol.arrow_outward_and_rectangle')).fontSize(22)
+                  .fontColor([this.snapshot.frames.some(frame => frame.asset.variant === 'original') ? this.accent : Color.White])
+              }
+            }.width(44).height(44).backgroundColor(Color.Transparent)
+              .id('rkit-original-image').accessibilityText($r('app.string.rkit_original'))
+              .enabled(this.active && !this.snapshot.originalPreparing && !this.saveBusy && !this.shareBusy &&
+                !this.informationBusy && this.snapshot.frames.some(frame => this.canOriginal(frame)))
+              .onClick((): void => { this.openOriginal() })
+              .bindMenu(this.originalMenuShown, this.OriginalMenu, {
+                placement: Placement.TopRight,
+                systemMaterial: deviceInfo.apiAvailable('26.0.0') ?
+                  new uiMaterial.ImmersiveMaterial({ style: uiMaterial.ImmersiveStyle.THICK }) : undefined,
+                aboutToAppear: (): void => { this.onMenuVisible(true) },
+                onDisappear: (): void => { this.originalMenuShown = false; this.onMenuVisible(false) },
               })
           }
           if (this.autoReadAvailable) {

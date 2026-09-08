@@ -1,5 +1,8 @@
 {
   "string": [
+    { "name": "rkit_original_enable_both", "value": "両ページを元画像に切り替え" },
+    { "name": "rkit_original_disable_both", "value": "両ページの元画像をオフ" },
+    { "name": "rkit_original_failed", "value": "%s ページの元画像を読み込めません" },
     { "name": "rkit_auto_read_start", "value": "自動ページ送りを開始" },
     { "name": "rkit_auto_read_stop", "value": "自動ページ送りを停止" },
     { "name": "rkit_save_image", "value": "画像を保存" },

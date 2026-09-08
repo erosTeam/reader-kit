@@ -1,5 +1,8 @@
 {
   "string": [
+    { "name": "rkit_original_enable_both", "value": "两页均使用原图" },
+    { "name": "rkit_original_disable_both", "value": "两页均关闭原图" },
+    { "name": "rkit_original_failed", "value": "第 %s 页原图无法加载" },
     { "name": "rkit_auto_read_start", "value": "开始自动翻页" },
     { "name": "rkit_auto_read_stop", "value": "停止自动翻页" },
     { "name": "rkit_save_image", "value": "保存图片" },

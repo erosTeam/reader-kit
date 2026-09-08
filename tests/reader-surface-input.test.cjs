@@ -33,6 +33,7 @@ function scenario(phase = null) {
   surface.inputTopology = 7; surface.inputLocked = false
   const moves = []; let navigation = 10; let reads = 0
   surface.session = {
+    cancelOriginalPreparations() {},
     snapshot() { reads++; const state = new core.ReaderPagedSnapshot(); state.navigationRevision = navigation; return state },
     move(intent) { moves.push(intent); navigation++ },
   }

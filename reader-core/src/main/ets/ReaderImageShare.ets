@@ -1,5 +1,5 @@
 import { ReaderUnit } from './ReaderContent'
-import { ReaderCancellation } from './ReaderSession'
+import { ReaderCancellation, ReaderAssetVariant } from './ReaderSession'
 import { ReaderPagedSnapshot } from './ReaderPagedSession'
 
 /** The original page named by the chrome, independent of visual spread order. */
@@ -7,11 +7,13 @@ export class ReaderImageShareTarget {
   unit: ReaderUnit
   sourceIndex: number
   navigation: number
+  variant: ReaderAssetVariant
 
-  constructor(unit: ReaderUnit, sourceIndex: number, navigation: number) {
+  constructor(unit: ReaderUnit, sourceIndex: number, navigation: number, variant: ReaderAssetVariant = 'default') {
     this.unit = unit.copy()
     this.sourceIndex = sourceIndex
     this.navigation = navigation
+    this.variant = variant
   }
 
   static from(snapshot: ReaderPagedSnapshot): ReaderImageShareTarget | null {
@@ -20,16 +22,17 @@ export class ReaderImageShareTarget {
     if (snapshot.phase !== 'ready' || unit === null || anchor === null ||
       !anchor.unit.equals(unit.key) || anchor.sourceIndexHint < 0 ||
       anchor.sourceIndexHint >= unit.pageCount) return null
-    return new ReaderImageShareTarget(unit, anchor.sourceIndexHint, snapshot.navigationRevision)
+    const frame = snapshot.frames.find(value => value.part.sourceIndex === anchor.sourceIndexHint)
+    return new ReaderImageShareTarget(unit, anchor.sourceIndexHint, snapshot.navigationRevision, frame?.asset.variant ?? 'default')
   }
 
   copy(): ReaderImageShareTarget {
-    return new ReaderImageShareTarget(this.unit, this.sourceIndex, this.navigation)
+    return new ReaderImageShareTarget(this.unit, this.sourceIndex, this.navigation, this.variant)
   }
 
   equals(other: ReaderImageShareTarget): boolean {
     return this.unit.key.equals(other.unit.key) && this.sourceIndex === other.sourceIndex &&
-      this.navigation === other.navigation
+      this.navigation === other.navigation && this.variant === other.variant
   }
 }
 

@@ -1,6 +1,6 @@
 import { ReaderUnitKey, ReaderUnit, ReaderPage } from './ReaderContent'
 import {
-  ReaderSession, ReaderSnapshot, ReaderCatalog, ReaderAssetProvider, ReaderAssetKind, ReaderCancellation,
+  ReaderSession, ReaderSnapshot, ReaderCatalog, ReaderAssetProvider, ReaderAssetKind, ReaderCancellation, ReaderOriginalAssetPlan,
 } from './ReaderSession'
 import { ReaderDisplayMap, ReaderDisplayPolicy, ReaderDisplayPart, ReaderReadingAnchor, ReaderFragment } from './ReaderDisplayMap'
 import { ReaderThumbnailWindow } from './ReaderThumbnailWindow'
@@ -35,6 +35,7 @@ export class ReaderPagedSnapshot {
   error: string = ''
   policy: ReaderDisplayPolicy = new ReaderDisplayPolicy()
   kind: ReaderAssetKind = 'original'
+  originalPreparing: boolean = false
   displayIndex: number = 0
   displayCount: number = 0
   selectionId: number = 0
@@ -60,6 +61,7 @@ export class ReaderPagedSnapshot {
     value.phase = this.phase
     value.policy = this.policy.copy()
     value.kind = this.kind
+    value.originalPreparing = this.originalPreparing
     value.displayIndex = this.displayKeys.indexOf(key)
     value.displayCount = this.displayCount
     value.selectionId = this.selectionId
@@ -77,12 +79,15 @@ class ReaderPageSlot {
   index: number
   kind: ReaderAssetKind
   session: ReaderSession
+  originalPlan: ReaderOriginalAssetPlan | null
 
-  constructor(id: number, index: number, kind: ReaderAssetKind, session: ReaderSession) {
+  constructor(id: number, index: number, kind: ReaderAssetKind, session: ReaderSession,
+    originalPlan: ReaderOriginalAssetPlan | null = null) {
     this.id = id
     this.index = index
     this.kind = kind
     this.session = session
+    this.originalPlan = originalPlan
   }
 }
 
@@ -100,6 +105,8 @@ export class ReaderPagedSession {
   private map: ReaderDisplayMap | null = null
   private pages: Map<number, ReaderPage> = new Map()
   private slots: ReaderPageSlot[] = []
+  private originalPlans: Map<number, ReaderOriginalAssetPlan> = new Map()
+  private originalPreparations: Map<number, ReaderCancellation> = new Map()
   private prefetchNeighbors: boolean = false
   private displayKeys: string[] = []
   private topologySignature: string = ''
@@ -124,6 +131,60 @@ export class ReaderPagedSession {
 
   cancellationMode(): string { return this.assets.cancellationMode }
   informationSupported(): boolean { return this.assets.informationSupported === true }
+  originalSelectionSupported(): boolean { return this.assets.prepareOriginal !== undefined }
+
+  cancelOriginalPreparations(): void {
+    if (this.originalPreparations.size === 0) return
+    this.originalPreparations.forEach((cancellation: ReaderCancellation) => cancellation.cancel())
+    this.originalPreparations.clear()
+    this.emit()
+  }
+
+  /** Per-source selection within this reading unit; resolution failure keeps the current asset. */
+  async selectOriginal(slotId: number, requestId: number, unit: ReaderUnitKey, navigation: number,
+    enabled: boolean): Promise<'changed' | 'unchanged' | 'unavailable' | 'stale'> {
+    const currentFrame = (): ReaderPagedFrame | undefined => {
+      if (this.disposed || !this.active || this.state.phase !== 'ready' || this.state.kind !== 'original' ||
+        this.state.unit === null || !this.state.unit.key.equals(unit) || this.navigationRevision !== navigation) return undefined
+      return this.snapshot().frames.find((frame: ReaderPagedFrame) => frame.slotId === slotId &&
+        frame.asset.requestId === requestId && frame.asset.page !== null)
+    }
+    const frame = currentFrame()
+    if (frame === undefined || frame.asset.page === null) return 'stale'
+    const index = frame.part.sourceIndex
+    const previous = this.originalPreparations.get(index)
+    previous?.cancel()
+    this.originalPreparations.delete(index)
+    if (previous !== undefined) this.emit()
+    if ((frame.asset.variant === 'original') === enabled) return 'unchanged'
+    if (enabled && (frame.asset.phase !== 'displayed' || !frame.asset.originalAvailable ||
+      this.assets.prepareOriginal === undefined)) return 'unavailable'
+    const cancellation = new ReaderCancellation()
+    this.originalPreparations.set(index, cancellation)
+    this.emit()
+    try {
+      let plan: ReaderOriginalAssetPlan | null = null
+      if (enabled && this.assets.prepareOriginal !== undefined) {
+        plan = await this.assets.prepareOriginal(frame.asset.page.copy(), cancellation)
+        if (cancellation.isCancelled() || currentFrame() === undefined) return 'stale'
+        if (!plan.page.unit.equals(frame.asset.page.unit) || plan.page.key !== frame.asset.page.key ||
+          plan.page.sourceIndex !== index) return 'unavailable'
+      }
+      if (cancellation.isCancelled() || currentFrame() === undefined) return 'stale'
+      if (plan === null) this.originalPlans.delete(index)
+      else this.originalPlans.set(index, plan)
+      this.state.selectionId += 1
+      this.reconcile()
+      return 'changed'
+    } catch (_error) {
+      return cancellation.isCancelled() || currentFrame() === undefined ? 'stale' : 'unavailable'
+    } finally {
+      if (this.originalPreparations.get(index) === cancellation) {
+        this.originalPreparations.delete(index)
+        this.emit()
+      }
+    }
+  }
   async imageInformation(slotId: number, requestId: number, unit: ReaderUnitKey,
     navigation: number): Promise<ReaderImageInformation | null> {
     const expectedUnit = unit.copy()
@@ -140,6 +201,7 @@ export class ReaderPagedSession {
   /** The caller owns and closes the auxiliary preview leases, never reading progress. */
   createThumbnailWindow(): ReaderThumbnailWindow { return new ReaderThumbnailWindow(this.catalog, this.assets) }
   setViewportActive(active: boolean): void {
+    if (!active) this.cancelOriginalPreparations()
     if (this.active && !active) this.activityEpoch += 1
     this.active = active && !this.disposed
   }
@@ -155,6 +217,7 @@ export class ReaderPagedSession {
     value.error = this.state.error
     value.policy = this.state.policy.copy()
     value.kind = this.state.kind
+    value.originalPreparing = this.originalPreparations.size > 0
     value.displayIndex = this.state.displayIndex
     value.displayCount = this.map?.count() ?? 0
     value.selectionId = this.state.selectionId
@@ -213,6 +276,7 @@ export class ReaderPagedSession {
 
   async open(key: ReaderUnitKey, index: number = 0): Promise<void> {
     if (this.disposed) return
+    this.cancelOriginalPreparations()
     this.cancellation.cancel()
     this.cancellation = new ReaderCancellation()
     const cancellation = this.cancellation
@@ -234,6 +298,7 @@ export class ReaderPagedSession {
         throw new Error('reader_catalog_unavailable')
       }
       this.releaseSlots()
+      this.originalPlans.clear()
       this.pages.clear()
       this.topologySignature = ''
       this.state.unit = unit
@@ -259,6 +324,7 @@ export class ReaderPagedSession {
       throw new Error('reader_unsupported_paged_policy')
     }
     this.state.policy = policy.copy()
+    this.cancelOriginalPreparations()
     this.navigationRevision += 1
     this.continuousStart = -1
     this.continuousEnd = -1
@@ -280,6 +346,7 @@ export class ReaderPagedSession {
     if (this.disposed || this.state.phase !== 'ready' || this.state.unit === null ||
       !this.state.unit.key.equals(unit) || navigationRevision !== this.navigationRevision ||
       !Number.isSafeInteger(index) || index < 0 || index >= this.state.unit.pageCount) return false
+    this.cancelOriginalPreparations()
     this.navigationRevision += 1
     this.continuousStart = -1
     this.continuousEnd = -1
@@ -296,6 +363,7 @@ export class ReaderPagedSession {
       topologyRevision !== this.topologyRevision || navigationRevision !== this.navigationRevision ||
       !Number.isInteger(index) || index < 0 || index >= this.map.count()) return false
     if (index === this.state.displayIndex) return true
+    this.cancelOriginalPreparations()
     this.navigationRevision += 1
     this.continuousStart = -1
     this.continuousEnd = -1
@@ -309,6 +377,7 @@ export class ReaderPagedSession {
     if (kind === 'thumbnail' && this.snapshot().frames.some((frame: ReaderPagedFrame) =>
       frame.asset.page === null || !frame.asset.page.thumbnail.available)) return
     this.state.kind = kind
+    this.cancelOriginalPreparations()
     this.navigationRevision += 1
     this.continuousStart = -1
     this.continuousEnd = -1
@@ -383,6 +452,7 @@ export class ReaderPagedSession {
     })
     if (unit === null) return
     const retained = this.slots.filter((slot: ReaderPageSlot) => slot.kind === this.state.kind &&
+      slot.originalPlan === (this.state.kind === 'original' ? this.originalPlans.get(slot.index) ?? null : null) &&
       parts.some((part: ReaderDisplayPart) => part.sourceIndex === slot.index))
     const removed = this.slots.filter((slot: ReaderPageSlot) => !retained.includes(slot))
     this.slots = retained
@@ -391,7 +461,8 @@ export class ReaderPagedSession {
     parts.forEach((part: ReaderDisplayPart) => {
       if (this.slots.some((slot: ReaderPageSlot) => slot.index === part.sourceIndex)) return
       const slot = new ReaderPageSlot(++this.slotSerial, part.sourceIndex, this.state.kind,
-        new ReaderSession(this.catalog, this.assets))
+        new ReaderSession(this.catalog, this.assets),
+        this.state.kind === 'original' ? this.originalPlans.get(part.sourceIndex) ?? null : null)
       this.slots.push(slot)
       added.push(slot)
     })
@@ -399,7 +470,7 @@ export class ReaderPagedSession {
     added.forEach((slot: ReaderPageSlot) => {
       if (!this.slots.includes(slot)) return
       slot.session.subscribe((snapshot: ReaderSnapshot): void => { this.slotChanged(slot, snapshot) })
-      void slot.session.openPrepared(unit, slot.index, slot.kind)
+      void slot.session.openPrepared(unit, slot.index, slot.kind, slot.originalPlan)
     })
   }
 
@@ -479,6 +550,7 @@ export class ReaderPagedSession {
     this.continuousStart = start
     this.continuousEnd = end
     if (this.state.displayIndex !== start) {
+      this.cancelOriginalPreparations()
       this.state.displayIndex = start
       this.state.anchor = this.map.anchorAt(start)
       this.state.selectionId += 1
@@ -519,6 +591,8 @@ export class ReaderPagedSession {
   }
 
   close(): void {
+    this.cancelOriginalPreparations()
+    this.originalPlans.clear()
     if (this.disposed) return
     this.disposed = true
     this.active = false

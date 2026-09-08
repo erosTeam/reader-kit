@@ -98,3 +98,29 @@ test('concurrent matching loads consume only one original failure', async () => 
   assert.equal(results[1], backend.asset)
   assert.equal(backend.calls.length, 1)
 })
+
+test('optional original capability is forwarded only when supported and retains provider receiver', async () => {
+  const backend = provider()
+  assert.equal(new ReaderLabAssetProbe(backend, -1).prepareOriginal, undefined)
+  const original = page(0), cancellation = new core.ReaderCancellation()
+  backend.prepareOriginal = async function(p, c) {
+    assert.equal(this, backend); assert.equal(p, original); assert.equal(c, cancellation)
+    return { page: p, load: async () => backend.asset }
+  }
+  const probe = new ReaderLabAssetProbe(backend, -1)
+  const plan = await probe.prepareOriginal(original, cancellation)
+  assert.equal(plan.page, original)
+  cancellation.cancel()
+  assert.throws(() => probe.prepareOriginal(original, cancellation))
+})
+
+test('information wrapping preserves original availability and delegates lease release once', async () => {
+  const backend = provider(); let releases = 0
+  backend.asset = new core.ReaderAsset('file:///real', () => releases++, { read: async () => ({}) })
+  backend.load = async () => backend.asset
+  backend.asset.originalAvailable = true
+  const probe = new ReaderLabAssetProbe(backend, -1, 'fail-once')
+  const asset = await probe.load(page(0), 'original', new core.ReaderCancellation(), false)
+  assert.equal(asset.originalAvailable, true)
+  asset.release(); asset.release(); assert.equal(releases, 1)
+})

@@ -14,13 +14,24 @@ test('share target follows original anchor, copies identity, ignores RTL frame o
   const s = new ReaderPagedSnapshot()
   s.unit = unit(); s.phase = 'ready'; s.navigationRevision = 7
   s.anchor = new ReaderReadingAnchor(s.unit.key, 'page2', 1)
-  s.frames = [{ sourceIndex: 2 }, { sourceIndex: 1 }]
+  s.frames = [{ part: { sourceIndex: 2 }, asset: { variant: 'default' } },
+    { part: { sourceIndex: 1 }, asset: { variant: 'original' } }]
   const t = ReaderImageShareTarget.from(s)
   assert.equal(t.sourceIndex, 1); assert.equal(t.navigation, 7)
+  assert.equal(t.variant, 'original'); assert.equal(t.copy().variant, 'original')
   s.unit.key.unit = 'replaced'
   assert.equal(t.unit.key.unit, 'chapter')
   s.phase = 'closed'
   assert.equal(ReaderImageShareTarget.from(s), null)
+})
+
+test('variant change cancels a pending share even on the same source and navigation', async () => {
+  const c = ready(), pending = deferred(); let shown = 0, released = 0
+  const run = c.share({ prepare: () => pending.promise })
+  const original = target(); original.variant = 'original'; c.update(original, true)
+  pending.resolve({ present: async () => { shown++ }, release: () => released++ })
+  assert.equal(await run, 'cancelled'); assert.equal(shown, 0); assert.equal(released, 1)
+  assert.equal(original.equals(target()), false)
 })
 
 test('late preparation after page change never presents and cannot clear a newer operation', async () => {

@@ -1,5 +1,8 @@
 {
   "string": [
+    { "name": "rkit_original_enable_both", "value": "Use originals for both pages" },
+    { "name": "rkit_original_disable_both", "value": "Turn off originals for both pages" },
+    { "name": "rkit_original_failed", "value": "Unable to load originals for pages %s" },
     { "name": "rkit_auto_read_start", "value": "Start automatic page advance" },
     { "name": "rkit_auto_read_stop", "value": "Stop automatic page advance" },
     { "name": "rkit_save_image", "value": "Save image" },

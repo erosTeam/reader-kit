@@ -46,6 +46,7 @@ export struct ReaderSurface {
   private saveFeedback: ResourceStr | null = null
   @Local private informationBusy: boolean = false
   private informationEpoch: number = 0
+  private originalFeedbackEpoch: number = 0
   @Local private informationPresented: boolean = false
   private informationNavigation: number = -1
   private shareController: ReaderImageShareController = new ReaderImageShareController()
@@ -68,6 +69,8 @@ export struct ReaderSurface {
     this.shareController.subscribe((busy: boolean): void => { this.shareBusy = busy; this.syncAutoRead() })
     this.saveController.subscribe((busy: boolean): void => { this.saveBusy = busy; this.syncAutoRead() })
     this.session.subscribe((state: ReaderPagedSnapshot): void => {
+      if (state.navigationRevision !== this.state.navigationRevision || state.displayIndex !== this.state.displayIndex ||
+        state.unit?.key.equals(this.state.unit?.key ?? this.initialUnit) !== true) this.originalFeedbackEpoch += 1
       if (this.informationBusy && !this.informationPresented && state.navigationRevision !== this.informationNavigation) {
         this.informationEpoch += 1; this.informationBusy = false
       }
@@ -97,6 +100,7 @@ export struct ReaderSurface {
   @Monitor('active')
   onActiveChanged(): void {
     if (!this.active) {
+      this.originalFeedbackEpoch += 1
       this.invalidateChromeShow()
       this.entryTransition?.cancel()
       this.previewIndex = -1; this.touching = false
@@ -124,7 +128,7 @@ export struct ReaderSurface {
       return
     }
     this.autoReadController.update(this.state, this.active,
-      this.touching || this.menuVisible || this.shareBusy || this.saveBusy || this.informationBusy ||
+      this.touching || this.menuVisible || this.shareBusy || this.saveBusy || this.informationBusy || this.state.originalPreparing ||
       this.previewIndex >= 0 || this.inputTopology !== this.state.topologyRevision || this.inputLocked ||
       this.entryTransition?.phase === 'layout', this.autoReadSeconds)
   }
@@ -144,7 +148,7 @@ export struct ReaderSurface {
   private async saveImage(choice: ReaderImageSaveChoice): Promise<void> {
     const host = this.imageSave
     if (host === null || !this.active || this.closing || this.chromeCloseRequested ||
-      this.shareBusy || this.informationBusy || this.previewIndex >= 0) return
+      this.shareBusy || this.informationBusy || this.session.snapshot().originalPreparing || this.previewIndex >= 0) return
     this.saveController.update(this.session.snapshot(), this.active)
     const result = await this.saveController.save(host, choice)
     if (this.chromeDisposed) return
@@ -161,12 +165,30 @@ export struct ReaderSurface {
 
   private async shareImage(): Promise<void> {
     const host = this.imageShare
-    if (host === null || !this.active || this.previewIndex >= 0 || this.menuVisible || this.informationBusy || this.saveBusy) return
+    if (host === null || !this.active || this.previewIndex >= 0 || this.menuVisible || this.informationBusy || this.saveBusy ||
+      this.session.snapshot().originalPreparing) return
     this.shareController.update(ReaderImageShareTarget.from(this.session.snapshot()), this.active)
     const outcome = await this.shareController.share(host)
     if (outcome === 'failed' && this.active) {
       this.getUIContext().getPromptAction().showToast({ message: $r('app.string.rkit_share_failed') })
     }
+  }
+
+  private async selectOriginal(frames: ReaderPagedFrame[], unit: ReaderUnitKey, navigation: number, enabled: boolean): Promise<void> {
+    if (!this.active || this.closing || this.chromeCloseRequested || this.chromeDisposed || this.saveBusy || this.shareBusy ||
+      this.informationBusy || this.previewIndex >= 0 || this.session.snapshot().originalPreparing) return
+    const epoch = this.originalFeedbackEpoch
+    const displayIndex = this.session.snapshot().displayIndex
+    const results = await Promise.all(frames.map(frame =>
+      this.session.selectOriginal(frame.slotId, frame.asset.requestId, unit, navigation, enabled)))
+    const current = this.session.snapshot()
+    if (!this.active || this.closing || this.chromeCloseRequested || this.chromeDisposed || epoch !== this.originalFeedbackEpoch ||
+      current.unit?.key.equals(unit) !== true || current.navigationRevision !== navigation || current.displayIndex !== displayIndex ||
+      results.some(result => result === 'stale')) return
+    const failed = frames.filter((_frame, index) => results[index] === 'unavailable')
+    if (failed.length > 0) this.getUIContext().getPromptAction().showToast({
+      message: $r('app.string.rkit_original_failed', failed.map(frame => `${frame.part.sourceIndex + 1}`).join(', ')),
+    })
   }
 
   private text(name: string): string {
@@ -200,7 +222,8 @@ export struct ReaderSurface {
   private async showInformation(frame: ReaderPagedFrame): Promise<void> {
     const state = this.session.snapshot()
     const unit = state.unit?.key.copy() ?? null
-    if (!this.active || this.informationBusy || this.shareBusy || this.saveBusy || this.previewIndex >= 0 || unit === null) return
+    if (!this.active || this.informationBusy || this.shareBusy || this.saveBusy || this.session.snapshot().originalPreparing ||
+      this.previewIndex >= 0 || unit === null) return
     const epoch = ++this.informationEpoch
     console.info(`[ReaderSurface] information_request source=${frame.part.sourceIndex} slot=${frame.slotId} request=${frame.asset.assetRequestId}`)
     this.informationNavigation = state.navigationRevision
@@ -243,6 +266,8 @@ export struct ReaderSurface {
   @Monitor('closing')
   onClosingChanged(): void {
     if (this.closing) {
+      this.originalFeedbackEpoch += 1
+      this.session.cancelOriginalPreparations()
       this.autoReadController.stop()
       this.saveController.close()
       this.invalidateChromeShow()
@@ -251,6 +276,8 @@ export struct ReaderSurface {
 
   private requestClose(): void {
     this.chromeCloseRequested = true
+    this.originalFeedbackEpoch += 1
+    this.session.cancelOriginalPreparations()
     this.autoReadController.stop()
     this.saveController.close()
     this.invalidateChromeShow()
@@ -398,6 +425,10 @@ export struct ReaderSurface {
           shareAvailable: this.imageShare !== null, shareBusy: this.shareBusy,
           saveAvailable: this.imageSave !== null, saveBusy: this.saveBusy,
           autoReadAvailable: this.autoReadAvailable, autoReadEnabled: this.autoReadEnabled,
+          originalAvailable: this.session.originalSelectionSupported(),
+          onOriginal: (frames: ReaderPagedFrame[], unit: ReaderUnitKey, navigation: number, enabled: boolean): void => {
+            void this.selectOriginal(frames, unit, navigation, enabled)
+          },
           onAutoRead: (): void => { this.toggleAutoRead() },
           onSave: (choice: ReaderImageSaveChoice): void => { void this.saveImage(choice) },
           informationBusy: this.informationBusy,

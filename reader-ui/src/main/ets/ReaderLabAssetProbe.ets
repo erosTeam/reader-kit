@@ -1,5 +1,5 @@
 import { ReaderAsset, ReaderAssetKind, ReaderAssetProvider, ReaderCancellation, ReaderPage,
-  ReaderImageInformation, ReaderImageInformationSource } from '@reader-kit/core'
+  ReaderImageInformation, ReaderImageInformationSource, ReaderOriginalAssetPlan } from '@reader-kit/core'
 import { ReaderFileInformation } from './ReaderFileInformation'
 
 class ReaderLabInformationSource implements ReaderImageInformationSource {
@@ -12,6 +12,7 @@ class ReaderLabInformationSource implements ReaderImageInformationSource {
 export class ReaderLabAssetProbe implements ReaderAssetProvider {
   cancellationMode: 'consumer-only' | 'transport'
   informationSupported: boolean
+  prepareOriginal?: (page: ReaderPage, cancellation: ReaderCancellation) => Promise<ReaderOriginalAssetPlan>
   private provider: ReaderAssetProvider
   private thumbnailIndex: number
   private injected: boolean = false
@@ -28,6 +29,13 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
     this.cancellationMode = provider.cancellationMode
     this.informationSupported = provider.informationSupported === true
     this.informationMode = informationMode
+    if (provider.prepareOriginal !== undefined) {
+      this.prepareOriginal = (page: ReaderPage, cancellation: ReaderCancellation): Promise<ReaderOriginalAssetPlan> => {
+        cancellation.check()
+        if (this.provider.prepareOriginal === undefined) throw new Error('reader_original_unavailable')
+        return this.provider.prepareOriginal(page, cancellation)
+      }
+    }
   }
 
   async load(page: ReaderPage, kind: ReaderAssetKind, cancellation: ReaderCancellation,
@@ -50,7 +58,9 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
     if (kind !== 'original' || source === null ||
       (this.informationMode !== 'fail-once' && this.informationMode !== 'delay-once')) return asset
     const information = new ReaderLabInformationSource((): Promise<ReaderImageInformation> => this.readInformation(source))
-    return new ReaderAsset(asset.uri, (): void => { asset.release() }, information)
+    const wrapped = new ReaderAsset(asset.uri, (): void => { asset.release() }, information)
+    wrapped.originalAvailable = asset.originalAvailable
+    return wrapped
   }
 
   private async readInformation(source: ReaderImageInformationSource): Promise<ReaderImageInformation> {
