@@ -412,6 +412,29 @@ NextN's D10 acceptance ledger. Native metadata failure/delay probes, continuous
 and physical-half combinations, Koma metadata and full replacement remain open.
 No production reader, settings or progress migration is enabled.
 
+## Optional asset-scoped border crop (D11)
+
+Hosts may attach a `ReaderImageCropSource` to a retained body asset. Detection stays
+in the host: NH and EH do not share their background-detection algorithm. The core
+fences results by asset/request identity and keeps crop metadata for the reading
+unit even after an image slot is evicted. It never rewrites source dimensions or
+image files. Physical halves retain the original split boundary; continuous pages
+retain side crop while top/bottom crop applies only at the unit's outer edges.
+
+`ReaderSurface.cropBorders` selects initial runtime state. `cropAvailable` separately
+enables the existing menu's on/off intention, whose state comes from the session
+snapshot. Both default to false. N/E standalone trial hosts expose the control;
+thumbnail-entry and Koma currently do not. No preference or progress is migrated.
+
+Device237 N/E single, spread and continuous off/on/off endpoints were inspected,
+including same-page retention, proportional body crop and restored continuous row
+height. E's zoomed P5 matched its production reader's body position/size and crop
+shift; N's zoomed P3 retained enlargement and visually restored its comic panels.
+UiTest clips Image bounds to the viewport, so equal returned bounds are not an
+exact original-point oracle. High magnification, continuous zoom plus crop, motion,
+thumbnail transitions and Koma crop remain unaccepted. Detailed reports and actual
+screenshots are in NextN protocols244–254 and its active acceptance ledger.
+
 Run core behavioral tests with `node --test tests/*.test.cjs`.
 They execute the actual platform-free ArkTS core through the DevEco TypeScript
 compiler. Set `READER_KIT_TYPESCRIPT` if that compiler is installed elsewhere.
