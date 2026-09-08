@@ -1,4 +1,5 @@
-import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPolicy, ReaderUnitKey } from '@reader-kit/core'
+import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPolicy, ReaderUnitKey,
+  ReaderImageSaveChoice, ReaderImageSaveTarget } from '@reader-kit/core'
 import { uiMaterial } from '@kit.ArkUI'
 import { deviceInfo } from '@kit.BasicServicesKit'
 
@@ -13,6 +14,9 @@ export struct ReaderChrome {
   @Param thumbnailsVisible: boolean = false
   @Param shareAvailable: boolean = false
   @Param shareBusy: boolean = false
+  @Param saveAvailable: boolean = false
+  @Param saveBusy: boolean = false
+  @Event onSave: (choice: ReaderImageSaveChoice) => void = () => {}
   @Param informationBusy: boolean = false
   @Param informationPreparing: boolean = false
   @Param informationAvailable: boolean = false
@@ -26,11 +30,18 @@ export struct ReaderChrome {
   @Event onPreview: (index: number, unit: ReaderUnitKey | null, navigation: number) => void = () => {}
   @Local private preview: number = -1
   @Local private moreShown: boolean = false
+  @Local private saveMenuShown: boolean = false
+  private saveLeft: ReaderImageSaveTarget | null = null
+  private saveRight: ReaderImageSaveTarget | null = null
+  private saveBoth: ReaderImageSaveTarget | null = null
+  private saveLeftIndex: number = -1
+  private saveRightIndex: number = -1
   private seekUnit: ReaderUnitKey | null = null
   private seekNavigation: number = -1
 
   @Monitor('snapshot', 'active')
   onSnapshotChanged(): void {
+    if (this.saveMenuShown && (!this.active || !this.saveTargetsCurrent())) this.saveMenuShown = false
     if (!this.active || this.snapshot.phase !== 'ready' ||
       this.seekUnit !== null && (!this.snapshot.unit?.key.equals(this.seekUnit) ||
         this.snapshot.navigationRevision !== this.seekNavigation)) this.cancelSeek()
@@ -79,6 +90,50 @@ export struct ReaderChrome {
     const policy = this.snapshot.policy.copy()
     policy.layout = layout
     this.onPolicy(policy)
+  }
+
+  private saveTarget(choice: ReaderImageSaveChoice): ReaderImageSaveTarget | null {
+    return ReaderImageSaveTarget.from(this.snapshot, choice)
+  }
+
+  private saveTargetsCurrent(): boolean {
+    const left = this.saveTarget('left'), right = this.saveTarget('right')
+    return (this.saveLeft === null ? left === null : left !== null && this.saveLeft.equals(left)) &&
+      (this.saveRight === null ? right === null : right !== null && this.saveRight.equals(right))
+  }
+
+  private openSave(): void {
+    if (!this.active || this.saveBusy || this.shareBusy || this.informationBusy) return
+    if (this.snapshot.policy.layout === 'spread' && this.snapshot.frames.length === 2) {
+      this.saveLeftIndex = this.snapshot.frames[0].part.sourceIndex
+      this.saveRightIndex = this.snapshot.frames[1].part.sourceIndex
+      this.saveLeft = this.saveTarget('left')
+      this.saveRight = this.saveTarget('right')
+      this.saveBoth = this.saveTarget('both')
+      this.saveMenuShown = this.saveLeft !== null || this.saveRight !== null
+    } else if (this.saveTarget('current') !== null) this.onSave('current')
+  }
+
+  private selectSave(choice: ReaderImageSaveChoice, expected: ReaderImageSaveTarget | null): void {
+    this.saveMenuShown = false
+    const current = this.saveTarget(choice)
+    if (this.active && !this.saveBusy && !this.shareBusy && !this.informationBusy &&
+      expected !== null && current !== null && expected.equals(current)) this.onSave(choice)
+  }
+
+  @Builder
+  private SaveMenu() {
+    Menu() {
+      MenuItem({ content: $r('app.string.rkit_info_left', this.saveLeftIndex + 1) })
+        .id('rkit-save-left').enabled(this.saveLeft !== null)
+        .onClick((): void => { this.selectSave('left', this.saveLeft) })
+      MenuItem({ content: $r('app.string.rkit_info_right', this.saveRightIndex + 1) })
+        .id('rkit-save-right').enabled(this.saveRight !== null)
+        .onClick((): void => { this.selectSave('right', this.saveRight) })
+      MenuItem({ content: $r('app.string.rkit_save_both') })
+        .id('rkit-save-both').enabled(this.saveBoth !== null)
+        .onClick((): void => { this.selectSave('both', this.saveBoth) })
+    }
   }
 
   private informationFrames(): ReaderPagedFrame[] {
@@ -169,7 +224,7 @@ export struct ReaderChrome {
               }
             }.width(44).height(44).backgroundColor(Color.Transparent)
               .id('rkit-share-image').accessibilityText($r('app.string.rkit_share_image'))
-              .enabled(this.active && this.snapshot.phase === 'ready' && !this.shareBusy)
+              .enabled(this.active && this.snapshot.phase === 'ready' && !this.shareBusy && !this.saveBusy)
               .onClick(this.onShare)
           }
           Button({ type: ButtonType.Circle }) {
@@ -190,7 +245,7 @@ export struct ReaderChrome {
               }
             }.width(44).height(44).backgroundColor(Color.Transparent)
               .id('rkit-more').accessibilityText($r('app.string.rkit_more'))
-              .enabled(this.active && this.informationFrames().length > 0 && !this.informationBusy && !this.shareBusy)
+              .enabled(this.active && this.informationFrames().length > 0 && !this.informationBusy && !this.shareBusy && !this.saveBusy)
               .onClick((): void => { this.moreShown = true })
               .bindMenu(this.moreShown, this.MoreMenu, {
                 placement: Placement.BottomRight,
@@ -226,7 +281,26 @@ export struct ReaderChrome {
             .fontSize(14).fontColor(Color.White).constraintSize({ minWidth: 30 }).maxLines(1).textAlign(TextAlign.End)
         }.width('100%').alignItems(VerticalAlign.Center)
         Row() {
-          // Host image actions and auto-reading remain separate capability slices.
+          if (this.saveAvailable) {
+            Button({ type: ButtonType.Circle }) {
+              if (this.saveBusy) {
+                LoadingProgress().width(22).height(22).color(Color.White)
+              } else {
+                SymbolGlyph($r('sys.symbol.arrow_down_to_line')).fontSize(22).fontColor([Color.White])
+              }
+            }.width(44).height(44).backgroundColor(Color.Transparent)
+              .id('rkit-save-image').accessibilityText($r('app.string.rkit_save_image'))
+              .enabled(this.active && !this.saveBusy && !this.shareBusy && !this.informationBusy &&
+                (this.saveTarget('current') !== null || this.saveTarget('left') !== null || this.saveTarget('right') !== null))
+              .onClick((): void => { this.openSave() })
+              .bindMenu(this.saveMenuShown, this.SaveMenu, {
+                placement: Placement.TopRight,
+                systemMaterial: deviceInfo.apiAvailable('26.0.0') ?
+                  new uiMaterial.ImmersiveMaterial({ style: uiMaterial.ImmersiveStyle.THICK }) : undefined,
+                aboutToAppear: (): void => { this.onMenuVisible(true) },
+                onDisappear: (): void => { this.saveMenuShown = false; this.onMenuVisible(false) },
+              })
+          }
           Button({ type: ButtonType.Circle }) {
             SymbolGlyph($r('sys.symbol.rectangle_grid_2x1')).fontSize(22)
               .fontColor([this.thumbnailsVisible ? this.accent : Color.White])

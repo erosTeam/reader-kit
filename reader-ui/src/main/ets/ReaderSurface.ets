@@ -1,6 +1,7 @@
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy,
   ReaderInputPort, ReaderMoveIntent, ReaderImageShareHost, ReaderImageShareTarget,
-  ReaderImageShareController, ReaderPagedFrame, ReaderImageInformation } from '@reader-kit/core'
+  ReaderImageShareController, ReaderPagedFrame, ReaderImageInformation,
+  ReaderImageSaveHost, ReaderImageSaveController, ReaderImageSaveChoice } from '@reader-kit/core'
 import { ReaderPagerSurface } from './ReaderPagerSurface'
 import { ReaderContinuousSurface } from './ReaderContinuousSurface'
 import { ReaderChrome } from './ReaderChrome'
@@ -24,6 +25,7 @@ export struct ReaderSurface {
   @Param accent: ResourceColor = '#D93646'
   @Param input: ReaderInputPort | null = null
   @Param imageShare: ReaderImageShareHost | null = null
+  @Param imageSave: ReaderImageSaveHost | null = null
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPreview: ReaderEntryPreviewSource | null = null
   @Event onClose: () => void = () => {}
@@ -33,6 +35,9 @@ export struct ReaderSurface {
   @Local private thumbnailsVisible: boolean = false
   @Local private previewIndex: number = -1
   @Local private shareBusy: boolean = false
+  @Local private saveBusy: boolean = false
+  private saveController: ReaderImageSaveController = new ReaderImageSaveController()
+  private saveFeedback: ResourceStr | null = null
   @Local private informationBusy: boolean = false
   private informationEpoch: number = 0
   @Local private informationPresented: boolean = false
@@ -54,6 +59,7 @@ export struct ReaderSurface {
     this.session.setNeighborPreload(true)
     this.session.setViewportActive(this.active)
     this.shareController.subscribe((busy: boolean): void => { this.shareBusy = busy })
+    this.saveController.subscribe((busy: boolean): void => { this.saveBusy = busy })
     this.session.subscribe((state: ReaderPagedSnapshot): void => {
       if (this.informationBusy && !this.informationPresented && state.navigationRevision !== this.informationNavigation) {
         this.informationEpoch += 1; this.informationBusy = false
@@ -61,6 +67,7 @@ export struct ReaderSurface {
       this.state = state
       this.entryTransition?.update(state)
       this.shareController.update(ReaderImageShareTarget.from(state), this.active)
+      this.saveController.update(state, this.active)
     })
     this.inputConnection = this.input?.connect((intent: ReaderMoveIntent): boolean => this.externalMove(intent)) ?? 0
     void this.session.open(this.initialUnit, this.initialIndex)
@@ -72,6 +79,8 @@ export struct ReaderSurface {
     this.entryTransition?.cancel()
     this.informationEpoch += 1
     this.shareController.close()
+    this.saveController.close()
+    this.saveFeedback = null
     this.input?.disconnect(this.inputConnection)
     this.session.close()
   }
@@ -85,12 +94,38 @@ export struct ReaderSurface {
       if (!this.informationPresented) { this.informationEpoch += 1; this.informationBusy = false }
     }
     this.shareController.update(ReaderImageShareTarget.from(this.session.snapshot()), this.active)
+    this.saveController.update(this.session.snapshot(), this.active)
+    this.flushSaveFeedback()
     this.session.setViewportActive(this.active)
+  }
+
+  private flushSaveFeedback(): void {
+    if (!this.active || this.chromeDisposed || this.closing || this.chromeCloseRequested || this.saveFeedback === null) return
+    this.getUIContext().getPromptAction().showToast({ message: this.saveFeedback })
+    this.saveFeedback = null
+  }
+
+  private async saveImage(choice: ReaderImageSaveChoice): Promise<void> {
+    const host = this.imageSave
+    if (host === null || !this.active || this.closing || this.chromeCloseRequested ||
+      this.shareBusy || this.informationBusy || this.previewIndex >= 0) return
+    this.saveController.update(this.session.snapshot(), this.active)
+    const result = await this.saveController.save(host, choice)
+    if (this.chromeDisposed) return
+    if (result.outcome === 'failed') this.saveFeedback = $r('app.string.rkit_save_failed')
+    else if (result.outcome === 'completed') {
+      const saved = result.items.filter(item => item.status === 'saved').length
+      const failed = result.items.filter(item => item.status === 'failed').length
+      if (saved > 0) this.saveFeedback = saved === result.items.length ? $r('app.string.rkit_save_success') :
+        $r('app.string.rkit_save_partial', saved, result.items.length)
+      else if (failed > 0 || result.items.length === 0) this.saveFeedback = $r('app.string.rkit_save_failed')
+    }
+    this.flushSaveFeedback()
   }
 
   private async shareImage(): Promise<void> {
     const host = this.imageShare
-    if (host === null || !this.active || this.previewIndex >= 0 || this.menuVisible || this.informationBusy) return
+    if (host === null || !this.active || this.previewIndex >= 0 || this.menuVisible || this.informationBusy || this.saveBusy) return
     this.shareController.update(ReaderImageShareTarget.from(this.session.snapshot()), this.active)
     const outcome = await this.shareController.share(host)
     if (outcome === 'failed' && this.active) {
@@ -129,7 +164,7 @@ export struct ReaderSurface {
   private async showInformation(frame: ReaderPagedFrame): Promise<void> {
     const state = this.session.snapshot()
     const unit = state.unit?.key.copy() ?? null
-    if (!this.active || this.informationBusy || this.shareBusy || this.previewIndex >= 0 || unit === null) return
+    if (!this.active || this.informationBusy || this.shareBusy || this.saveBusy || this.previewIndex >= 0 || unit === null) return
     const epoch = ++this.informationEpoch
     console.info(`[ReaderSurface] information_request source=${frame.part.sourceIndex} slot=${frame.slotId} request=${frame.asset.assetRequestId}`)
     this.informationNavigation = state.navigationRevision
@@ -171,11 +206,15 @@ export struct ReaderSurface {
 
   @Monitor('closing')
   onClosingChanged(): void {
-    if (this.closing) this.invalidateChromeShow()
+    if (this.closing) {
+      this.saveController.close()
+      this.invalidateChromeShow()
+    }
   }
 
   private requestClose(): void {
     this.chromeCloseRequested = true
+    this.saveController.close()
     this.invalidateChromeShow()
     this.onClose()
   }
@@ -227,7 +266,7 @@ export struct ReaderSurface {
 
   private externalMove(intent: ReaderMoveIntent): boolean {
     if (this.entryTransition?.phase === 'layout' || !this.active || this.state.phase !== 'ready' ||
-      this.touching || this.menuVisible || this.shareBusy || this.informationBusy ||
+      this.touching || this.menuVisible || this.shareBusy || this.saveBusy || this.informationBusy ||
       this.previewIndex >= 0 || this.inputTopology !== this.state.topologyRevision || this.inputLocked) return false
     const navigation = this.session.snapshot().navigationRevision
     this.session.move(intent)
@@ -318,6 +357,8 @@ export struct ReaderSurface {
           bottomInset: this.bottomInset, accent: this.accent, onClose: (): void => this.requestClose(),
           thumbnailsVisible: this.thumbnailsVisible,
           shareAvailable: this.imageShare !== null, shareBusy: this.shareBusy,
+          saveAvailable: this.imageSave !== null, saveBusy: this.saveBusy,
+          onSave: (choice: ReaderImageSaveChoice): void => { void this.saveImage(choice) },
           informationBusy: this.informationBusy,
           informationPreparing: this.informationBusy && !this.informationPresented,
           informationAvailable: this.session.informationSupported(),

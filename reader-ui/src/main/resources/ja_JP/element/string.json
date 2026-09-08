@@ -1,5 +1,10 @@
 {
   "string": [
+    { "name": "rkit_save_image", "value": "画像を保存" },
+    { "name": "rkit_save_both", "value": "両ページを保存" },
+    { "name": "rkit_save_success", "value": "画像を保存しました" },
+    { "name": "rkit_save_failed", "value": "画像を保存できませんでした" },
+    { "name": "rkit_save_partial", "value": "%d / %d 枚を保存しました" },
     { "name": "rkit_more", "value": "その他" },
     { "name": "rkit_image_info", "value": "画像情報" },
     { "name": "rkit_info_title", "value": "画像情報 · %d ページ" },

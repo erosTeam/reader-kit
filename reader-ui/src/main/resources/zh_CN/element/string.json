@@ -1,5 +1,10 @@
 {
   "string": [
+    { "name": "rkit_save_image", "value": "保存图片" },
+    { "name": "rkit_save_both", "value": "保存两页" },
+    { "name": "rkit_save_success", "value": "图片已保存" },
+    { "name": "rkit_save_failed", "value": "图片保存失败" },
+    { "name": "rkit_save_partial", "value": "已保存 %d / %d 张图片" },
     { "name": "rkit_more", "value": "更多" },
     { "name": "rkit_image_info", "value": "图片信息" },
     { "name": "rkit_info_title", "value": "图片信息 · 第 %d 页" },

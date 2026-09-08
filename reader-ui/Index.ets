@@ -6,6 +6,7 @@ export { ReaderEntryRect, ReaderEntryTarget, ReaderEntryTransition, ReaderEntryP
 export { ReaderEntryPreviewSource } from './src/main/ets/ReaderEntryPreview'
 export { ReaderVolumeKeys } from './src/main/ets/ReaderVolumeKeys'
 export { ReaderSystemSharePresentation } from './src/main/ets/ReaderSystemSharePresentation'
+export { ReaderSystemImageSaveHost } from './src/main/ets/ReaderSystemImageSaveHost'
 export { ReaderFileInformation } from './src/main/ets/ReaderFileInformation'
 export { ReaderChrome } from './src/main/ets/ReaderChrome'
 export { ReaderTrialWindow } from './src/main/ets/ReaderTrialWindow'

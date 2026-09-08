@@ -6,7 +6,7 @@ const vm = require('node:vm')
 const ts = require(process.env.READER_KIT_TYPESCRIPT || '/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/node_modules/typescript')
 const load = require('./load-core.cjs')
 const core = { ...load('ReaderContent'), ...load('ReaderSession'), ...load('ReaderDisplayMap'),
-  ...load('ReaderPagedSession'), ...load('ReaderInputPort'), ...load('ReaderImageShare') }
+  ...load('ReaderPagedSession'), ...load('ReaderInputPort'), ...load('ReaderImageShare'), ...load('ReaderImageSave') }
 const uiPath = path.join(__dirname, '../reader-ui/src/main/ets')
 function evaluate(source) {
   const exports = {}
@@ -33,7 +33,7 @@ function scenario(phase = null) {
   surface.inputTopology = 7; surface.inputLocked = false
   const moves = []; let navigation = 10; let reads = 0
   surface.session = {
-    snapshot() { reads++; return { navigationRevision: navigation } },
+    snapshot() { reads++; const state = new core.ReaderPagedSnapshot(); state.navigationRevision = navigation; return state },
     move(intent) { moves.push(intent); navigation++ },
   }
   const part = new core.ReaderDisplayPart(new core.ReaderUnitKey('eh', 'work', 'work'), null, 0)

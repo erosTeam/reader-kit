@@ -15,3 +15,6 @@ export { ReaderInputPort, ReaderMoveIntent } from './src/main/ets/ReaderInputPor
 export { ReaderImageInformation, ReaderImageInformationSource } from './src/main/ets/ReaderImageInformation'
 export { ReaderImageShareTarget, ReaderImageSharePresentation, ReaderImageShareHost,
   ReaderImageShareOutcome, ReaderImageShareController } from './src/main/ets/ReaderImageShare'
+export { ReaderImageSaveChoice, ReaderImageSaveItemStatus, ReaderImageSaveOutcome,
+  ReaderImageSaveItem, ReaderImageSaveTarget, ReaderImageSaveItemResult, ReaderImageSaveResult,
+  ReaderImageSavePresentation, ReaderImageSaveHost, ReaderImageSaveController } from './src/main/ets/ReaderImageSave'
