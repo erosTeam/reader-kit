@@ -33,10 +33,12 @@ export class ReaderKeepScreenOn {
         if (!this.desired || this.closed) return
         this.mainWindow = win
         this.previous = win.getWindowProperties().isKeepScreenOn
+        console.info(`[ReaderKeepScreenOn] captured_previous=${this.previous}`)
         await win.setWindowKeepScreenOn(true)
         console.info(`[ReaderKeepScreenOn] enabled_readback=${win.getWindowProperties().isKeepScreenOn}`)
       } else if (this.previous !== null && this.mainWindow !== null) {
         await this.mainWindow.setWindowKeepScreenOn(this.previous)
+        console.info(`[ReaderKeepScreenOn] restored_readback=${this.mainWindow.getWindowProperties().isKeepScreenOn} expected=${this.previous}`)
         this.previous = null
         this.mainWindow = null
       }
