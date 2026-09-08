@@ -13,6 +13,7 @@ export class ReaderLabRequest {
   volumeKeys: boolean = false
   shareProbe: string = ''
   informationProbe: string = ''
+  originalVariantProbe: string = ''
   thumbnailEntry: boolean = false
   entryLayout: string = 'single'
   entryDirection: string = 'ltr'
@@ -84,6 +85,10 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
   const informationProbe = want.parameters['readerLabInformationProbe']
   request.informationProbe = typeof informationProbe === 'string' &&
     (informationProbe === 'fail-once' || informationProbe === 'delay-once') ? informationProbe : ''
+  const originalVariantProbe = want.parameters['readerLabOriginalVariantProbe']
+  request.originalVariantProbe = typeof originalVariantProbe === 'string' &&
+    (originalVariantProbe === 'prepare-fail-once' || originalVariantProbe === 'decode-fail-once') ?
+    originalVariantProbe : ''
   request.thumbnailEntry = request.readingChrome &&
     (want.parameters['readerLabThumbnailEntry'] === true || want.parameters['readerLabThumbnailEntry'] === 'true')
   request.entryLayout = want.parameters['readerLabEntryLayout'] === 'spread' ? 'spread' : 'single'

@@ -124,3 +124,29 @@ test('information wrapping preserves original availability and delegates lease r
   assert.equal(asset.originalAvailable, true)
   asset.release(); asset.release(); assert.equal(releases, 1)
 })
+
+test('variant preparation failure is consumed once without invoking the backend or changing default loads', async () => {
+  const backend = provider(), p = page(1), c = new core.ReaderCancellation(); let preparations = 0
+  const plan = { page: p, load: async () => backend.asset }
+  backend.prepareOriginal = async () => { preparations++; return plan }
+  const probe = new ReaderLabAssetProbe(backend, -1, '', -1, 'prepare-fail-once')
+  await assert.rejects(probe.prepareOriginal(p, c), /reader_lab_original_prepare_failure/)
+  assert.equal(preparations, 0)
+  assert.equal(await probe.load(p, 'original', c, false), backend.asset)
+  assert.equal(await probe.prepareOriginal(p, c), plan)
+  assert.equal(preparations, 1)
+})
+
+test('variant decode probe retains resolved identity and forwards retry to the same original recipe', async () => {
+  const backend = provider(), p = page(1), c = new core.ReaderCancellation(), calls = []
+  const plan = { page: p, async load(...args) { calls.push(args); return backend.asset } }
+  backend.prepareOriginal = async () => plan
+  const probe = new ReaderLabAssetProbe(backend, -1, '', -1, 'decode-fail-once')
+  const wrapped = await probe.prepareOriginal(p, c)
+  assert.equal(wrapped.page.key, p.key)
+  assert.match((await wrapped.load(c, false)).uri, /rkit-probe-missing-original-variant$/)
+  assert.equal(calls.length, 0)
+  assert.equal(await wrapped.load(c, true), backend.asset)
+  assert.deepEqual(calls, [[c, true]])
+  assert.equal(await probe.prepareOriginal(p, c), plan)
+})

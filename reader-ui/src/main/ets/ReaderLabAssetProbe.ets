@@ -8,6 +8,22 @@ class ReaderLabInformationSource implements ReaderImageInformationSource {
   read(): Promise<ReaderImageInformation> { return this.readSource() }
 }
 
+/** One isolated native decode failure after original resolution; never alters cached files. */
+class ReaderLabOriginalPlan implements ReaderOriginalAssetPlan {
+  page: ReaderPage
+  private plan: ReaderOriginalAssetPlan
+  private injected: boolean = false
+  constructor(plan: ReaderOriginalAssetPlan) { this.plan = plan; this.page = plan.page.copy() }
+  load(cancellation: ReaderCancellation, forceReload: boolean): Promise<ReaderAsset> {
+    cancellation.check()
+    if (!this.injected) {
+      this.injected = true
+      return Promise.resolve(new ReaderAsset('file:///data/storage/el2/base/cache/rkit-probe-missing-original-variant'))
+    }
+    return this.plan.load(cancellation, forceReload)
+  }
+}
+
 /** Explicit Debug-lab probe. One missing URI exercises native decode failure, not transport failure. */
 export class ReaderLabAssetProbe implements ReaderAssetProvider {
   cancellationMode: 'consumer-only' | 'transport'
@@ -20,9 +36,10 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
   private originalInjected: boolean = false
   private informationMode: string
   private informationInjected: boolean = false
+  private variantInjected: boolean = false
 
   constructor(provider: ReaderAssetProvider, thumbnailIndex: number, informationMode: string = '',
-    originalFailureIndex: number = -1) {
+    originalFailureIndex: number = -1, originalVariantProbe: string = '') {
     this.provider = provider
     this.thumbnailIndex = thumbnailIndex
     this.originalFailureIndex = originalFailureIndex
@@ -33,6 +50,17 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
       this.prepareOriginal = (page: ReaderPage, cancellation: ReaderCancellation): Promise<ReaderOriginalAssetPlan> => {
         cancellation.check()
         if (this.provider.prepareOriginal === undefined) throw new Error('reader_original_unavailable')
+        if (!this.variantInjected && originalVariantProbe === 'prepare-fail-once') {
+          this.variantInjected = true
+          return Promise.reject(new Error('reader_lab_original_prepare_failure'))
+        }
+        if (!this.variantInjected && originalVariantProbe === 'decode-fail-once') {
+          this.variantInjected = true
+          return this.provider.prepareOriginal(page, cancellation).then((plan: ReaderOriginalAssetPlan): ReaderOriginalAssetPlan => {
+            cancellation.check()
+            return new ReaderLabOriginalPlan(plan)
+          })
+        }
         return this.provider.prepareOriginal(page, cancellation)
       }
     }
