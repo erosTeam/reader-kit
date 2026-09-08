@@ -16,14 +16,15 @@ function deferred() {
   return { promise, resolve, reject }
 }
 
-function fixture(getLastWindow) {
+function fixture(getLastWindow, timers = { setTimeout, clearTimeout }) {
   const exports = {}, logs = []
   vm.runInNewContext(code, {
     exports,
+    setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
     console: { info: value => logs.push(value), warn: value => logs.push(value) },
     require: name => {
       assert.equal(name, '@kit.ArkUI')
-      return { window: { getLastWindow } }
+      return { window: { getLastWindow, AvoidAreaType: { TYPE_SYSTEM: 0 } } }
     },
   }, { filename: 'ReaderTrialWindow.ets' })
   return { Lease: exports.ReaderTrialWindow, logs }
@@ -35,6 +36,7 @@ function mainWindow(write = async () => {}, visibility = async () => {}) {
   const original = { ...properties }
   return {
     original, calls,
+    getWindowAvoidArea() { return { topRect: { height: 120 } } },
     getWindowSystemBarProperties() { calls.push(['read', { ...properties }]); return { ...properties } },
     async setWindowSystemBarProperties(value) {
       calls.push(['write', { ...value }])
@@ -67,6 +69,147 @@ test('close before window lookup returns skips colors and preserves one-shot beh
   assert.deepEqual(main.calls, [])
   assert.deepEqual(logs, [])
   assert.equal(lookups, 1)
+})
+
+function avoidWindow(visibility = async () => {}) {
+  const main = mainWindow(undefined, visibility), listeners = new Set()
+  main.top = 0
+  main.getWindowAvoidArea = () => ({ topRect: { height: main.top } })
+  main.on = (event, callback) => { assert.equal(event, 'avoidAreaChange'); listeners.add(callback) }
+  main.off = (event, callback) => { assert.equal(event, 'avoidAreaChange'); listeners.delete(callback) }
+  main.emit = (height, type = 0) => {
+    main.top = height
+    for (const callback of listeners) callback({ type, area: { topRect: { height } } })
+  }
+  main.listeners = listeners
+  return main
+}
+
+function fakeTimers() {
+  const pending = new Map()
+  let next = 0
+  return {
+    pending,
+    setTimeout(callback, ms) { assert.equal(ms, 2000); pending.set(++next, callback); return next },
+    clearTimeout(id) { pending.delete(id) },
+    fire() { for (const callback of [...pending.values()]) callback() },
+  }
+}
+
+test('visible-area close gates on both setter and real area, then cleans up', async () => {
+  const setter = deferred(), timers = fakeTimers()
+  let requests = 0
+  const main = avoidWindow(() => ++requests === 2 ? setter.promise : Promise.resolve())
+  const { Lease } = fixture(async () => main, timers), lease = new Lease(null, true)
+  lease.open({}); await drain()
+  let done = false
+  const close = lease.close().then(() => { done = true })
+  await drain()
+  assert.equal(main.listeners.size, 1)
+  main.emit(120)
+  await drain(); assert.equal(done, false)
+  setter.resolve(); await close
+  assert.equal(lease.getCloseSystemAvoidAreaResult(), 'ready')
+  assert.equal(main.listeners.size, 0); assert.equal(timers.pending.size, 0)
+})
+
+test('setter completion alone does not release close; unrelated and zero-area events do not', async () => {
+  const main = avoidWindow(), timers = fakeTimers(), { Lease } = fixture(async () => main, timers)
+  const lease = new Lease(null, true)
+  lease.open({}); await drain()
+  const close = lease.close(); await drain()
+  assert.equal(lease.getCloseSystemAvoidAreaResult(), 'pending')
+  main.emit(0); main.emit(120, 1); await drain()
+  assert.equal(lease.getCloseSystemAvoidAreaResult(), 'pending')
+  main.emit(120); await close
+  assert.equal(lease.getCloseSystemAvoidAreaResult(), 'ready')
+})
+
+test('post-setter snapshot recovers an unreported avoid-area change', async () => {
+  const main = avoidWindow(), timers = fakeTimers()
+  const base = main.setSpecificSystemBarEnabled
+  main.setSpecificSystemBarEnabled = async (...args) => {
+    await base(...args)
+    if (main.listeners.size) main.top = 120
+  }
+  const { Lease } = fixture(async () => main, timers), lease = new Lease(null, true)
+  lease.open({}); await drain(); await lease.close()
+  assert.equal(lease.getCloseSystemAvoidAreaResult(), 'ready')
+  assert.equal(timers.pending.size, 0)
+})
+
+test('watchdog fails readiness and cleans up without claiming success', async () => {
+  const main = avoidWindow(), timers = fakeTimers(), { Lease } = fixture(async () => main, timers)
+  const lease = new Lease(null, true)
+  lease.open({}); await drain()
+  const close = lease.close(); await drain(); timers.fire(); await close
+  assert.equal(lease.getCloseSystemAvoidAreaResult(), 'failed')
+  assert.equal(main.listeners.size, 0); assert.equal(timers.pending.size, 0)
+})
+
+test('area timeout cannot release the operation queue while restoration setter is in flight', async () => {
+  const setter = deferred(), timers = fakeTimers()
+  let requests = 0, lookups = 0
+  const main = avoidWindow(() => ++requests === 2 ? setter.promise : Promise.resolve())
+  const { Lease } = fixture(async () => { lookups++; return main }, timers)
+  const first = new Lease(null, true), next = new Lease()
+  first.open({}); await drain()
+  let closed = false
+  const closing = first.close().then(() => { closed = true })
+  next.open({}); await drain()
+  timers.fire(); await drain()
+  assert.equal(first.getCloseSystemAvoidAreaResult(), 'failed')
+  assert.equal(main.listeners.size, 0); assert.equal(timers.pending.size, 0)
+  assert.equal(closed, false); assert.equal(lookups, 1)
+  setter.resolve(); await closing; await drain()
+  assert.equal(closed, true); assert.equal(lookups, 2)
+  assert.equal(first.getCloseSystemAvoidAreaResult(), 'failed')
+  await next.close()
+})
+
+test('already-visible is only reported after a successful setter', async () => {
+  let requests = 0
+  const main = mainWindow(undefined, async () => { if (++requests === 2) throw new Error('failed') })
+  const { Lease } = fixture(async () => main), lease = new Lease(null, true)
+  lease.open({}); await drain(); await lease.close()
+  assert.equal(lease.getCloseSystemAvoidAreaResult(), 'failed')
+})
+
+test('watch registration failure still restores visibility but does not report readiness', async () => {
+  const main = avoidWindow(), timers = fakeTimers()
+  main.on = () => { throw new Error('watch-failed') }
+  const { Lease } = fixture(async () => main, timers), lease = new Lease(null, true)
+  lease.open({}); await drain(); await lease.close()
+  assert.equal(lease.getCloseSystemAvoidAreaResult(), 'failed')
+  assert.equal(main.calls.filter(call => call[0] === 'visibility').length, 2)
+  assert.equal(timers.pending.size, 0)
+})
+
+test('setter rejection clears the registered avoid-area watcher and timer', async () => {
+  let requests = 0
+  const main = avoidWindow(async () => { if (++requests === 2) throw new Error('setter-failed') })
+  const timers = fakeTimers(), { Lease } = fixture(async () => main, timers), lease = new Lease(null, true)
+  lease.open({}); await drain(); await lease.close()
+  assert.equal(lease.getCloseSystemAvoidAreaResult(), 'failed')
+  assert.equal(main.listeners.size, 0); assert.equal(timers.pending.size, 0)
+})
+
+test('already-visible success requires no watcher or timer', async () => {
+  const main = mainWindow(), timers = fakeTimers(), { Lease } = fixture(async () => main, timers)
+  const lease = new Lease(null, true)
+  lease.open({}); await drain(); await lease.close()
+  assert.equal(lease.getCloseSystemAvoidAreaResult(), 'already-visible')
+  assert.equal(timers.pending.size, 0)
+})
+
+test('colors-only and restore-hidden perform no avoid-area reads or waits', async () => {
+  for (const visibility of [null, false]) {
+    const main = mainWindow()
+    main.getWindowAvoidArea = () => { throw new Error('unexpected avoid-area read') }
+    const { Lease } = fixture(async () => main), lease = new Lease(null, visibility)
+    lease.open({}); await drain(); await lease.close()
+    assert.equal(lease.getCloseSystemAvoidAreaResult(), 'not-required')
+  }
 })
 
 test('same-turn close before queued open never starts lookup', async () => {

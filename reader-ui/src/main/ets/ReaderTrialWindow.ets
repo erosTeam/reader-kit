@@ -1,6 +1,8 @@
 import { common } from '@kit.AbilityKit'
 import { window } from '@kit.ArkUI'
 
+export type ReaderTrialCloseSystemAvoidAreaResult = 'pending' | 'not-required' | 'already-visible' | 'ready' | 'failed'
+
 /** Optional host-owned window lease, separate from the reader surface/session.
  * Restore exactly the pre-trial colors, including if close races window lookup.
  * Status visibility is opt-in, with its restoration value supplied by the host.
@@ -13,6 +15,83 @@ export class ReaderTrialWindow {
   private mainWindow: window.Window | null = null
   private previous: window.SystemBarProperties | null = null
   private closing: Promise<void> | null = null
+  private closeSystemAvoidAreaResult: ReaderTrialCloseSystemAvoidAreaResult = 'not-required'
+
+  /** Window readiness only; the host must separately await its actual layout commit. */
+  getCloseSystemAvoidAreaResult(): ReaderTrialCloseSystemAvoidAreaResult {
+    return this.closeSystemAvoidAreaResult
+  }
+
+  private async restoreVisibleStatus(): Promise<void> {
+    const win = this.mainWindow
+    if (win === null) return
+    const visibleTop = (): boolean => {
+      return win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM).topRect.height > 0
+    }
+    let alreadyVisible: boolean = false
+    try { alreadyVisible = visibleTop() } catch (error) {
+      // A failed readiness read must not suppress the host's restoration request.
+      try { await this.writeStatusVisible(true) } catch (_) {}
+      throw error as Error
+    }
+    if (alreadyVisible) {
+      await this.writeStatusVisible(true)
+      this.closeSystemAvoidAreaResult = 'already-visible'
+      return
+    }
+    await new Promise<void>((resolve: () => void, reject: (error: Error) => void): void => {
+      let settled: boolean = false
+      let setterSucceeded: boolean = false
+      let setterCompleted: boolean = false
+      let pendingFailure: string = ''
+      let timer: number = -1
+      const finish = (ready: boolean, message: string): void => {
+        if (settled) return
+        settled = true
+        if (timer >= 0) clearTimeout(timer)
+        try { win.off('avoidAreaChange', changed) } catch (_) {}
+        this.closeSystemAvoidAreaResult = ready ? 'ready' : 'failed'
+        this.observe(`close_system_avoid_area_${ready ? 'ready' : 'failed'} ${message}`)
+        if (ready) resolve()
+        else if (setterCompleted) reject(new Error(message))
+        else pendingFailure = message
+      }
+      const check = (): void => {
+        if (settled || !setterSucceeded) return
+        try { if (visibleTop()) finish(true, 'visible') } catch (error) {
+          finish(false, (error as Error).message)
+        }
+      }
+      const changed = (data: window.AvoidAreaOptions): void => {
+        if (data.type === window.AvoidAreaType.TYPE_SYSTEM) check()
+      }
+      try { win.on('avoidAreaChange', changed) } catch (error) {
+        this.writeStatusVisible(true).then((): void => {
+          setterCompleted = true
+          finish(false, (error as Error).message)
+        }).catch((restoreError: Error): void => {
+          setterCompleted = true
+          finish(false, restoreError.message)
+        })
+        return
+      }
+      // Failure bound, never a delay that implies presentation or layout success.
+      timer = setTimeout((): void => finish(false, 'timeout'), 2000)
+      this.writeStatusVisible(true).then((): void => {
+        setterCompleted = true
+        if (settled) {
+          reject(new Error(pendingFailure))
+          return
+        }
+        setterSucceeded = true
+        check()
+      }).catch((error: Error): void => {
+        setterCompleted = true
+        if (settled) reject(new Error(pendingFailure || error.message))
+        else finish(false, error.message)
+      })
+    })
+  }
 
   private observer: ((event: string) => void) | null = null
   private restoreStatusVisible: boolean | null
@@ -85,6 +164,7 @@ export class ReaderTrialWindow {
   close(): Promise<void> {
     if (this.closing !== null) return this.closing
     this.closed = true
+    this.closeSystemAvoidAreaResult = this.restoreStatusVisible === true ? 'pending' : 'not-required'
     this.closing = ReaderTrialWindow.enqueue(async (): Promise<void> => {
       if (this.mainWindow !== null && this.previous !== null) {
         let restoreError: Error | null = null
@@ -99,13 +179,22 @@ export class ReaderTrialWindow {
           restoreError = error as Error
         }
         if (this.restoreStatusVisible !== null) {
-          try { await this.writeStatusVisible(this.restoreStatusVisible) } catch (error) {
+          try {
+            if (this.restoreStatusVisible) await this.restoreVisibleStatus()
+            else await this.writeStatusVisible(false)
+          } catch (error) {
+            if (this.restoreStatusVisible) this.closeSystemAvoidAreaResult = 'failed'
             this.observe(`status_visibility_restore_failed ${(error as Error).message}`)
             if (restoreError === null) restoreError = error as Error
             else restoreError = new Error(`${restoreError.message}; status_visibility_restore_failed ${(error as Error).message}`)
           }
         }
-        if (restoreError !== null) throw restoreError
+        if (restoreError !== null) {
+          if (this.restoreStatusVisible) this.closeSystemAvoidAreaResult = 'failed'
+          throw restoreError
+        }
+      } else {
+        this.closeSystemAvoidAreaResult = 'not-required'
       }
     }, 'restore_failed')
     return this.closing

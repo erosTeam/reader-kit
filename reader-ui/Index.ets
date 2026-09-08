@@ -9,6 +9,7 @@ export { ReaderSystemSharePresentation } from './src/main/ets/ReaderSystemShareP
 export { ReaderFileInformation } from './src/main/ets/ReaderFileInformation'
 export { ReaderChrome } from './src/main/ets/ReaderChrome'
 export { ReaderTrialWindow } from './src/main/ets/ReaderTrialWindow'
+export { ReaderTrialLayoutCommit } from './src/main/ets/ReaderTrialLayoutCommit'
 export { ReaderLabVisibilityState, connectReaderLabVisibility, updateReaderLabForeground } from './src/main/ets/ReaderLabVisibility'
 export { ReaderLabLaunchState, ReaderLabRequest, captureReaderLabWant, connectReaderLabLaunch } from './src/main/ets/ReaderLabLaunch'
 export { ReaderPagedViewport } from './src/main/ets/ReaderPagedViewport'
