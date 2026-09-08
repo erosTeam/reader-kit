@@ -1,6 +1,7 @@
 import { ReaderUnitKey, ReaderUnit, ReaderPage } from './ReaderContent'
 import { ReaderReadingAnchor } from './ReaderDisplayMap'
 import { ReaderImageInformation, ReaderImageInformationSource } from './ReaderImageInformation'
+import { ReaderImageCropBounds, ReaderImageCropSource } from './ReaderImageCrop'
 export { ReaderUnitKey, ReaderUnit, ReaderPage, ReaderThumbnail } from './ReaderContent'
 
 export type ReaderAssetKind = 'original' | 'thumbnail'
@@ -22,6 +23,7 @@ export class ReaderCancellation {
 /** File/URI ownership belongs to the provider. Releasing a reader never deletes a download. */
 export class ReaderAsset {
   uri: string
+  crop: ReaderImageCropSource | null = null
   originalAvailable: boolean = false
   private released: boolean = false
   private releaseResource: () => void
@@ -133,6 +135,19 @@ export class ReaderSession {
   }
 
   snapshot(): ReaderSnapshot { return this.state.copy() }
+  async imageCrop(requestId: number): Promise<ReaderImageCropBounds | null> {
+    const asset = this.asset
+    const eligible = (): boolean => this.current(requestId) && this.state.assetRequestId === requestId &&
+      this.asset === asset && this.state.kind === 'original' &&
+      (this.state.phase === 'decoding' || this.state.phase === 'displayed')
+    if (asset === null || asset.crop === null || !eligible()) return null
+    try {
+      const bounds = await asset.crop.read()
+      return eligible() ? bounds.copy() : null
+    } catch (_error) {
+      return null
+    }
+  }
   async imageInformation(requestId: number): Promise<ReaderImageInformation | null> {
     const asset = this.asset
     if (!this.current(requestId) || this.state.phase !== 'displayed' || this.state.kind !== 'original' ||

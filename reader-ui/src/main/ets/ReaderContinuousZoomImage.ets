@@ -58,7 +58,8 @@ export struct ReaderContinuousZoomImage {
 
   private geometry(): ReaderViewportGeometry {
     const page = this.frame.asset.page
-    const pixels = this.frame.asset.kind === 'original' ? page?.width ?? 0 : page?.thumbnail.width ?? 0
+    const pixels = this.frame.asset.kind === 'original'
+      ? (page?.width ?? 0) * this.frame.crop.region(this.frame.part).width : page?.thumbnail.width ?? 0
     return new ReaderViewportGeometry(this.componentWidth, this.componentHeight, this.componentWidth, this.measuredImageHeight,
       pixels > 0 ? pixels / this.componentWidth : 2)
   }

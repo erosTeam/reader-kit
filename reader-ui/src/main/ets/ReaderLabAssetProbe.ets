@@ -88,6 +88,7 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
     const information = new ReaderLabInformationSource((): Promise<ReaderImageInformation> => this.readInformation(source))
     const wrapped = new ReaderAsset(asset.uri, (): void => { asset.release() }, information)
     wrapped.originalAvailable = asset.originalAvailable
+    wrapped.crop = asset.crop
     return wrapped
   }
 

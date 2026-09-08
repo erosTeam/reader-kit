@@ -14,6 +14,7 @@ export class ReaderLabRequest {
   shareProbe: string = ''
   informationProbe: string = ''
   originalVariantProbe: string = ''
+  cropBorders: boolean = false
   thumbnailEntry: boolean = false
   entryLayout: string = 'single'
   entryDirection: string = 'ltr'
@@ -79,6 +80,7 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
     (typeof thumbnailFailure === 'number' ? thumbnailFailure : -1)
   request.thumbnailFailurePage = Number.isSafeInteger(thumbnailIndex) && thumbnailIndex >= 0 ? thumbnailIndex : -1
   request.volumeKeys = want.parameters['readerLabVolumeKeys'] === 'true' || want.parameters['readerLabVolumeKeys'] === true
+  request.cropBorders = want.parameters['readerLabCropBorders'] === 'true' || want.parameters['readerLabCropBorders'] === true
   const shareProbe = want.parameters['readerLabShareProbe']
   request.shareProbe = typeof shareProbe === 'string' &&
     (shareProbe === 'fail-once' || shareProbe === 'delay-once') ? shareProbe : ''

@@ -28,6 +28,7 @@ export struct ReaderSurface {
   @Param imageSave: ReaderImageSaveHost | null = null
   @Param autoReadAvailable: boolean = false
   @Param autoReadSeconds: number = 3
+  @Param cropBorders: boolean = false
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPreview: ReaderEntryPreviewSource | null = null
   @Event onClose: () => void = () => {}
@@ -64,6 +65,7 @@ export struct ReaderSurface {
     this.chromeDisposed = false
     this.chromeCloseRequested = false
     this.session.setNeighborPreload(true)
+    this.session.setCropEnabled(this.cropBorders)
     this.session.setViewportActive(this.active)
     this.autoReadController.subscribe((enabled: boolean): void => { this.autoReadEnabled = enabled })
     this.shareController.subscribe((busy: boolean): void => { this.shareBusy = busy; this.syncAutoRead() })

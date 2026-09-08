@@ -80,6 +80,7 @@ struct ReaderContinuousList {
   @Local private lockedKey: string = ''
   @Local private moving: boolean = false
   private lockedIdentity: string = ''
+  private cropRegions: Map<number, string> = new Map()
 
   aboutToAppear(): void {
     this.source = new ReaderContinuousIndexSource(this.snapshot.displayKeys)
@@ -104,6 +105,15 @@ struct ReaderContinuousList {
 
   @Monitor('snapshot', 'active')
   onSnapshotChanged(): void {
+    let cropChanged = false
+    this.snapshot.pageMetadata.forEach((page) => {
+      const crop = this.snapshot.cropForPage(page.sourceIndex)
+      const value = `${crop.left}:${crop.top}:${crop.right}:${crop.bottom}`
+      const previous = this.cropRegions.get(page.sourceIndex)
+      if (previous !== undefined && previous !== value) cropChanged = true
+      this.cropRegions.set(page.sourceIndex, value)
+    })
+    if (cropChanged) this.invalidatePosition()
     if (!this.active) this.moving = false
     if (this.lockedKey.length > 0) {
       const frame = this.snapshot.forItem(this.lockedKey).frames[0]
@@ -125,7 +135,10 @@ struct ReaderContinuousList {
     const page = this.snapshot.pageMetadata.find((value) => value.sourceIndex === index)
     const width = this.snapshot.kind === 'thumbnail' ? page?.thumbnail.width ?? 0 : page?.width ?? 0
     const height = this.snapshot.kind === 'thumbnail' ? page?.thumbnail.height ?? 0 : page?.height ?? 0
-    return width > 0 && height > 0 ? this.viewWidth * height / width : this.viewWidth / 0.75
+    const crop = this.snapshot.cropForPage(index)
+    const ratio = this.snapshot.kind === 'original'
+      ? (1 - crop.top - crop.bottom) / (1 - crop.left - crop.right) : 1
+    return width > 0 && height > 0 ? this.viewWidth * height / width * ratio : this.viewWidth / 0.75
   }
 
   private rowHeight(index: number): number {
@@ -166,7 +179,10 @@ struct ReaderContinuousList {
       this.positionTimer = 0
       if (this.disposed || !this.active || epoch !== this.positionEpoch || navigation !== this.snapshot.navigationRevision) return
       const index = this.snapshot.displayIndex
-      const y = this.snapshot.kind === 'original' ? this.snapshot.anchor?.y ?? 0 : 0
+      const crop = this.snapshot.cropForPage(index)
+      const sourceY = this.snapshot.anchor?.y ?? 0
+      const y = this.snapshot.kind === 'original'
+        ? Math.max(0, Math.min(1, (sourceY - crop.top) / (1 - crop.top - crop.bottom))) : 0
       const inset = (this.rowHeight(index) - this.imageHeight(index)) / 2
       this.positionInFlight = true
       this.scroller.scrollToIndex(index, false, ScrollAlign.START,
@@ -199,14 +215,16 @@ struct ReaderContinuousList {
       this.onRange(first, last, this.createdRevision, navigation)
       const key = this.snapshot.displayKeys[first]
       const frame = this.snapshot.forItem(key).frames[0]
-      if (frame === undefined || frame.asset.kind !== 'original' || frame.asset.phase !== 'displayed' ||
+      if (frame === undefined || frame.cropPending || frame.asset.kind !== 'original' || frame.asset.phase !== 'displayed' ||
         this.nativeReady.get(key) !== `${frame.slotId}:${frame.asset.assetRequestId}`) return
       const rect = this.scroller.getItemRect(first)
       const imageHeight = this.imageHeight(first)
       const imageTop = rect.y + (rect.height - imageHeight) / 2
       if (rect.height <= 0 || imageTop >= this.viewHeight || imageTop + imageHeight <= 0) return
       const y = Math.max(0, Math.min(1, -imageTop / imageHeight))
-      this.onVisible(this.createdRevision, navigation, key, frame.slotId, frame.asset.assetRequestId, 0.5, y)
+      const region = frame.crop.region(frame.part)
+      this.onVisible(this.createdRevision, navigation, key, frame.slotId, frame.asset.assetRequestId,
+        region.sourceX(0.5), region.sourceY(y))
     }, 0)
   }
 

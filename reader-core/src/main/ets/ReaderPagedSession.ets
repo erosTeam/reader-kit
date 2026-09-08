@@ -5,16 +5,29 @@ import {
 import { ReaderDisplayMap, ReaderDisplayPolicy, ReaderDisplayPart, ReaderReadingAnchor, ReaderFragment } from './ReaderDisplayMap'
 import { ReaderThumbnailWindow } from './ReaderThumbnailWindow'
 import { ReaderImageInformation } from './ReaderImageInformation'
+import { ReaderImageCropBounds } from './ReaderImageCrop'
 
 export class ReaderPagedFrame {
+  cropPending: boolean = false
   slotId: number
   part: ReaderDisplayPart
   asset: ReaderSnapshot
+  crop: ReaderImageCropBounds
 
-  constructor(slotId: number, part: ReaderDisplayPart, asset: ReaderSnapshot) {
+  constructor(slotId: number, part: ReaderDisplayPart, asset: ReaderSnapshot,
+    crop: ReaderImageCropBounds = new ReaderImageCropBounds()) {
     this.slotId = slotId
     this.part = part.copy()
     this.asset = asset.copy()
+    this.crop = crop.copy()
+  }
+}
+
+export class ReaderPageCropMetadata {
+  sourceIndex: number
+  bounds: ReaderImageCropBounds
+  constructor(sourceIndex: number, bounds: ReaderImageCropBounds) {
+    this.sourceIndex = sourceIndex; this.bounds = bounds.copy()
   }
 }
 
@@ -52,6 +65,11 @@ export class ReaderPagedSnapshot {
   window: ReaderPagedItemSnapshot[] = []
   /** Geometry metadata may outlive an evicted asset; it is never an image lease. */
   pageMetadata: ReaderPage[] = []
+  cropMetadata: ReaderPageCropMetadata[] = []
+  cropForPage(index: number): ReaderImageCropBounds {
+    return this.cropMetadata.find((value: ReaderPageCropMetadata) => value.sourceIndex === index)?.bounds.copy()
+      ?? new ReaderImageCropBounds()
+  }
   canPreviousUnit: boolean = false
   canNextUnit: boolean = false
 
@@ -70,12 +88,19 @@ export class ReaderPagedSnapshot {
     value.topologyRevision = this.topologyRevision
     value.navigationRevision = this.navigationRevision
     value.frames = (this.window.find((item: ReaderPagedItemSnapshot) => item.key === key)?.frames ?? [])
-      .map((frame: ReaderPagedFrame) => new ReaderPagedFrame(frame.slotId, frame.part, frame.asset))
+      .map((frame: ReaderPagedFrame) => {
+        const copy = new ReaderPagedFrame(frame.slotId, frame.part, frame.asset, frame.crop)
+        copy.cropPending = frame.cropPending
+        return copy
+      })
     return value
   }
 }
 
 class ReaderPageSlot {
+  cropRequestId: number = 0
+  crop: ReaderImageCropBounds | null = null
+  cropSettled: boolean = false
   id: number
   index: number
   kind: ReaderAssetKind
@@ -105,6 +130,7 @@ export class ReaderPagedSession {
   private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
   private map: ReaderDisplayMap | null = null
   private pages: Map<number, ReaderPage> = new Map()
+  private cropPages: Map<number, ReaderImageCropBounds> = new Map()
   private slots: ReaderPageSlot[] = []
   private originalPlans: Map<number, ReaderOriginalAssetPlan> = new Map()
   private originalPreparations: Map<number, ReaderCancellation> = new Map()
@@ -122,6 +148,7 @@ export class ReaderPagedSession {
   private pendingIndex: number = 0
   private disposed: boolean = false
   private active: boolean = false
+  private cropEnabled: boolean = false
   private activityEpoch: number = 0
   private listener: ((snapshot: ReaderPagedSnapshot) => void) | null = null
 
@@ -133,6 +160,32 @@ export class ReaderPagedSession {
   cancellationMode(): string { return this.assets.cancellationMode }
   informationSupported(): boolean { return this.assets.informationSupported === true }
   originalSelectionSupported(): boolean { return this.assets.prepareOriginal !== undefined }
+
+  /** Runtime presentation only. Does not modify host preferences or source dimensions. */
+  setCropEnabled(enabled: boolean): void {
+    if (this.disposed || this.cropEnabled === enabled) return
+    this.cropEnabled = enabled
+    if (enabled) this.slots.forEach((slot: ReaderPageSlot) => this.requestCrop(slot, slot.session.snapshot()))
+    this.emit()
+  }
+
+  private requestCrop(slot: ReaderPageSlot, snapshot: ReaderSnapshot): void {
+    if (!this.cropEnabled || snapshot.kind !== 'original' || snapshot.assetRequestId === 0 ||
+      (snapshot.phase !== 'decoding' && snapshot.phase !== 'displayed') ||
+      slot.cropRequestId === snapshot.assetRequestId) return
+    const requestId = snapshot.assetRequestId
+    slot.cropRequestId = requestId
+    slot.crop = null
+    slot.cropSettled = false
+    void slot.session.imageCrop(requestId).then((crop: ReaderImageCropBounds | null): void => {
+      if (this.disposed || !this.slots.includes(slot) || slot.cropRequestId !== requestId ||
+        slot.session.snapshot().assetRequestId !== requestId) return
+      slot.crop = crop?.copy() ?? null
+      slot.cropSettled = true
+      this.cropPages.set(slot.index, crop?.copy() ?? new ReaderImageCropBounds())
+      if (this.cropEnabled) this.emit()
+    })
+  }
 
   cancelOriginalPreparations(): void {
     if (this.originalPreparations.size === 0) return
@@ -174,6 +227,7 @@ export class ReaderPagedSession {
       if (cancellation.isCancelled() || currentFrame() === undefined) return 'stale'
       if (plan === null) this.originalPlans.delete(index)
       else this.originalPlans.set(index, plan)
+      this.cropPages.delete(index)
       this.state.selectionId += 1
       this.reconcile()
       return 'changed'
@@ -232,6 +286,12 @@ export class ReaderPagedSession {
     value.navigationRevision = this.navigationRevision
     value.displayKeys = this.displayKeys.slice()
     value.pageMetadata = Array.from(this.pages.values()).map((page: ReaderPage) => page.copy())
+    if (this.cropEnabled && this.state.kind === 'original') {
+      this.cropPages.forEach((bounds: ReaderImageCropBounds, index: number) => {
+        value.cropMetadata.push(new ReaderPageCropMetadata(index, this.state.policy.layout === 'continuous'
+          ? bounds.forContinuousPage(index, this.state.unit?.pageCount ?? 0) : bounds))
+      })
+    }
     value.frames = this.framesAt(this.state.displayIndex)
     value.window = this.windowIndexes().map((index: number) =>
       new ReaderPagedItemSnapshot(this.displayKeys[index], index, this.framesAt(index)))
@@ -247,7 +307,15 @@ export class ReaderPagedSession {
       const asset = slot?.session.snapshot() ?? new ReaderSnapshot()
       const page = this.pages.get(part.sourceIndex)
       if (page !== undefined && asset.page !== null) asset.page = page.copy()
-      return new ReaderPagedFrame(slot?.id ?? 0, part, asset)
+      let crop = this.cropEnabled && slot?.cropRequestId === asset.assetRequestId
+        ? slot?.crop?.copy() ?? new ReaderImageCropBounds() : new ReaderImageCropBounds()
+      if (this.state.policy.layout === 'continuous') {
+        crop = crop.forContinuousPage(part.sourceIndex, this.state.unit?.pageCount ?? 0)
+      }
+      const frame = new ReaderPagedFrame(slot?.id ?? 0, part, asset, crop)
+      frame.cropPending = this.cropEnabled && asset.kind === 'original' &&
+        (slot?.cropRequestId !== asset.assetRequestId || slot?.cropSettled !== true)
+      return frame
     })
   }
 
@@ -302,6 +370,7 @@ export class ReaderPagedSession {
       this.releaseSlots()
       this.originalPlans.clear()
       this.pages.clear()
+      this.cropPages.clear()
       this.topologySignature = ''
       this.state.unit = unit
       this.state.kind = 'original'
@@ -504,6 +573,7 @@ export class ReaderPagedSession {
 
   private slotChanged(slot: ReaderPageSlot, snapshot: ReaderSnapshot): void {
     if (this.disposed || !this.slots.includes(slot)) return
+    this.requestCrop(slot, snapshot)
     const page = snapshot.page
     if (this.state.phase === 'ready' && page !== null && !this.pages.has(page.sourceIndex)) {
       this.pages.set(page.sourceIndex, page.copy())
@@ -558,6 +628,7 @@ export class ReaderPagedSession {
       this.state.kind !== 'original' || this.state.anchor === null || this.map === null) return false
     const slot = this.currentRenderSlot(selectionId, slotId, requestId, fragment)
     if (slot === undefined) return false
+    if (this.cropEnabled && (slot.cropRequestId !== requestId || !slot.cropSettled)) return false
     const asset = slot.session.snapshot()
     const anchor = this.state.anchor
     // A spread's second page decoding first must not change the selected original.

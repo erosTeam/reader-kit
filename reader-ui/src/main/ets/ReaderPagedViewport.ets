@@ -23,7 +23,8 @@ function partRatio(frame: ReaderPagedFrame): number {
   const page = frame.asset.page
   const width = frame.asset.kind === 'thumbnail' ? page?.thumbnail.width ?? 0 : page?.width ?? 0
   const height = frame.asset.kind === 'thumbnail' ? page?.thumbnail.height ?? 0 : page?.height ?? 0
-  const fraction = frame.asset.kind === 'original' ? frame.part.width() : 1
+  const region = frame.crop.region(frame.part)
+  const fraction = frame.asset.kind === 'original' ? region.width / region.height : 1
   return width > 0 && height > 0 ? width / height * fraction : 0.75
 }
 
@@ -198,7 +199,8 @@ export struct ReaderPagedViewport {
   private geometry(): ReaderViewportGeometry {
     const height = this.frameHeight()
     const scales = this.snapshot.frames.map((frame: ReaderPagedFrame): number => {
-      const intrinsicHeight = frame.asset.kind === 'original' ? frame.asset.page?.height ?? 0 :
+      const intrinsicHeight = frame.asset.kind === 'original'
+        ? (frame.asset.page?.height ?? 0) * frame.crop.region(frame.part).height :
         frame.asset.page?.thumbnail.height ?? 0
       return intrinsicHeight > 0 ? intrinsicHeight / height : 2
     })
@@ -466,7 +468,7 @@ export struct ReaderPagedImage {
   aboutToAppear(): void { this.entryMounted = true }
   aboutToDisappear(): void { this.entryMounted = false }
 
-  @Monitor('active', 'selectionId')
+  @Monitor('active', 'selectionId', 'frame')
   onSelectionChanged(): void { this.publishEntryTarget(); this.reportVisible() }
 
   @Monitor('frame', 'entryTransition', 'entryLayoutWidth', 'entryLayoutHeight', 'topologyRevision', 'navigationRevision')
@@ -517,7 +519,7 @@ export struct ReaderPagedImage {
     const page = this.frame.asset.page
     // Sprite/fragment clipping and unknown original geometry need a different
     // content contract; never advertise their outer wrapper as the image bounds.
-    if (this.frame.asset.kind !== 'original' || this.renderedFragment !== 'whole') {
+    if (this.frame.asset.kind !== 'original' || this.renderedFragment !== 'whole' || this.frame.crop.applied()) {
       transition.cancel(); return
     }
     if (page === null) return
@@ -661,12 +663,18 @@ export struct ReaderPagedImage {
         .width(this.frame.asset.page.thumbnail.width * this.spriteScale())
         .height(this.frame.asset.page.thumbnail.height * this.spriteScale())
         .clip(true)
-      } else if (this.frame.asset.uri.length > 0 && this.frame.asset.kind === 'original' && this.frame.part.fragment !== 'whole') {
+      } else if (this.frame.asset.uri.length > 0 && this.frame.asset.kind === 'original' &&
+        (this.frame.part.fragment !== 'whole' || this.frame.crop.applied())) {
         Stack({ alignContent: Alignment.TopStart }) {
           Image(this.frame.asset.uri)
-            .width(this.viewportWidth * 2).height(this.viewportHeight)
+            .width(this.viewportWidth / this.frame.crop.region(this.frame.part).width)
+            .height(this.viewportHeight / this.frame.crop.region(this.frame.part).height)
+            .id(`rkit-cropped-image-${this.frame.part.sourceIndex}-${this.frame.part.fragment}`)
             .objectFit(ImageFit.Fill)
-            .position({ x: this.frame.part.fragment === 'right' ? -this.viewportWidth : 0, y: 0 })
+            .position({
+              x: -this.viewportWidth * this.frame.crop.region(this.frame.part).x / this.frame.crop.region(this.frame.part).width,
+              y: -this.viewportHeight * this.frame.crop.region(this.frame.part).y / this.frame.crop.region(this.frame.part).height,
+            })
             .onComplete((event): void => {
               if (event?.loadingStatus === 1) this.completed(event.width, event.height)
             })
