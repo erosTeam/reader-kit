@@ -170,3 +170,22 @@ test('failed restore is logged, not reported restored, and later lease operation
   await b.close()
   assert.equal(logs.filter(value => value.includes('status_properties_restored')).length, 1)
 })
+
+test('optional observer records successful restore and readback without claiming presentation', async () => {
+  const main = mainWindow(), events = [], { Lease } = fixture(async () => main)
+  const lease = new Lease(event => events.push(event.replace(/^\d+ /, '')))
+  lease.open({}); await drain(); await lease.close()
+  assert.deepEqual(events, [
+    `saved ${JSON.stringify(main.original)}`,
+    `restore_called ${JSON.stringify(main.original)}`,
+    'restore_succeeded',
+    `restore_readback ${JSON.stringify(main.original)}`,
+  ])
+})
+
+test('throwing diagnostic observer does not alter restore completion', async () => {
+  const main = mainWindow(), { Lease } = fixture(async () => main)
+  const lease = new Lease(() => { throw new Error('observer failure') })
+  lease.open({}); await drain(); await lease.close()
+  assert.deepEqual(main.getWindowSystemBarProperties(), main.original)
+})

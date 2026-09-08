@@ -13,6 +13,26 @@ export class ReaderTrialWindow {
   private previous: window.SystemBarProperties | null = null
   private closing: Promise<void> | null = null
 
+  private observer: ((event: string) => void) | null = null
+
+  constructor(observer: ((event: string) => void) | null = null) {
+    this.observer = observer
+  }
+
+  private observe(event: string): void {
+    // Diagnostics must not change lease completion or platform error handling.
+    try { this.observer?.(`${Date.now()} ${event}`) } catch (_) {}
+  }
+
+  private observeProperties(event: string): void {
+    if (this.observer === null || this.mainWindow === null) return
+    try {
+      this.observe(`${event} ${JSON.stringify(this.mainWindow.getWindowSystemBarProperties())}`)
+    } catch (error) {
+      this.observe(`${event}_failed ${(error as Error).message}`)
+    }
+  }
+
   private static enqueue(operation: () => Promise<void>, failure: string): Promise<void> {
     const completion = ReaderTrialWindow.operations.then(operation).catch((error: Error): void => {
       console.warn(`[ReaderTrialWindow] ${failure}=${error.message}`)
@@ -32,6 +52,7 @@ export class ReaderTrialWindow {
       if (this.closed) return
       this.mainWindow = mainWindow
       this.previous = mainWindow.getWindowSystemBarProperties()
+      this.observe(`saved ${JSON.stringify(this.previous)}`)
       await mainWindow.setWindowSystemBarProperties({ statusBarContentColor: '#FFFFFFFF' })
       console.info('[ReaderTrialWindow] status_content=light')
     }, 'open_failed')
@@ -42,7 +63,15 @@ export class ReaderTrialWindow {
     this.closed = true
     this.closing = ReaderTrialWindow.enqueue(async (): Promise<void> => {
       if (this.mainWindow !== null && this.previous !== null) {
-        await this.mainWindow.setWindowSystemBarProperties(this.previous)
+        this.observe(`restore_called ${JSON.stringify(this.previous)}`)
+        try {
+          await this.mainWindow.setWindowSystemBarProperties(this.previous)
+        } catch (error) {
+          this.observe(`restore_failed ${(error as Error).message}`)
+          throw error as Error
+        }
+        this.observe('restore_succeeded')
+        this.observeProperties('restore_readback')
         console.info('[ReaderTrialWindow] status_properties_restored')
       }
     }, 'restore_failed')
