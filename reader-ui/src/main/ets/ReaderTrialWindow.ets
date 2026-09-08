@@ -22,7 +22,7 @@ export class ReaderTrialWindow {
     return this.closeSystemAvoidAreaResult
   }
 
-  private async restoreVisibleStatus(): Promise<void> {
+  private async restoreVisibleStatus(restoring: boolean = true): Promise<void> {
     const win = this.mainWindow
     if (win === null) return
     const visibleTop = (): boolean => {
@@ -36,7 +36,7 @@ export class ReaderTrialWindow {
     }
     if (alreadyVisible) {
       await this.writeStatusVisible(true)
-      this.closeSystemAvoidAreaResult = 'already-visible'
+      if (restoring) this.closeSystemAvoidAreaResult = 'already-visible'
       return
     }
     await new Promise<void>((resolve: () => void, reject: (error: Error) => void): void => {
@@ -50,14 +50,18 @@ export class ReaderTrialWindow {
         settled = true
         if (timer >= 0) clearTimeout(timer)
         try { win.off('avoidAreaChange', changed) } catch (_) {}
-        this.closeSystemAvoidAreaResult = ready ? 'ready' : 'failed'
-        this.observe(`close_system_avoid_area_${ready ? 'ready' : 'failed'} ${message}`)
+        if (restoring) this.closeSystemAvoidAreaResult = ready ? 'ready' : 'failed'
+        this.observe(`${restoring ? 'close' : 'prepare'}_system_avoid_area_${ready ? 'ready' : 'failed'} ${message}`)
         if (ready) resolve()
         else if (setterCompleted) reject(new Error(message))
         else pendingFailure = message
       }
       const check = (): void => {
         if (settled || !setterSucceeded) return
+        if (!restoring && this.closed) {
+          finish(false, 'closed')
+          return
+        }
         try { if (visibleTop()) finish(true, 'visible') } catch (error) {
           finish(false, (error as Error).message)
         }
@@ -96,6 +100,25 @@ export class ReaderTrialWindow {
   private observer: ((event: string) => void) | null = null
   private restoreStatusVisible: boolean | null
   private desiredStatusVisible: boolean = true
+
+  /** System top-area readiness only; callers must separately await their layout. */
+  async prepareStatusBarVisible(): Promise<boolean> {
+    if (this.closed || this.restoreStatusVisible === null || !this.started || this.mainWindow === null) return false
+    let ready: boolean = false
+    await ReaderTrialWindow.enqueue(async (): Promise<void> => {
+      if (this.closed || this.mainWindow === null) return
+      this.desiredStatusVisible = true
+      this.observe('prepare_system_avoid_area_requested')
+      try {
+        await this.restoreVisibleStatus(false)
+        ready = !this.closed
+        this.observe(`prepare_status_visibility_completed ready=${ready}`)
+      } catch (error) {
+        this.observe(`prepare_status_visibility_failed ${(error as Error).message}`)
+      }
+    }, 'prepare_status_visibility_failed')
+    return ready
+  }
 
   constructor(observer: ((event: string) => void) | null = null, restoreStatusVisible: boolean | null = null) {
     this.observer = observer

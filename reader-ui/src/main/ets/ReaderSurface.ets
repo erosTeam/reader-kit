@@ -16,6 +16,8 @@ export struct ReaderSurface {
   @Require @Param session: ReaderPagedSession
   @Require @Param initialUnit: ReaderUnitKey
   @Require @Param active: boolean
+  @Param closing: boolean = false
+  @Param beforeShowChrome: ((isCurrent: () => boolean) => Promise<boolean>) | null = null
   @Param initialIndex: number = 0
   @Param topInset: number = 0
   @Param bottomInset: number = 0
@@ -41,8 +43,14 @@ export struct ReaderSurface {
   private inputTopology: number = -1
   private touching: boolean = false
   private menuVisible: boolean = false
+  private chromeEpoch: number = 0
+  private chromeShowPending: boolean = false
+  private chromeDisposed: boolean = false
+  private chromeCloseRequested: boolean = false
 
   aboutToAppear(): void {
+    this.chromeDisposed = false
+    this.chromeCloseRequested = false
     this.session.setNeighborPreload(true)
     this.session.setViewportActive(this.active)
     this.shareController.subscribe((busy: boolean): void => { this.shareBusy = busy })
@@ -59,6 +67,8 @@ export struct ReaderSurface {
   }
 
   aboutToDisappear(): void {
+    this.chromeDisposed = true
+    this.invalidateChromeShow()
     this.entryTransition?.cancel()
     this.informationEpoch += 1
     this.shareController.close()
@@ -69,6 +79,7 @@ export struct ReaderSurface {
   @Monitor('active')
   onActiveChanged(): void {
     if (!this.active) {
+      this.invalidateChromeShow()
       this.entryTransition?.cancel()
       this.previewIndex = -1; this.touching = false
       if (!this.informationPresented) { this.informationEpoch += 1; this.informationBusy = false }
@@ -153,12 +164,52 @@ export struct ReaderSurface {
     }
   }
 
-  private toggleChrome(): void {
-    if (!this.active) return
-    this.chromeVisible = !this.chromeVisible
+  private invalidateChromeShow(): void {
+    this.chromeEpoch += 1
+    this.chromeShowPending = false
+  }
+
+  @Monitor('closing')
+  onClosingChanged(): void {
+    if (this.closing) this.invalidateChromeShow()
+  }
+
+  private requestClose(): void {
+    this.chromeCloseRequested = true
+    this.invalidateChromeShow()
+    this.onClose()
+  }
+
+  private commitChromeVisible(visible: boolean): void {
+    this.chromeVisible = visible
     if (!this.chromeVisible) this.previewIndex = -1
     this.onChromeVisible(this.chromeVisible)
     console.info(`[ReaderSurface] chrome=${this.chromeVisible}`)
+  }
+
+  private async prepareChromeShow(epoch: number,
+    gate: (isCurrent: () => boolean) => Promise<boolean>): Promise<void> {
+    const isCurrent = (): boolean => epoch === this.chromeEpoch && this.active && !this.closing &&
+      !this.chromeDisposed && !this.chromeCloseRequested
+    try {
+      const ready = await gate(isCurrent)
+      if (ready && isCurrent()) this.commitChromeVisible(true)
+    } catch (_) {
+      // A failed host preparation leaves chrome hidden; no unhandled rejection.
+    } finally {
+      if (epoch === this.chromeEpoch) this.chromeShowPending = false
+    }
+  }
+
+  private toggleChrome(): void {
+    if (!this.active || this.closing || this.chromeDisposed || this.chromeCloseRequested || this.chromeShowPending) return
+    const gate = this.beforeShowChrome
+    if (this.chromeVisible || gate === null) {
+      this.commitChromeVisible(!this.chromeVisible)
+      return
+    }
+    this.chromeShowPending = true
+    void this.prepareChromeShow(++this.chromeEpoch, gate)
   }
 
   private pageTap(x: number): void {
@@ -264,7 +315,7 @@ export struct ReaderSurface {
             .margin({ bottom: this.bottomInset + 112 }).backgroundColor('#CC000000').clip(true)
         }
         ReaderChrome({ snapshot: this.state, active: this.active, topInset: this.topInset,
-          bottomInset: this.bottomInset, accent: this.accent, onClose: this.onClose,
+          bottomInset: this.bottomInset, accent: this.accent, onClose: (): void => this.requestClose(),
           thumbnailsVisible: this.thumbnailsVisible,
           shareAvailable: this.imageShare !== null, shareBusy: this.shareBusy,
           informationBusy: this.informationBusy,

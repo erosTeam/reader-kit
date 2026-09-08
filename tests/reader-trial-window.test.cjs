@@ -414,3 +414,112 @@ test('color restoration failure still attempts visibility; both failures remain 
   assert.equal(logs.some(log => log.includes('color-restore-rejected; status_visibility_restore_failed visibility-restore-rejected')), true)
   assert.equal(events.filter(event => event.includes('status_visibility_succeeded')).length, 1)
 })
+
+test('prepare rejects unopened, unresolved lookup, colors-only and closed leases without a new write', async () => {
+  const lookup = deferred(), main = mainWindow(), { Lease } = fixture(() => lookup.promise)
+  const lease = new Lease(null, true)
+  assert.equal(await lease.prepareStatusBarVisible(), false)
+  lease.open({}); await drain()
+  assert.equal(await lease.prepareStatusBarVisible(), false)
+  lookup.resolve(main); await drain(); await lease.close()
+  const count = main.calls.length
+  assert.equal(await lease.prepareStatusBarVisible(), false)
+  assert.equal(main.calls.length, count)
+  const plain = new Lease()
+  plain.open({}); await drain()
+  const plainCount = main.calls.length
+  assert.equal(await plain.prepareStatusBarVisible(), false)
+  assert.equal(main.calls.length, plainCount)
+  await plain.close()
+})
+
+test('prepare registers before its setter and awaits both settlement and system top area', async () => {
+  const setter = deferred(), timers = fakeTimers()
+  let requests = 0
+  const main = avoidWindow(() => {
+    if (++requests !== 2) return Promise.resolve()
+    assert.equal(main.listeners.size, 1)
+    return setter.promise
+  })
+  const { Lease } = fixture(async () => main, timers), lease = new Lease(null, false)
+  lease.open({}); await drain()
+  let done = false
+  const prepared = lease.prepareStatusBarVisible().then(value => { done = true; return value })
+  await drain(); main.emit(120); await drain()
+  assert.equal(done, false)
+  setter.resolve()
+  assert.equal(await prepared, true)
+  assert.equal(lease.getCloseSystemAvoidAreaResult(), 'not-required')
+  assert.equal(main.listeners.size, 0); assert.equal(timers.pending.size, 0)
+  await lease.close()
+})
+
+test('prepare snapshot handles missing events and already-visible success', async () => {
+  for (const already of [false, true]) {
+    const main = avoidWindow(), timers = fakeTimers()
+    main.top = already ? 120 : 0
+    const base = main.setSpecificSystemBarEnabled
+    main.setSpecificSystemBarEnabled = async (...args) => {
+      await base(...args)
+      if (main.listeners.size) main.top = 120
+    }
+    const { Lease } = fixture(async () => main, timers), lease = new Lease(null, false)
+    lease.open({}); await drain()
+    assert.equal(await lease.prepareStatusBarVisible(), true)
+    assert.equal(main.listeners.size, 0); assert.equal(timers.pending.size, 0)
+    await lease.close()
+  }
+})
+
+test('prepare ignores zero and unrelated areas; timeout cannot release an in-flight setter or next lease', async () => {
+  const setter = deferred(), timers = fakeTimers()
+  let requests = 0, lookups = 0
+  const main = avoidWindow(() => ++requests === 2 ? setter.promise : Promise.resolve())
+  const { Lease } = fixture(async () => { lookups++; return main }, timers)
+  const lease = new Lease(null, false), next = new Lease()
+  lease.open({}); await drain()
+  let done = false
+  const prepared = lease.prepareStatusBarVisible().then(value => { done = true; return value })
+  next.open({}); await drain()
+  main.emit(0); main.emit(120, 1); timers.fire(); await drain()
+  assert.equal(done, false); assert.equal(lookups, 1)
+  assert.equal(main.listeners.size, 0); assert.equal(timers.pending.size, 0)
+  setter.resolve(); assert.equal(await prepared, false)
+  await drain(); assert.equal(lookups, 2)
+  await next.close(); await lease.close()
+})
+
+test('close suppresses queued prepare and prevents late readiness from succeeding', async () => {
+  const main = avoidWindow(), timers = fakeTimers(), { Lease } = fixture(async () => main, timers)
+  const lease = new Lease(null, false)
+  lease.open({}); await drain()
+  const prepared = lease.prepareStatusBarVisible()
+  await drain()
+  const queued = lease.prepareStatusBarVisible()
+  const closing = lease.close()
+  main.emit(120)
+  assert.equal(await prepared, false); assert.equal(await queued, false)
+  await closing
+  assert.deepEqual(main.calls.filter(call => call[0] === 'visibility').map(call => call[2]), [true, true, false])
+  main.emit(120); await drain()
+  assert.equal(main.calls.filter(call => call[0] === 'visibility').length, 3)
+  assert.equal(main.listeners.size, 0); assert.equal(timers.pending.size, 0)
+})
+
+test('prepare read, subscription and setter failures return false and remain observable', async () => {
+  for (const failure of ['read', 'subscription', 'setter']) {
+    let requests = 0
+    const main = avoidWindow(async () => {
+      if (++requests === 2 && failure === 'setter') throw new Error(failure)
+    })
+    if (failure === 'read') main.getWindowAvoidArea = () => { throw new Error(failure) }
+    if (failure === 'subscription') main.on = () => { throw new Error(failure) }
+    const events = [], timers = fakeTimers(), { Lease } = fixture(async () => main, timers)
+    const lease = new Lease(event => events.push(event), false)
+    lease.open({}); await drain()
+    assert.equal(await lease.prepareStatusBarVisible(), false)
+    assert.equal(events.some(event => event.includes(`prepare_status_visibility_failed ${failure}`)), true)
+    assert.equal(main.listeners.size, 0); assert.equal(timers.pending.size, 0)
+    await lease.close()
+  }
+})

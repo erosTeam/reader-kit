@@ -87,3 +87,91 @@ test('the pre-existing active, session, interaction and topology locks still rej
   const opening = scenario(); opening.surface.state.phase = 'opening'
   assert.equal(opening.input.move('next'), false); assert.deepEqual(opening.moves, [])
 })
+
+function chromeScenario() {
+  const { surface } = scenario()
+  const events = []
+  surface.onChromeVisible = visible => events.push(visible)
+  surface.session.setViewportActive = () => {}
+  surface.session.close = () => {}
+  surface.shareController.update = () => {}
+  surface.shareController.close = () => {}
+  return { surface, events }
+}
+function deferred() {
+  let resolve, reject
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
+}
+async function flushChrome() { await Promise.resolve(); await Promise.resolve() }
+
+test('null chrome gate preserves synchronous hide/show and preview dismissal', () => {
+  const { surface, events } = chromeScenario()
+  surface.previewIndex = 3
+  surface.toggleChrome()
+  assert.equal(surface.chromeVisible, false); assert.equal(surface.previewIndex, -1)
+  surface.toggleChrome()
+  assert.equal(surface.chromeVisible, true)
+  assert.deepEqual(events, [false, true])
+})
+
+test('before-show waits for readiness and coalesces pending taps without notifying an uncommitted show', async () => {
+  const { surface, events } = chromeScenario(); const gate = deferred()
+  let calls = 0, current
+  surface.beforeShowChrome = check => { calls++; current = check; return gate.promise }
+  surface.toggleChrome(); assert.equal(calls, 0)
+  surface.toggleChrome(); surface.toggleChrome(); surface.toggleChrome()
+  assert.equal(calls, 1); assert.equal(current(), true)
+  assert.equal(surface.chromeVisible, false); assert.deepEqual(events, [false])
+  gate.resolve(true); await flushChrome()
+  assert.equal(surface.chromeVisible, true); assert.deepEqual(events, [false, true])
+  assert.equal(surface.chromeShowPending, false)
+})
+
+test('false, rejected and synchronously throwing gates leave chrome hidden and permit retry', async () => {
+  for (const outcome of ['false', 'reject', 'throw']) {
+    const { surface, events } = chromeScenario()
+    surface.toggleChrome()
+    surface.beforeShowChrome = () => {
+      if (outcome === 'throw') throw new Error('host failure')
+      return outcome === 'reject' ? Promise.reject(new Error('host failure')) : Promise.resolve(false)
+    }
+    surface.toggleChrome(); await flushChrome()
+    assert.equal(surface.chromeVisible, false, outcome)
+    assert.equal(surface.chromeShowPending, false); assert.deepEqual(events, [false])
+    surface.beforeShowChrome = () => Promise.resolve(true)
+    surface.toggleChrome(); await flushChrome()
+    assert.equal(surface.chromeVisible, true)
+  }
+})
+
+test('active loss, host closing, disappearance and component close invalidate pending show immediately', async () => {
+  for (const reason of ['inactive', 'closing', 'disappear', 'close']) {
+    const { surface, events } = chromeScenario(); const gate = deferred()
+    let current, closes = 0
+    surface.onClose = () => { closes++; assert.equal(current(), false) }
+    surface.beforeShowChrome = check => { current = check; return gate.promise }
+    surface.toggleChrome(); surface.toggleChrome()
+    if (reason === 'inactive') { surface.active = false; surface.onActiveChanged() }
+    if (reason === 'closing') { surface.closing = true; surface.onClosingChanged() }
+    if (reason === 'disappear') surface.aboutToDisappear()
+    if (reason === 'close') surface.requestClose()
+    assert.equal(current(), false, reason)
+    surface.toggleChrome(); gate.resolve(true); await flushChrome()
+    assert.equal(surface.chromeVisible, false, reason); assert.deepEqual(events, [false])
+    assert.equal(closes, reason === 'close' ? 1 : 0)
+  }
+})
+
+test('a stale completion cannot show chrome or clear a newer pending request after reactivation', async () => {
+  const { surface, events } = chromeScenario(); const first = deferred(), second = deferred()
+  surface.beforeShowChrome = () => first.promise
+  surface.toggleChrome(); surface.toggleChrome()
+  surface.active = false; surface.onActiveChanged(); surface.active = true
+  surface.beforeShowChrome = () => second.promise
+  surface.toggleChrome()
+  first.resolve(true); await flushChrome()
+  assert.equal(surface.chromeVisible, false); assert.equal(surface.chromeShowPending, true)
+  second.resolve(true); await flushChrome()
+  assert.equal(surface.chromeVisible, true); assert.deepEqual(events, [false, true])
+})
