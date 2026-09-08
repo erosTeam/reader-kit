@@ -18,3 +18,4 @@ export { ReaderImageShareTarget, ReaderImageSharePresentation, ReaderImageShareH
 export { ReaderImageSaveChoice, ReaderImageSaveItemStatus, ReaderImageSaveOutcome,
   ReaderImageSaveItem, ReaderImageSaveTarget, ReaderImageSaveItemResult, ReaderImageSaveResult,
   ReaderImageSavePresentation, ReaderImageSaveHost, ReaderImageSaveController } from './src/main/ets/ReaderImageSave'
+export { ReaderAutoReadClock, ReaderAutoReadController } from './src/main/ets/ReaderAutoRead'

@@ -1,7 +1,7 @@
 const test=require('node:test'), assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm')
 const ts=require(process.env.READER_KIT_TYPESCRIPT || '/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/node_modules/typescript')
 const load=require('./load-core.cjs')
-const core={...load('ReaderSession'),...load('ReaderDisplayMap'),...load('ReaderPagedSession'),...load('ReaderImageSave'),...load('ReaderImageShare')}
+const core={...load('ReaderSession'),...load('ReaderDisplayMap'),...load('ReaderPagedSession'),...load('ReaderImageSave'),...load('ReaderImageShare'),...load('ReaderAutoRead')}
 // Execute named real methods only; builders/decorators are not a simulated UI.
 function methods(file,names) {
   const source=fs.readFileSync(path.join(__dirname,'../reader-ui/src/main/ets',file+'.ets'),'utf8')
@@ -59,7 +59,7 @@ test('failed neighbor retains P2 label but has no target; single page saves dire
 function surface(session) {
   const s=new Surface(),toasts=[]
   Object.assign(s,{session,active:true,closing:false,chromeCloseRequested:false,chromeDisposed:false,shareBusy:false,informationBusy:false,saveBusy:false,previewIndex:-1,
-    saveFeedback:null,saveController:new core.ReaderImageSaveController(),shareController:new core.ReaderImageShareController(),
+    saveFeedback:null,saveController:new core.ReaderImageSaveController(),shareController:new core.ReaderImageShareController(),autoReadController:new core.ReaderAutoReadController(()=>{}),
     getUIContext:()=>({getPromptAction:()=>({showToast:v=>toasts.push(v.message)})}),invalidateChromeShow(){},input:null,entryTransition:null})
   s.saveController.subscribe(v=>s.saveBusy=v)
   return {s,toasts}

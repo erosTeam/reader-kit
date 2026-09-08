@@ -1,7 +1,7 @@
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy,
   ReaderInputPort, ReaderMoveIntent, ReaderImageShareHost, ReaderImageShareTarget,
   ReaderImageShareController, ReaderPagedFrame, ReaderImageInformation,
-  ReaderImageSaveHost, ReaderImageSaveController, ReaderImageSaveChoice } from '@reader-kit/core'
+  ReaderImageSaveHost, ReaderImageSaveController, ReaderImageSaveChoice, ReaderAutoReadController } from '@reader-kit/core'
 import { ReaderPagerSurface } from './ReaderPagerSurface'
 import { ReaderContinuousSurface } from './ReaderContinuousSurface'
 import { ReaderChrome } from './ReaderChrome'
@@ -26,6 +26,8 @@ export struct ReaderSurface {
   @Param input: ReaderInputPort | null = null
   @Param imageShare: ReaderImageShareHost | null = null
   @Param imageSave: ReaderImageSaveHost | null = null
+  @Param autoReadAvailable: boolean = false
+  @Param autoReadSeconds: number = 3
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPreview: ReaderEntryPreviewSource | null = null
   @Event onClose: () => void = () => {}
@@ -36,6 +38,10 @@ export struct ReaderSurface {
   @Local private previewIndex: number = -1
   @Local private shareBusy: boolean = false
   @Local private saveBusy: boolean = false
+  @Local private autoReadEnabled: boolean = false
+  private autoReadController: ReaderAutoReadController = new ReaderAutoReadController((): boolean => {
+    return this.externalMove('next')
+  })
   private saveController: ReaderImageSaveController = new ReaderImageSaveController()
   private saveFeedback: ResourceStr | null = null
   @Local private informationBusy: boolean = false
@@ -58,8 +64,9 @@ export struct ReaderSurface {
     this.chromeCloseRequested = false
     this.session.setNeighborPreload(true)
     this.session.setViewportActive(this.active)
-    this.shareController.subscribe((busy: boolean): void => { this.shareBusy = busy })
-    this.saveController.subscribe((busy: boolean): void => { this.saveBusy = busy })
+    this.autoReadController.subscribe((enabled: boolean): void => { this.autoReadEnabled = enabled })
+    this.shareController.subscribe((busy: boolean): void => { this.shareBusy = busy; this.syncAutoRead() })
+    this.saveController.subscribe((busy: boolean): void => { this.saveBusy = busy; this.syncAutoRead() })
     this.session.subscribe((state: ReaderPagedSnapshot): void => {
       if (this.informationBusy && !this.informationPresented && state.navigationRevision !== this.informationNavigation) {
         this.informationEpoch += 1; this.informationBusy = false
@@ -68,6 +75,7 @@ export struct ReaderSurface {
       this.entryTransition?.update(state)
       this.shareController.update(ReaderImageShareTarget.from(state), this.active)
       this.saveController.update(state, this.active)
+      this.syncAutoRead()
     })
     this.inputConnection = this.input?.connect((intent: ReaderMoveIntent): boolean => this.externalMove(intent)) ?? 0
     void this.session.open(this.initialUnit, this.initialIndex)
@@ -75,6 +83,7 @@ export struct ReaderSurface {
 
   aboutToDisappear(): void {
     this.chromeDisposed = true
+    this.autoReadController.close()
     this.invalidateChromeShow()
     this.entryTransition?.cancel()
     this.informationEpoch += 1
@@ -97,6 +106,33 @@ export struct ReaderSurface {
     this.saveController.update(this.session.snapshot(), this.active)
     this.flushSaveFeedback()
     this.session.setViewportActive(this.active)
+    this.syncAutoRead()
+  }
+
+  @Monitor('autoReadAvailable', 'autoReadSeconds', 'shareBusy', 'saveBusy', 'informationBusy', 'previewIndex')
+  onAutoReadInputsChanged(): void { this.syncAutoRead() }
+
+  @Computed
+  private get autoReadEntryBlocked(): boolean { return this.entryTransition?.phase === 'layout' }
+
+  @Monitor('autoReadEntryBlocked')
+  onAutoReadEntryChanged(): void { this.syncAutoRead() }
+
+  private syncAutoRead(): void {
+    if (!this.autoReadAvailable || this.closing || this.chromeCloseRequested || this.chromeDisposed) {
+      this.autoReadController.stop()
+      return
+    }
+    this.autoReadController.update(this.state, this.active,
+      this.touching || this.menuVisible || this.shareBusy || this.saveBusy || this.informationBusy ||
+      this.previewIndex >= 0 || this.inputTopology !== this.state.topologyRevision || this.inputLocked ||
+      this.entryTransition?.phase === 'layout', this.autoReadSeconds)
+  }
+
+  private toggleAutoRead(): void {
+    if (!this.autoReadAvailable || !this.active || this.closing || this.chromeCloseRequested) return
+    this.syncAutoRead()
+    this.autoReadController.setEnabled(!this.autoReadController.isEnabled())
   }
 
   private flushSaveFeedback(): void {
@@ -207,6 +243,7 @@ export struct ReaderSurface {
   @Monitor('closing')
   onClosingChanged(): void {
     if (this.closing) {
+      this.autoReadController.stop()
       this.saveController.close()
       this.invalidateChromeShow()
     }
@@ -214,6 +251,7 @@ export struct ReaderSurface {
 
   private requestClose(): void {
     this.chromeCloseRequested = true
+    this.autoReadController.stop()
     this.saveController.close()
     this.invalidateChromeShow()
     this.onClose()
@@ -277,6 +315,7 @@ export struct ReaderSurface {
     if (topology !== this.state.topologyRevision) return
     this.inputTopology = topology
     this.inputLocked = locked
+    this.syncAutoRead()
   }
 
   build() {
@@ -358,18 +397,21 @@ export struct ReaderSurface {
           thumbnailsVisible: this.thumbnailsVisible,
           shareAvailable: this.imageShare !== null, shareBusy: this.shareBusy,
           saveAvailable: this.imageSave !== null, saveBusy: this.saveBusy,
+          autoReadAvailable: this.autoReadAvailable, autoReadEnabled: this.autoReadEnabled,
+          onAutoRead: (): void => { this.toggleAutoRead() },
           onSave: (choice: ReaderImageSaveChoice): void => { void this.saveImage(choice) },
           informationBusy: this.informationBusy,
           informationPreparing: this.informationBusy && !this.informationPresented,
           informationAvailable: this.session.informationSupported(),
           onInformation: (frame: ReaderPagedFrame): void => { void this.showInformation(frame) },
           onShare: (): void => { void this.shareImage() },
-          onMenuVisible: (visible: boolean): void => { this.menuVisible = visible },
+          onMenuVisible: (visible: boolean): void => { this.menuVisible = visible; this.syncAutoRead() },
           onThumbnails: (): void => { this.thumbnailsVisible = !this.thumbnailsVisible },
           onPolicy: (policy: ReaderDisplayPolicy): void => { this.session.setPolicy(policy) },
           onPreview: (index: number, unit: ReaderUnitKey | null, navigation: number): void => {
             this.previewIndex = this.active && this.chromeVisible && unit !== null &&
               this.state.unit?.key.equals(unit) && this.state.navigationRevision === navigation ? index : -1
+            this.syncAutoRead()
             console.info(`[ReaderSurface] preview_source=${this.previewIndex} reading_source=${this.state.anchor?.sourceIndexHint ?? -1}`)
           },
           onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
@@ -384,6 +426,7 @@ export struct ReaderSurface {
     }.width('100%').height('100%').backgroundColor(Color.Black).id('rkit-reading-surface')
       .onTouch((event: TouchEvent): void => {
         this.touching = event.type !== TouchType.Up && event.type !== TouchType.Cancel
+        this.syncAutoRead()
       })
   }
 }

@@ -16,6 +16,9 @@ export struct ReaderChrome {
   @Param shareBusy: boolean = false
   @Param saveAvailable: boolean = false
   @Param saveBusy: boolean = false
+  @Param autoReadAvailable: boolean = false
+  @Param autoReadEnabled: boolean = false
+  @Event onAutoRead: () => void = () => {}
   @Event onSave: (choice: ReaderImageSaveChoice) => void = () => {}
   @Param informationBusy: boolean = false
   @Param informationPreparing: boolean = false
@@ -300,6 +303,17 @@ export struct ReaderChrome {
                 aboutToAppear: (): void => { this.onMenuVisible(true) },
                 onDisappear: (): void => { this.saveMenuShown = false; this.onMenuVisible(false) },
               })
+          }
+          if (this.autoReadAvailable) {
+            Button({ type: ButtonType.Circle }) {
+              SymbolGlyph($r('sys.symbol.clock')).fontSize(22)
+                .fontColor([this.autoReadEnabled ? this.accent : Color.White])
+            }.width(44).height(44).backgroundColor(Color.Transparent)
+              .enabled(this.active && (this.autoReadEnabled ||
+                this.snapshot.phase === 'ready' && this.snapshot.displayCount > 1))
+              .id('rkit-auto-read')
+              .accessibilityText(this.autoReadEnabled ? $r('app.string.rkit_auto_read_stop') : $r('app.string.rkit_auto_read_start'))
+              .onClick(this.onAutoRead)
           }
           Button({ type: ButtonType.Circle }) {
             SymbolGlyph($r('sys.symbol.rectangle_grid_2x1')).fontSize(22)

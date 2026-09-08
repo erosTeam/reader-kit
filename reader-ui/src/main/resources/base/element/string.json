@@ -1,5 +1,7 @@
 {
   "string": [
+    { "name": "rkit_auto_read_start", "value": "开始自动翻页" },
+    { "name": "rkit_auto_read_stop", "value": "停止自动翻页" },
     { "name": "rkit_save_image", "value": "保存图片" },
     { "name": "rkit_save_both", "value": "保存两页" },
     { "name": "rkit_save_success", "value": "图片已保存" },

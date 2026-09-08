@@ -1,5 +1,7 @@
 {
   "string": [
+    { "name": "rkit_auto_read_start", "value": "自動ページ送りを開始" },
+    { "name": "rkit_auto_read_stop", "value": "自動ページ送りを停止" },
     { "name": "rkit_save_image", "value": "画像を保存" },
     { "name": "rkit_save_both", "value": "両ページを保存" },
     { "name": "rkit_save_success", "value": "画像を保存しました" },

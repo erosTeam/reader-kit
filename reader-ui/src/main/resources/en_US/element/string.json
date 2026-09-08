@@ -1,5 +1,7 @@
 {
   "string": [
+    { "name": "rkit_auto_read_start", "value": "Start automatic page advance" },
+    { "name": "rkit_auto_read_stop", "value": "Stop automatic page advance" },
     { "name": "rkit_save_image", "value": "Save image" },
     { "name": "rkit_save_both", "value": "Save both pages" },
     { "name": "rkit_save_success", "value": "Image saved" },

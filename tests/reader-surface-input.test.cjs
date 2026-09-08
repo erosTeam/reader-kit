@@ -6,7 +6,7 @@ const vm = require('node:vm')
 const ts = require(process.env.READER_KIT_TYPESCRIPT || '/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/node_modules/typescript')
 const load = require('./load-core.cjs')
 const core = { ...load('ReaderContent'), ...load('ReaderSession'), ...load('ReaderDisplayMap'),
-  ...load('ReaderPagedSession'), ...load('ReaderInputPort'), ...load('ReaderImageShare'), ...load('ReaderImageSave') }
+  ...load('ReaderPagedSession'), ...load('ReaderInputPort'), ...load('ReaderImageShare'), ...load('ReaderImageSave'), ...load('ReaderAutoRead') }
 const uiPath = path.join(__dirname, '../reader-ui/src/main/ets')
 function evaluate(source) {
   const exports = {}
@@ -15,7 +15,7 @@ function evaluate(source) {
   }).outputText, {
     exports, require: name => { assert.equal(name, '@reader-kit/core'); return core },
     ObservedV2: value => value, ComponentV2: value => value,
-    Trace() {}, Param() {}, Require() {}, Event() {}, Local() {}, Monitor: () => () => {},
+    Trace() {}, Param() {}, Require() {}, Event() {}, Local() {}, Computed() {}, Monitor: () => () => {},
     console: { info() {} },
   })
   return exports
@@ -103,6 +103,46 @@ function deferred() {
   const promise = new Promise((yes, no) => { resolve = yes; reject = no })
   return { promise, resolve, reject }
 }
+
+test('optional automatic advance consumes actual session readiness and Surface interaction gates', async () => {
+  const surface = new ReaderSurface(), timers = new Map(); let timerId = 0
+  surface.active = true; surface.autoReadAvailable = true; surface.autoReadSeconds = 5
+  surface.autoReadController = new core.ReaderAutoReadController(() => surface.externalMove('next'), {
+    set(callback, delay) { timers.set(++timerId, {callback, delay}); return timerId },
+    clear(id) { timers.delete(id) },
+  })
+  const key = new core.ReaderUnitKey('source', 'work', 'unit')
+  const session = new core.ReaderPagedSession({
+    open: async k => new core.ReaderUnit(k, 'Title', 3),
+    page: async (unit, index) => new core.ReaderPage(unit.key, `p${index}`, index), adjacent: () => null,
+  }, {cancellationMode: 'consumer-only', load: async page => new core.ReaderAsset(`file://${page.sourceIndex}`)})
+  surface.session = session
+  session.subscribe(state => { surface.state = state; surface.syncAutoRead() })
+  await session.open(key); await new Promise(resolve => setImmediate(resolve))
+  surface.reportInputLock(false, surface.state.topologyRevision)
+  surface.toggleAutoRead(); assert.equal(timers.size, 0, 'URL is not displayed')
+  const frame = session.snapshot().frames[0]
+  session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true)
+  assert.equal([...timers.values()][0].delay, 5000)
+  for (const [field, blocked, normal] of [['shareBusy', true, false], ['saveBusy', true, false],
+    ['informationBusy', true, false], ['previewIndex', 0, -1], ['touching', true, false], ['menuVisible', true, false]]) {
+    surface[field] = blocked; surface.syncAutoRead(); assert.equal(timers.size, 0, field)
+    surface[field] = normal; surface.syncAutoRead(); assert.equal([...timers.values()][0].delay, 5000, field)
+  }
+  surface.reportInputLock(true, surface.state.topologyRevision); assert.equal(timers.size, 0)
+  surface.reportInputLock(false, surface.state.topologyRevision); assert.equal(timers.size, 1)
+  surface.entryTransition = new ReaderEntryTransition(1, frame.part)
+  surface.entryTransition.phase = 'layout'; surface.onAutoReadEntryChanged(); assert.equal(timers.size, 0)
+  surface.entryTransition.phase = 'moving'; surface.onAutoReadEntryChanged(); assert.equal(timers.size, 1)
+  surface.entryTransition = null; surface.onAutoReadEntryChanged(); assert.equal(timers.size, 1)
+  surface.active = false; surface.onActiveChanged(); assert.equal(timers.size, 0)
+  surface.active = true; surface.onActiveChanged(); assert.equal(timers.size, 1)
+  const [id, timer] = [...timers][0]; timers.delete(id); timer.callback()
+  assert.equal(session.snapshot().displayIndex, 1); assert.equal(timers.size, 0, 'new current image must be displayed')
+  surface.requestClose(); assert.equal(surface.autoReadController.isEnabled(), false)
+  surface.syncAutoRead(); assert.equal(timers.size, 0)
+  session.close(); surface.autoReadController.close()
+})
 async function flushChrome() { await Promise.resolve(); await Promise.resolve() }
 
 test('null chrome gate preserves synchronous hide/show and preview dismissal', () => {
