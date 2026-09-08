@@ -88,6 +88,10 @@
       "value": "单页"
     },
     {
+      "name": "rkit_shift_spread",
+      "value": "双页向前移动一页"
+    },
+    {
       "name": "rkit_spread",
       "value": "双页"
     },

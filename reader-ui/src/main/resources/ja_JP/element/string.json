@@ -88,6 +88,10 @@
       "value": "単ページ"
     },
     {
+      "name": "rkit_shift_spread",
+      "value": "見開きを1ページずらす"
+    },
+    {
       "name": "rkit_spread",
       "value": "見開き"
     },

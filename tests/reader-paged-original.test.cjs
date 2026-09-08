@@ -54,14 +54,18 @@ test('resolution failure or wrong recipe preserves the displayed default and sel
     assert.equal(f.releases.length, 0); f.s.close()
   }
 })
-test('late prepare is fenced by navigation, background, policy, thumbnail and close', async () => {
-  for (const action of ['next', 'background', 'policy', 'thumbnail', 'close']) {
+test('late prepare is fenced by navigation, spread shift, background, policy, thumbnail and close', async () => {
+  for (const action of ['next', 'shift', 'background', 'policy', 'thumbnail', 'close']) {
     const f = await fixture(); let resolve, cancel, loads = 0
     f.provider.prepareOriginal = async (p, c) => { cancel = c; return new Promise(done => {
       resolve = () => done({ page: p, async load() { loads++; return new ReaderAsset('stale') } })
     }) }
     const pending = f.choose(f.frame(0))
     if (action === 'next') f.s.move('next')
+    if (action === 'shift') {
+      const state = f.s.snapshot()
+      assert.equal(f.s.shiftSpread(f.key, state.topologyRevision, state.navigationRevision), true)
+    }
     if (action === 'background') f.s.setViewportActive(false)
     if (action === 'policy') f.s.setPolicy(new ReaderDisplayPolicy())
     if (action === 'thumbnail') {
@@ -71,6 +75,19 @@ test('late prepare is fenced by navigation, background, policy, thumbnail and cl
     assert.equal(cancel.isCancelled(), true, action); resolve()
     assert.equal(await pending, 'stale', action); assert.equal(loads, 0); f.s.close()
   }
+})
+test('spread re-pair keeps overlapping original plan and reloads it after later eviction', async () => {
+  const f = await fixture()
+  await f.choose(f.frame(1)); await tick(); f.decode()
+  const state = f.s.snapshot(), original = f.frame(1)
+  assert.equal(f.s.shiftSpread(f.key, state.topologyRevision, state.navigationRevision), true)
+  await tick(); f.decode()
+  assert.equal(f.frame(1).slotId, original.slotId)
+  assert.equal(f.frame(1).asset.uri, 'original-1')
+  f.s.move('next'); await tick(); f.s.move('previous'); await tick(); f.decode()
+  assert.equal(f.frame(1).asset.uri, 'original-1')
+  assert.equal(f.frame(1).asset.variant, 'original')
+  assert.deepEqual(f.calls, [1]); f.s.close()
 })
 test('a newer default choice cancels pending original without releasing the current image', async () => {
   const f = await fixture(), old = f.frame(0); let resolve, cancellation

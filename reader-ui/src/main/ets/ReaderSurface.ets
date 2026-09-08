@@ -439,6 +439,9 @@ export struct ReaderSurface {
           onMenuVisible: (visible: boolean): void => { this.menuVisible = visible; this.syncAutoRead() },
           onThumbnails: (): void => { this.thumbnailsVisible = !this.thumbnailsVisible },
           onPolicy: (policy: ReaderDisplayPolicy): void => { this.session.setPolicy(policy) },
+          onShiftSpread: (unit: ReaderUnitKey, topology: number, navigation: number): void => {
+            this.session.shiftSpread(unit, topology, navigation)
+          },
           onPreview: (index: number, unit: ReaderUnitKey | null, navigation: number): void => {
             this.previewIndex = this.active && this.chromeVisible && unit !== null &&
               this.state.unit?.key.equals(unit) && this.state.navigationRevision === navigation ? index : -1

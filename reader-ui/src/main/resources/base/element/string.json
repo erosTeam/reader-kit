@@ -88,6 +88,10 @@
       "value": "单页"
     },
     {
+      "name": "rkit_shift_spread",
+      "value": "Shift spread by one page"
+    },
+    {
       "name": "rkit_spread",
       "value": "双页"
     },

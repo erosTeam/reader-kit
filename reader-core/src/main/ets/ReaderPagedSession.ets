@@ -38,6 +38,7 @@ export class ReaderPagedSnapshot {
   originalPreparing: boolean = false
   displayIndex: number = 0
   displayCount: number = 0
+  canShiftSpread: boolean = false
   selectionId: number = 0
   /** The commanded/restored location is not evidence that its pixels were seen. */
   anchor: ReaderReadingAnchor | null = null
@@ -214,6 +215,7 @@ export class ReaderPagedSession {
     const value = new ReaderPagedSnapshot()
     value.unit = this.state.unit?.copy() ?? null
     value.phase = this.state.phase
+    value.canShiftSpread = this.spreadShiftTarget() !== null
     value.error = this.state.error
     value.policy = this.state.policy.copy()
     value.kind = this.state.kind
@@ -337,6 +339,32 @@ export class ReaderPagedSession {
     const next = this.map.neighbor(this.state.displayIndex, direction)
     if (next === null) return
     this.selectDisplay(next, this.topologyRevision, this.navigationRevision)
+  }
+
+  private spreadShiftTarget(): number | null {
+    if (this.disposed || this.state.phase !== 'ready' || this.state.policy.layout !== 'spread' ||
+      this.state.unit === null || this.map === null) return null
+    const item = this.map.item(this.state.displayIndex)
+    if (item === null || item.parts.length === 0) return null
+    const target = item.parts[0].sourceIndex + 1
+    return target < this.state.unit.pageCount ? target : null
+  }
+
+  /** Advance the logical spread start by one source and re-pair atomically.
+   * This is runtime alignment only, never a chapter command or saved progress.
+   */
+  shiftSpread(unit: ReaderUnitKey, topology: number, navigation: number): boolean {
+    if (!this.active || !this.state.unit?.key.equals(unit) || topology !== this.topologyRevision ||
+      navigation !== this.navigationRevision) return false
+    const target = this.spreadShiftTarget()
+    if (target === null) return false
+    this.cancelOriginalPreparations()
+    this.state.policy = this.state.policy.copy()
+    this.state.policy.firstPageAlone = target % 2 === 1
+    this.navigationRevision += 1
+    this.state.anchor = new ReaderReadingAnchor(unit, this.pages.get(target)?.key ?? null, target)
+    this.rebuild()
+    return true
   }
 
   /** A source-page command, not a display index or an observed/saved reading position.

@@ -32,6 +32,7 @@ export struct ReaderChrome {
   @Event onMenuVisible: (visible: boolean) => void = () => {}
   @Event onClose: () => void = () => {}
   @Event onPolicy: (policy: ReaderDisplayPolicy) => void = () => {}
+  @Event onShiftSpread: (unit: ReaderUnitKey, topology: number, navigation: number) => void = () => {}
   @Event onSeek: (index: number, unit: ReaderUnitKey, navigation: number) => void = () => {}
   @Event onPreview: (index: number, unit: ReaderUnitKey | null, navigation: number) => void = () => {}
   @Local private preview: number = -1
@@ -406,6 +407,18 @@ export struct ReaderChrome {
             .id('rkit-toggle-thumbnails').accessibilityText($r('app.string.rkit_thumbnail'))
             .onClick(this.onThumbnails)
           Blank()
+          if (this.snapshot.policy.layout === 'spread') {
+            Button({ type: ButtonType.Circle }) {
+              SymbolGlyph($r('sys.symbol.transfer')).fontSize(22)
+                .fontColor([this.snapshot.canShiftSpread ? Color.White : $r('sys.color.font_tertiary')])
+            }.width(44).height(44).backgroundColor(Color.Transparent)
+              .enabled(this.active && this.snapshot.canShiftSpread)
+              .id('rkit-shift-spread').accessibilityText($r('app.string.rkit_shift_spread'))
+              .onClick((): void => {
+                if (this.snapshot.unit !== null) this.onShiftSpread(this.snapshot.unit.key.copy(),
+                  this.snapshot.topologyRevision, this.snapshot.navigationRevision)
+              })
+          }
           Button({ type: ButtonType.Circle }) {
             SymbolGlyph($r('sys.symbol.book')).fontSize(22)
               .fontColor([this.snapshot.policy.layout === 'spread' ? this.accent : Color.White])
