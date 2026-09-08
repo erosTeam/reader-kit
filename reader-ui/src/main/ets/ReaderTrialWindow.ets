@@ -3,7 +3,8 @@ import { window } from '@kit.ArkUI'
 
 /** Optional host-owned window lease, separate from the reader surface/session.
  * Restore exactly the pre-trial colors, including if close races window lookup.
- * It does not change status visibility, orientation or stored preferences.
+ * Status visibility is opt-in, with its restoration value supplied by the host.
+ * It never changes orientation or stored preferences.
  */
 export class ReaderTrialWindow {
   private static operations: Promise<void> = Promise.resolve()
@@ -14,9 +15,29 @@ export class ReaderTrialWindow {
   private closing: Promise<void> | null = null
 
   private observer: ((event: string) => void) | null = null
+  private restoreStatusVisible: boolean | null
+  private desiredStatusVisible: boolean = true
 
-  constructor(observer: ((event: string) => void) | null = null) {
+  constructor(observer: ((event: string) => void) | null = null, restoreStatusVisible: boolean | null = null) {
     this.observer = observer
+    this.restoreStatusVisible = restoreStatusVisible
+  }
+
+  private async writeStatusVisible(visible: boolean): Promise<void> {
+    if (this.mainWindow === null) return
+    this.observe(`status_visibility_requested visible=${visible}`)
+    await this.mainWindow.setSpecificSystemBarEnabled('status', visible, false)
+    this.observe(`status_visibility_succeeded visible=${visible}`)
+  }
+
+  setStatusBarVisible(visible: boolean): void {
+    if (this.closed) return
+    this.desiredStatusVisible = visible
+    if (this.restoreStatusVisible === null || !this.started) return
+    ReaderTrialWindow.enqueue(async (): Promise<void> => {
+      if (this.closed || this.mainWindow === null) return
+      await this.writeStatusVisible(this.desiredStatusVisible)
+    }, 'status_visibility_failed')
   }
 
   private observe(event: string): void {
@@ -55,6 +76,9 @@ export class ReaderTrialWindow {
       this.observe(`saved ${JSON.stringify(this.previous)}`)
       await mainWindow.setWindowSystemBarProperties({ statusBarContentColor: '#FFFFFFFF' })
       console.info('[ReaderTrialWindow] status_content=light')
+      if (!this.closed && this.restoreStatusVisible !== null) {
+        await this.writeStatusVisible(this.desiredStatusVisible)
+      }
     }, 'open_failed')
   }
 
@@ -63,16 +87,25 @@ export class ReaderTrialWindow {
     this.closed = true
     this.closing = ReaderTrialWindow.enqueue(async (): Promise<void> => {
       if (this.mainWindow !== null && this.previous !== null) {
+        let restoreError: Error | null = null
         this.observe(`restore_called ${JSON.stringify(this.previous)}`)
         try {
           await this.mainWindow.setWindowSystemBarProperties(this.previous)
+          this.observe('restore_succeeded')
+          this.observeProperties('restore_readback')
+          console.info('[ReaderTrialWindow] status_properties_restored')
         } catch (error) {
           this.observe(`restore_failed ${(error as Error).message}`)
-          throw error as Error
+          restoreError = error as Error
         }
-        this.observe('restore_succeeded')
-        this.observeProperties('restore_readback')
-        console.info('[ReaderTrialWindow] status_properties_restored')
+        if (this.restoreStatusVisible !== null) {
+          try { await this.writeStatusVisible(this.restoreStatusVisible) } catch (error) {
+            this.observe(`status_visibility_restore_failed ${(error as Error).message}`)
+            if (restoreError === null) restoreError = error as Error
+            else restoreError = new Error(`${restoreError.message}; status_visibility_restore_failed ${(error as Error).message}`)
+          }
+        }
+        if (restoreError !== null) throw restoreError
       }
     }, 'restore_failed')
     return this.closing

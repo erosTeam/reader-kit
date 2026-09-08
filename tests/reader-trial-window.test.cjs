@@ -29,7 +29,7 @@ function fixture(getLastWindow) {
   return { Lease: exports.ReaderTrialWindow, logs }
 }
 
-function mainWindow(write = async () => {}) {
+function mainWindow(write = async () => {}, visibility = async () => {}) {
   const calls = []
   let properties = { statusBarContentColor: '#FF112233', navigationBarContentColor: '#FF445566' }
   const original = { ...properties }
@@ -40,6 +40,10 @@ function mainWindow(write = async () => {}) {
       calls.push(['write', { ...value }])
       await write(value)
       properties = { ...properties, ...value }
+    },
+    async setSpecificSystemBarEnabled(name, visible, animated) {
+      calls.push(['visibility', name, visible, animated])
+      await visibility(visible)
     },
   }
 }
@@ -188,4 +192,82 @@ test('throwing diagnostic observer does not alter restore completion', async () 
   const lease = new Lease(() => { throw new Error('observer failure') })
   lease.open({}); await drain(); await lease.close()
   assert.deepEqual(main.getWindowSystemBarProperties(), main.original)
+})
+
+test('default lease ignores visibility requests and stays colors-only', async () => {
+  const main = mainWindow(), { Lease } = fixture(async () => main)
+  const lease = new Lease()
+  lease.setStatusBarVisible(false)
+  lease.open({}); await drain()
+  lease.setStatusBarVisible(true); await drain()
+  await lease.close()
+  assert.equal(main.calls.some(call => call[0] === 'visibility'), false)
+})
+
+test('opt-in applies pre-open desired visibility and restores the explicit host value', async () => {
+  const main = mainWindow(), events = [], { Lease } = fixture(async () => main)
+  const lease = new Lease(event => events.push(event), true)
+  lease.setStatusBarVisible(false)
+  assert.equal(main.calls.length, 0)
+  lease.open({}); await drain()
+  lease.setStatusBarVisible(true); await drain()
+  lease.setStatusBarVisible(false); await drain()
+  await lease.close()
+  lease.setStatusBarVisible(false); await drain()
+  assert.deepEqual(main.calls.filter(call => call[0] === 'visibility'), [
+    ['visibility', 'status', false, false], ['visibility', 'status', true, false],
+    ['visibility', 'status', false, false], ['visibility', 'status', true, false],
+  ])
+  assert.equal(events.filter(event => event.includes('status_visibility_requested')).length, 4)
+  assert.equal(events.filter(event => event.includes('status_visibility_succeeded')).length, 4)
+})
+
+test('opt-in defaults visible and supports restoring hidden', async () => {
+  const main = mainWindow(), { Lease } = fixture(async () => main)
+  const lease = new Lease(null, false)
+  lease.open({}); await drain(); await lease.close()
+  assert.deepEqual(main.calls.filter(call => call[0] === 'visibility'), [
+    ['visibility', 'status', true, false], ['visibility', 'status', false, false],
+  ])
+})
+
+test('close during color open skips desired visibility and still restores the host value', async () => {
+  const writing = deferred()
+  const main = mainWindow(value => value.statusBarContentColor === '#FFFFFFFF' ? writing.promise : Promise.resolve())
+  const { Lease } = fixture(async () => main), lease = new Lease(null, true)
+  lease.open({}); await drain()
+  lease.setStatusBarVisible(false)
+  const closing = lease.close()
+  writing.resolve(); await closing
+  assert.deepEqual(main.calls.map(call => call[0]), ['read', 'write', 'write', 'visibility'])
+  assert.deepEqual(main.calls.at(-1), ['visibility', 'status', true, false])
+})
+
+test('close waits for in-flight visibility and suppresses queued updates before restoration', async () => {
+  const writing = deferred()
+  let requests = 0
+  const main = mainWindow(undefined, () => ++requests === 1 ? writing.promise : Promise.resolve())
+  const { Lease } = fixture(async () => main), lease = new Lease(null, false)
+  lease.open({}); await drain()
+  lease.setStatusBarVisible(true)
+  let closed = false
+  const closing = lease.close().then(() => { closed = true })
+  await drain(); assert.equal(closed, false)
+  writing.resolve(); await closing
+  assert.deepEqual(main.calls.filter(call => call[0] === 'visibility'), [
+    ['visibility', 'status', true, false], ['visibility', 'status', false, false],
+  ])
+})
+
+test('color restoration failure still attempts visibility; both failures remain observable', async () => {
+  let writes = 0, requests = 0
+  const main = mainWindow(async () => { if (++writes === 2) throw new Error('color-restore-rejected') },
+    async () => { if (++requests === 2) throw new Error('visibility-restore-rejected') })
+  const events = [], { Lease, logs } = fixture(async () => main)
+  const lease = new Lease(event => events.push(event), false)
+  lease.open({}); await drain(); await lease.close()
+  assert.deepEqual(main.calls.at(-1), ['visibility', 'status', false, false])
+  assert.equal(events.some(event => event.includes('status_visibility_restore_failed visibility-restore-rejected')), true)
+  assert.equal(logs.some(log => log.includes('color-restore-rejected; status_visibility_restore_failed visibility-restore-rejected')), true)
+  assert.equal(events.filter(event => event.includes('status_visibility_succeeded')).length, 1)
 })
