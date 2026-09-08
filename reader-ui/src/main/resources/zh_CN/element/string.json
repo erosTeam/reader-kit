@@ -122,6 +122,8 @@
     {
       "name": "rkit_cover_off",
       "value": "封面：双"
-    }
+    },
+    { "name": "rkit_crop_on", "value": "开启裁边" },
+    { "name": "rkit_crop_off", "value": "关闭裁边" }
   ]
 }

@@ -49,6 +49,7 @@ export class ReaderPagedSnapshot {
   policy: ReaderDisplayPolicy = new ReaderDisplayPolicy()
   kind: ReaderAssetKind = 'original'
   originalPreparing: boolean = false
+  cropEnabled: boolean = false
   displayIndex: number = 0
   displayCount: number = 0
   canShiftSpread: boolean = false
@@ -81,6 +82,7 @@ export class ReaderPagedSnapshot {
     value.policy = this.policy.copy()
     value.kind = this.kind
     value.originalPreparing = this.originalPreparing
+    value.cropEnabled = this.cropEnabled
     value.displayIndex = this.displayKeys.indexOf(key)
     value.displayCount = this.displayCount
     value.selectionId = this.selectionId
@@ -274,6 +276,7 @@ export class ReaderPagedSession {
     value.policy = this.state.policy.copy()
     value.kind = this.state.kind
     value.originalPreparing = this.originalPreparations.size > 0
+    value.cropEnabled = this.cropEnabled
     value.displayIndex = this.state.displayIndex
     value.displayCount = this.map?.count() ?? 0
     value.selectionId = this.state.selectionId

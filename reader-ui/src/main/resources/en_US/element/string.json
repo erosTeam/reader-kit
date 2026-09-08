@@ -122,6 +122,8 @@
     {
       "name": "rkit_cover_off",
       "value": "Cover: pair"
-    }
+    },
+    { "name": "rkit_crop_on", "value": "Enable border crop" },
+    { "name": "rkit_crop_off", "value": "Disable border crop" }
   ]
 }

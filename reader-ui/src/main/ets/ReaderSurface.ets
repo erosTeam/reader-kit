@@ -29,6 +29,7 @@ export struct ReaderSurface {
   @Param autoReadAvailable: boolean = false
   @Param autoReadSeconds: number = 3
   @Param cropBorders: boolean = false
+  @Param cropAvailable: boolean = false
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPreview: ReaderEntryPreviewSource | null = null
   @Event onClose: () => void = () => {}
@@ -427,6 +428,12 @@ export struct ReaderSurface {
           shareAvailable: this.imageShare !== null, shareBusy: this.shareBusy,
           saveAvailable: this.imageSave !== null, saveBusy: this.saveBusy,
           autoReadAvailable: this.autoReadAvailable, autoReadEnabled: this.autoReadEnabled,
+          cropAvailable: this.cropAvailable,
+          onCrop: (): void => {
+            if (this.cropAvailable && this.active && !this.closing && this.state.phase === 'ready') {
+              this.session.setCropEnabled(!this.state.cropEnabled)
+            }
+          },
           originalAvailable: this.session.originalSelectionSupported(),
           onOriginal: (frames: ReaderPagedFrame[], unit: ReaderUnitKey, navigation: number, enabled: boolean): void => {
             void this.selectOriginal(frames, unit, navigation, enabled)

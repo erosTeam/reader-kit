@@ -18,6 +18,8 @@ export struct ReaderChrome {
   @Param saveAvailable: boolean = false
   @Param saveBusy: boolean = false
   @Param autoReadAvailable: boolean = false
+  @Param cropAvailable: boolean = false
+  @Event onCrop: () => void = () => {}
   @Param originalAvailable: boolean = false
   @Event onOriginal: (frames: ReaderPagedFrame[], unit: ReaderUnitKey, navigation: number, enabled: boolean) => void = () => {}
   @Param autoReadEnabled: boolean = false
@@ -247,6 +249,11 @@ export struct ReaderChrome {
       MenuItem({ content: $r('app.string.rkit_single') }).onClick((): void => { this.setLayout('single') })
       MenuItem({ content: $r('app.string.rkit_spread') }).onClick((): void => { this.setLayout('spread') })
       MenuItem({ content: $r('app.string.rkit_continuous') }).onClick((): void => { this.setLayout('continuous') })
+      if (this.cropAvailable) {
+        MenuItem({ content: this.snapshot.cropEnabled ? $r('app.string.rkit_crop_off') : $r('app.string.rkit_crop_on') })
+          .id('rkit-crop-toggle').enabled(this.active && this.snapshot.phase === 'ready')
+          .onClick((): void => { this.onCrop() })
+      }
       MenuItem({ content: this.snapshot.policy.direction === 'ltr' ? $r('app.string.rkit_rtl') : $r('app.string.rkit_ltr') })
         .enabled(this.snapshot.policy.layout !== 'continuous')
         .onClick((): void => {
