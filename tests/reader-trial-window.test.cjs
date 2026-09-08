@@ -53,6 +53,79 @@ function mainWindow(write = async () => {}, visibility = async () => {}) {
 // Drain promise continuations without sleeping or modelling any platform/render timing.
 const drain = () => new Promise(resolve => setImmediate(resolve))
 
+test('opt-in close orders real area, unique host callback and colors while excluding the next lease', async () => {
+  const host = deferred(), color = deferred(), main = avoidWindow(), timers = fakeTimers()
+  let lookups = 0, callbacks = 0, writes = 0
+  const base = main.setWindowSystemBarProperties
+  main.setWindowSystemBarProperties = async value => {
+    if (++writes === 2) await color.promise
+    await base(value)
+  }
+  const { Lease } = fixture(async () => { lookups++; return main }, timers)
+  const lease = new Lease(null, true), next = new Lease()
+  lease.open({}); await drain()
+  const closing = lease.close(async () => { callbacks++; return host.promise })
+  assert.equal(lease.close(async () => { throw new Error('duplicate callback') }), closing)
+  next.open({}); await drain()
+  assert.equal(callbacks, 0); assert.equal(writes, 1)
+  main.emit(120); await drain()
+  assert.equal(callbacks, 1); assert.equal(writes, 1); assert.equal(lookups, 1)
+  host.resolve(true); await drain()
+  assert.equal(writes, 2); assert.equal(lookups, 1)
+  color.resolve(); await closing; await drain()
+  assert.equal(lookups, 2)
+  assert.equal(lease.getCloseSystemAvoidAreaResult(), 'ready')
+  assert.deepEqual(main.calls[4], ['write', main.original])
+  await next.close()
+})
+
+test('callback false or throw remains failed after colors restore successfully', async () => {
+  for (const throws of [false, true]) {
+    const main = mainWindow(), events = [], { Lease } = fixture(async () => main)
+    const lease = new Lease(event => events.push(event), true)
+    lease.open({}); await drain()
+    await lease.close(async () => { if (throws) throw new Error('host-failed'); return false })
+    assert.equal(lease.getCloseSystemAvoidAreaResult(), 'failed')
+    assert.deepEqual(main.calls.filter(call => call[0] === 'write').at(-1), ['write', main.original])
+    assert.equal(events.some(event => event.includes('close_before_restore_colors_failed')), true)
+    assert.equal(events.some(event => event.includes('restore_succeeded')), true)
+  }
+})
+
+test('area failure skips host callback but still restores colors and reports failed', async () => {
+  const main = avoidWindow(), timers = fakeTimers(), { Lease } = fixture(async () => main, timers)
+  const lease = new Lease(null, true)
+  lease.open({}); await drain()
+  let callbacks = 0
+  const closing = lease.close(async () => { callbacks++; return true })
+  await drain(); timers.fire(); await closing
+  assert.equal(callbacks, 0)
+  assert.equal(lease.getCloseSystemAvoidAreaResult(), 'failed')
+  assert.deepEqual(main.calls.at(-1), ['write', main.original])
+})
+
+test('callback and color failures are both retained in diagnostics', async () => {
+  let writes = 0
+  const main = mainWindow(async () => { if (++writes === 2) throw new Error('color-failed') })
+  const { Lease, logs } = fixture(async () => main), lease = new Lease(null, true)
+  lease.open({}); await drain()
+  await lease.close(async () => { throw new Error('host-failed') })
+  assert.equal(lease.getCloseSystemAvoidAreaResult(), 'failed')
+  assert.equal(logs.some(log => log.includes('host-failed; restore_failed color-failed')), true)
+})
+
+test('non-visible restore modes ignore callbacks and retain legacy order', async () => {
+  for (const visible of [null, false]) {
+    const main = mainWindow(), { Lease } = fixture(async () => main), lease = new Lease(null, visible)
+    lease.open({}); await drain()
+    await lease.close(async () => { throw new Error('must not call') })
+    assert.equal(lease.getCloseSystemAvoidAreaResult(), 'not-required')
+    const calls = main.calls.map(call => call[0])
+    assert.deepEqual(calls, visible === null ? ['read', 'write', 'write'] :
+      ['read', 'write', 'visibility', 'write', 'visibility'])
+  }
+})
+
 test('close before window lookup returns skips colors and preserves one-shot behavior', async () => {
   const lookup = deferred(), main = mainWindow()
   let lookups = 0

@@ -184,13 +184,30 @@ export class ReaderTrialWindow {
     }, 'open_failed')
   }
 
-  close(): Promise<void> {
+  /** The optional bounded host-layout callback must not await this window queue.
+   * Only restore-visible leases use it; other leases retain their legacy order.
+   */
+  close(beforeRestoreColors: (() => Promise<boolean>) | null = null): Promise<void> {
     if (this.closing !== null) return this.closing
     this.closed = true
     this.closeSystemAvoidAreaResult = this.restoreStatusVisible === true ? 'pending' : 'not-required'
     this.closing = ReaderTrialWindow.enqueue(async (): Promise<void> => {
       if (this.mainWindow !== null && this.previous !== null) {
         let restoreError: Error | null = null
+        const layoutBeforeColors = this.restoreStatusVisible === true && beforeRestoreColors !== null
+        if (layoutBeforeColors) {
+          try {
+            await this.restoreVisibleStatus()
+            this.observe('close_before_restore_colors_requested')
+            const layoutReady = await beforeRestoreColors!()
+            this.observe(`close_before_restore_colors_completed ready=${layoutReady}`)
+            if (!layoutReady) throw new Error('host_layout_not_ready')
+          } catch (error) {
+            this.closeSystemAvoidAreaResult = 'failed'
+            this.observe(`close_before_restore_colors_failed ${(error as Error).message}`)
+            restoreError = error as Error
+          }
+        }
         this.observe(`restore_called ${JSON.stringify(this.previous)}`)
         try {
           await this.mainWindow.setWindowSystemBarProperties(this.previous)
@@ -199,9 +216,10 @@ export class ReaderTrialWindow {
           console.info('[ReaderTrialWindow] status_properties_restored')
         } catch (error) {
           this.observe(`restore_failed ${(error as Error).message}`)
-          restoreError = error as Error
+          restoreError = restoreError === null ? error as Error :
+            new Error(`${restoreError.message}; restore_failed ${(error as Error).message}`)
         }
-        if (this.restoreStatusVisible !== null) {
+        if (!layoutBeforeColors && this.restoreStatusVisible !== null) {
           try {
             if (this.restoreStatusVisible) await this.restoreVisibleStatus()
             else await this.writeStatusVisible(false)
