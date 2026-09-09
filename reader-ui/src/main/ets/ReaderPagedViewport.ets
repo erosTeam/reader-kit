@@ -439,6 +439,7 @@ export struct ReaderPagedImage {
   @Require @Param selectionId: number
   @Require @Param renderedFragment: ReaderFragment
   @Require @Param active: boolean
+  @Param thumbnailCover: boolean = false
   @Param topologyRevision: number = 0
   @Param navigationRevision: number = 0
   @Param entryTransition: ReaderEntryTransition | null = null
@@ -637,7 +638,9 @@ export struct ReaderPagedImage {
   private spriteScale(): number {
     const thumbnail = this.frame.asset.page?.thumbnail
     if (thumbnail === undefined || thumbnail.width <= 0 || thumbnail.height <= 0) return 1
-    return Math.min(this.viewportWidth / thumbnail.width, this.viewportHeight / thumbnail.height)
+    return this.thumbnailCover && this.frame.asset.kind === 'thumbnail'
+      ? Math.max(this.viewportWidth / thumbnail.width, this.viewportHeight / thumbnail.height)
+      : Math.min(this.viewportWidth / thumbnail.width, this.viewportHeight / thumbnail.height)
   }
 
   build() {
@@ -684,7 +687,7 @@ export struct ReaderPagedImage {
       } else if (this.frame.asset.uri.length > 0) {
         Image(this.frame.asset.uri)
           .width('100%').height('100%')
-          .objectFit(ImageFit.Contain)
+          .objectFit(this.thumbnailCover && this.frame.asset.kind === 'thumbnail' ? ImageFit.Cover : ImageFit.Contain)
           .id(this.entryLeafId())
           .onAreaChange((): void => {
             this.entryLeafLaidOut = true
@@ -698,6 +701,7 @@ export struct ReaderPagedImage {
     }
     .width('100%').height('100%')
     .id(this.entryContentId())
+    .clip(this.thumbnailCover && this.frame.asset.kind === 'thumbnail')
     .opacity(this.entryTransition?.opacity(this.frame.part) ?? 1)
     .onVisibleAreaChange([0, 1], (_expanding: boolean, ratio: number): void => {
       this.fullyVisible = ratio >= 1

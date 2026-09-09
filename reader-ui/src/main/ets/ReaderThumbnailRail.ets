@@ -107,7 +107,9 @@ struct ReaderThumbnailRailTile {
 
   private widthValue(): number {
     const thumb = this.frame?.asset.page?.thumbnail
-    return thumb !== undefined && thumb.width > 0 && thumb.height > 0 ? 118 * thumb.width / thumb.height : 118 * 0.7
+    // Match the production reader's bounded rail slots, without changing source metadata.
+    const aspect = thumb !== undefined && thumb.width > 0 && thumb.height > 0 ? thumb.width / thumb.height : 0.7
+    return 118 * Math.min(1.4, Math.max(0.45, aspect))
   }
   private imageFrame(): ReaderPagedFrame {
     const frame = this.frame!
@@ -133,6 +135,7 @@ struct ReaderThumbnailRailTile {
           ForEach([this.imageIdentity()], (_identity: string) => {
             ReaderPagedImage({ frame: this.imageFrame(), slotId: this.frame!.slotId,
               assetRequestId: this.frame!.asset.assetRequestId, selectionId: 0, renderedFragment: 'whole', active: false,
+              thumbnailCover: true,
               onPresented: this.onPresented,
               onFailed: (_selection: number, slot: number, request: number, _fragment: ReaderFragment): void => {
                 this.onPresented(slot, request, false, 0, 0)
