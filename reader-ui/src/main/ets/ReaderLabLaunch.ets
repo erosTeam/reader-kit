@@ -19,6 +19,9 @@ export class ReaderLabRequest {
   thumbnailEntry: boolean = false
   entryLayout: string = 'single'
   entryDirection: string = 'ltr'
+  /** Missing debug overrides inherit the host's read-only initial policy. */
+  entryLayoutOverride: string | null = null
+  entryDirectionOverride: string | null = null
   entryProbe: string = ''
 
   constructor(work: string, unit: string, pageIndex: number, failurePage: number = -1,
@@ -99,6 +102,10 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
     (want.parameters['readerLabThumbnailEntry'] === true || want.parameters['readerLabThumbnailEntry'] === 'true')
   request.entryLayout = want.parameters['readerLabEntryLayout'] === 'spread' ? 'spread' : 'single'
   request.entryDirection = want.parameters['readerLabEntryDirection'] === 'rtl' ? 'rtl' : 'ltr'
+  const entryLayout = want.parameters['readerLabEntryLayout']
+  request.entryLayoutOverride = entryLayout === 'single' ? 'single' : entryLayout === 'spread' ? 'spread' : null
+  const entryDirection = want.parameters['readerLabEntryDirection']
+  request.entryDirectionOverride = entryDirection === 'ltr' ? 'ltr' : entryDirection === 'rtl' ? 'rtl' : null
   request.entryProbe = request.thumbnailEntry && want.parameters['readerLabEntryProbe'] === 'delay-once' ? 'delay-once' : ''
   connectReaderLabLaunch().publish(request)
 }

@@ -23,6 +23,36 @@ function fixture() {
   return exportsUI
 }
 
+test('absent or invalid entry overrides preserve legacy defaults without forcing host policy', () => {
+  const api = fixture()
+  const direct = new api.ReaderLabRequest('work', 'unit', 2)
+  assert.equal(direct.entryLayoutOverride, null)
+  assert.equal(direct.entryDirectionOverride, null)
+  for (const input of [undefined, null, '', true, 0, 'continuous', 'RTL']) {
+    api.captureReaderLabWant({ parameters: { readerLabWork: 'work', readerLabPage: 2,
+      readerLabEntryLayout: input, readerLabEntryDirection: input } }, true)
+    const request = api.connectReaderLabLaunch().consume()
+    assert.equal(request.entryLayoutOverride, null)
+    assert.equal(request.entryDirectionOverride, null)
+    assert.equal(request.entryLayout, 'single')
+    assert.equal(request.entryDirection, 'ltr')
+    assert.equal(request.pageIndex, 2)
+  }
+})
+
+test('entry overrides are independent and preserve explicit single and ltr', () => {
+  const api = fixture()
+  for (const layout of ['single', 'spread', undefined]) for (const direction of ['ltr', 'rtl', undefined]) {
+    api.captureReaderLabWant({ parameters: { readerLabWork: 'work',
+      readerLabEntryLayout: layout, readerLabEntryDirection: direction } }, true)
+    const request = api.connectReaderLabLaunch().consume()
+    assert.equal(request.entryLayoutOverride, layout ?? null)
+    assert.equal(request.entryDirectionOverride, direction ?? null)
+    assert.equal(request.entryLayout, layout ?? 'single')
+    assert.equal(request.entryDirection, direction ?? 'ltr')
+  }
+})
+
 test('volume default preserves legacy false and leaves override unspecified', () => {
   const api = fixture()
   const direct = new api.ReaderLabRequest('work', 'unit', 0)
