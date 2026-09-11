@@ -18,8 +18,12 @@ Device197 observed downloaded 11-page to 19-page switching with the rail open,
 last-page selection in both units, and return from a catalog-ready 55-page unit
 whose local body images are unavailable. This last case is asset failure, not
 catalog preparation failure. Preparation-failure retention and in-flight cancel
-races are source-reviewed only; tablet acceptance is still pending. The shared
-reader remains optional and is not ready for default replacement.
+races are source-reviewed only. Device103 (MLR-AL00) normally imported a controlled
+five-page CBZ and retained page 2 and its rail selection through portrait to
+landscape to portrait. Its normal folder import failed, so tablet cross-chapter
+navigation is not accepted. Both trials left progress unchanged; the new test
+comic was explicitly authorized and remains available. The shared reader remains
+optional and is not ready for default replacement.
 
 Shared HarmonyOS reader integration for NextE, NextN and Koma.
 
