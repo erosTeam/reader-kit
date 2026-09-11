@@ -30,6 +30,9 @@ export struct ReaderSurface {
   @Param autoReadSeconds: number = 3
   @Param cropBorders: boolean = false
   @Param cropAvailable: boolean = false
+  @Param chapterNavigationAvailable: boolean = false
+  @Param chapterNavigationBusy: boolean = false
+  @Event onChapter: (direction: 'previous' | 'next', source: ReaderUnitKey) => void = () => {}
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPreview: ReaderEntryPreviewSource | null = null
   @Event onClose: () => void = () => {}
@@ -287,6 +290,21 @@ export struct ReaderSurface {
     this.onClose()
   }
 
+  private thumbnailUnitIdentity(): string {
+    const unit = this.state.unit
+    return JSON.stringify([unit?.key.scope, unit?.key.work, unit?.key.unit, unit?.pageCount])
+  }
+
+  private requestChapter(direction: 'previous' | 'next', source: ReaderUnitKey): void {
+    const current = this.session.snapshot()
+    if (!this.chapterNavigationAvailable || this.chapterNavigationBusy || !this.active || this.closing ||
+      this.chromeDisposed || this.chromeCloseRequested || current.phase !== 'ready' ||
+      current.unit?.key.equals(source) !== true) return
+    this.previewIndex = -1
+    this.autoReadController.stop()
+    this.onChapter(direction, source.copy())
+  }
+
   private commitChromeVisible(visible: boolean): void {
     this.chromeVisible = visible
     if (!this.chromeVisible) this.previewIndex = -1
@@ -413,18 +431,25 @@ export struct ReaderSurface {
       if (this.chromeVisible) {
         if (this.thumbnailsVisible && this.active && this.state.phase === 'ready') {
           Column() {
-            ReaderThumbnailRail({ session: this.session, snapshot: this.state, accent: this.accent,
-              previewIndex: this.previewIndex,
-              onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
-                this.session.seekSource(index, unit, navigation)
-              },
-            })
+            ForEach([this.thumbnailUnitIdentity()], (_identity: string) => {
+              ReaderThumbnailRail({ session: this.session, snapshot: this.state, accent: this.accent,
+                previewIndex: this.previewIndex,
+                onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
+                  this.session.seekSource(index, unit, navigation)
+                },
+              })
+            }, (identity: string): string => identity)
           }.width('100%').height(156).padding({ top: 8, bottom: 8 })
             .margin({ bottom: this.bottomInset + 112 }).backgroundColor('#CC000000').clip(true)
         }
         ReaderChrome({ snapshot: this.state, active: this.active, topInset: this.topInset,
           bottomInset: this.bottomInset, accent: this.accent, onClose: (): void => this.requestClose(),
           thumbnailsVisible: this.thumbnailsVisible,
+          chapterNavigationAvailable: this.chapterNavigationAvailable,
+          chapterNavigationBusy: this.chapterNavigationBusy,
+          onChapter: (direction: 'previous' | 'next', source: ReaderUnitKey): void => {
+            this.requestChapter(direction, source)
+          },
           shareAvailable: this.imageShare !== null, shareBusy: this.shareBusy,
           saveAvailable: this.imageSave !== null, saveBusy: this.saveBusy,
           autoReadAvailable: this.autoReadAvailable, autoReadEnabled: this.autoReadEnabled,

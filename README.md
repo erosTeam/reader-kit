@@ -1,5 +1,26 @@
 # Reader Kit (experimental)
 
+## Optional host-owned chapter handoff (2026-09-12)
+
+The full reading surface now accepts optional chapter-navigation capability,
+busy state and source-unit-bound intentions. Existing snapshot adjacency flags
+control the previous/next entries in More; hosts without this capability keep
+their current menu. Chapter navigation does not depend on a decoded information
+frame, so a failed body image does not trap a chapter-capable reader.
+
+Koma prepares its existing local catalog before opening the target unit. A failed
+preparation does not change the live session; close/background invalidates the
+pending host request. No production chapter hydration, progress or preference
+writes are introduced. The auxiliary rail alone is keyed by scope/work/unit and
+page count; ordinary same-unit navigation keeps its existing instance.
+
+Device197 observed downloaded 11-page to 19-page switching with the rail open,
+last-page selection in both units, and return from a catalog-ready 55-page unit
+whose local body images are unavailable. This last case is asset failure, not
+catalog preparation failure. Preparation-failure retention and in-flight cancel
+races are source-reviewed only; tablet acceptance is still pending. The shared
+reader remains optional and is not ready for default replacement.
+
 Shared HarmonyOS reader integration for NextE, NextN and Koma.
 
 This experimental integration is opt-in and does not replace any application's reader.
