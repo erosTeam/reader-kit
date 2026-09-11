@@ -113,6 +113,13 @@ export struct ReaderChrome {
     this.onPolicy(policy)
   }
 
+  private toggleSpreadLayout(): void {
+    const policy = this.snapshot.policy.copy()
+    if (policy.layout !== 'spread') return
+    policy.spreadLayout = policy.spreadLayout === 'joined' ? 'split' : 'joined'
+    this.onPolicy(policy)
+  }
+
   private canOriginal(frame: ReaderPagedFrame): boolean {
     const current = this.snapshot.frames.find(value => value.slotId === frame.slotId && value.asset.requestId === frame.asset.requestId)
     return current !== undefined && current.asset.kind === 'original' && (current.asset.variant === 'original' ||
@@ -277,6 +284,11 @@ export struct ReaderChrome {
       MenuItem({ content: $r('app.string.rkit_vertical_paged') }).id('rkit-vertical-paged')
         .onClick((): void => { this.setLayout('single', 'vertical') })
       MenuItem({ content: $r('app.string.rkit_spread') }).onClick((): void => { this.setLayout('spread') })
+      if (this.snapshot.policy.layout === 'spread') {
+        MenuItem({ content: this.snapshot.policy.spreadLayout === 'joined' ?
+          $r('app.string.rkit_spread_split') : $r('app.string.rkit_spread_joined') })
+          .id('rkit-spread-layout').onClick((): void => { this.toggleSpreadLayout() })
+      }
       MenuItem({ content: $r('app.string.rkit_continuous') }).onClick((): void => { this.setLayout('continuous') })
       if (this.cropAvailable) {
         MenuItem({ content: this.snapshot.cropEnabled ? $r('app.string.rkit_crop_off') : $r('app.string.rkit_crop_on') })

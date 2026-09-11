@@ -15,6 +15,25 @@ const page = (index, id = `page-${index}`, width = 800, height = 1200, owner = k
 const policy = values => Object.assign(new ReaderDisplayPolicy(), values)
 const pages = count => Array.from({ length: count }, (_, index) => page(index))
 
+test('spread presentation defaults joined and copies without changing pairing or fragments', () => {
+  const original = new ReaderDisplayPolicy()
+  assert.equal(original.spreadLayout, 'joined')
+  original.spreadLayout = 'split'
+  const copied = original.copy()
+  assert.equal(copied.spreadLayout, 'split')
+  copied.spreadLayout = 'joined'
+  assert.equal(original.spreadLayout, 'split')
+  const samples = pages(5); samples[0].width = 2000
+  for (const layout of ['single', 'spread', 'continuous']) {
+    for (const direction of ['ltr', 'rtl']) for (const pagingAxis of ['horizontal', 'vertical']) {
+      const base = { layout, direction, pagingAxis, splitWidePages: true, firstPageAlone: true }
+      const joined = new ReaderDisplayMap(unit(5), samples, policy(base))
+      const split = new ReaderDisplayMap(unit(5), samples, policy({ ...base, spreadLayout: 'split' }))
+      assert.deepEqual(topology(split), topology(joined))
+    }
+  }
+})
+
 test('paging axis defaults horizontal and is independently copied without changing display grouping', () => {
   const original = new ReaderDisplayPolicy()
   assert.equal(original.pagingAxis, 'horizontal')

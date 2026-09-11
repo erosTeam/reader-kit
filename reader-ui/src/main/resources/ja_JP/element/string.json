@@ -92,6 +92,14 @@
       "value": "見開きを1ページずらす"
     },
     {
+      "name": "rkit_spread_split",
+      "value": "見開きを分割表示"
+    },
+    {
+      "name": "rkit_spread_joined",
+      "value": "見開きを連結表示"
+    },
+    {
       "name": "rkit_vertical_paged",
       "value": "縦ページ送り"
     },

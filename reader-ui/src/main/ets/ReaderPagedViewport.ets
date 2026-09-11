@@ -202,8 +202,18 @@ export struct ReaderPagedViewport {
       const intrinsicHeight = frame.asset.kind === 'original'
         ? (frame.asset.page?.height ?? 0) * frame.crop.region(frame.part).height :
         frame.asset.page?.thumbnail.height ?? 0
-      return intrinsicHeight > 0 ? intrinsicHeight / height : 2
+      return intrinsicHeight > 0 ? intrinsicHeight / this.containedHeight(frame) : 2
     })
+    if (this.splitLayout()) {
+      const widths = this.snapshot.frames.map((frame: ReaderPagedFrame): number => this.containedHeight(frame) * partRatio(frame))
+      const heights = this.snapshot.frames.map((frame: ReaderPagedFrame): number => this.containedHeight(frame))
+      // The whole equal-slot Row scales, including the gap between narrow images.
+      // Preserve the actual asymmetric outer edges rather than summing image widths.
+      const left = -this.viewportWidth / 4 - widths[0] / 2
+      const right = this.viewportWidth / 4 + widths[1] / 2
+      return new ReaderViewportGeometry(this.viewportWidth, this.viewportHeight,
+        right - left, Math.max(...heights), Math.max(1, ...scales), (left + right) / 2)
+    }
     return new ReaderViewportGeometry(this.viewportWidth, this.viewportHeight,
       height * this.totalRatio(), height, Math.max(1, ...scales))
   }
@@ -283,6 +293,17 @@ export struct ReaderPagedViewport {
 
   private frameHeight(): number { return Math.min(this.viewportHeight, this.viewportWidth / this.totalRatio()) }
 
+  private splitLayout(): boolean {
+    return this.snapshot.policy.layout === 'spread' && this.snapshot.policy.spreadLayout === 'split' &&
+      this.snapshot.frames.length === 2
+  }
+
+  private containedHeight(frame: ReaderPagedFrame): number {
+    return this.splitLayout() ? Math.min(this.viewportHeight, this.viewportWidth / 2 / partRatio(frame)) : this.frameHeight()
+  }
+
+  private equalSlots(): boolean { return this.recovering || this.splitLayout() }
+
   private entryRatiosReady(): boolean {
     return ReaderEntryGeometryGate.ready(this.snapshot.frames)
   }
@@ -301,8 +322,8 @@ export struct ReaderPagedViewport {
             assetRequestId: frame.asset.assetRequestId,
             renderedFragment: frame.part.fragment,
             // Zero leaves the fitted width to the cell's current reactive frame, not this stable-key closure.
-            frameWidth: this.recovering ? this.viewportWidth / this.snapshot.frames.length : 0,
-            frameHeight: this.recovering ? this.viewportHeight : this.frameHeight(),
+            frameWidth: this.equalSlots() ? this.viewportWidth / this.snapshot.frames.length : 0,
+            frameHeight: this.equalSlots() ? this.viewportHeight : this.frameHeight(),
             active: this.selected && this.active && !this.zoomAnimating && this.zoomState.scale === 1,
             onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onInvalidDecodedMetrics: (slotId: number, requestId: number, assetRequestId: number): void => {
@@ -315,8 +336,8 @@ export struct ReaderPagedViewport {
         }, (frame: ReaderPagedFrame): string => `${frame.slotId}:${frame.asset.assetRequestId}:${frame.part.fragment}`)
       }
       .direction(Direction.Ltr)
-      .width(this.recovering ? this.viewportWidth : this.frameHeight() * this.totalRatio())
-      .height(this.recovering ? this.viewportHeight : this.frameHeight())
+      .width(this.equalSlots() ? this.viewportWidth : this.frameHeight() * this.totalRatio())
+      .height(this.equalSlots() ? this.viewportHeight : this.frameHeight())
       .scale({ x: this.zoomState.scale, y: this.zoomState.scale })
       .translate({ x: this.zoomState.x, y: this.zoomState.y })
       .animation({ duration: this.zoomAnimating ? 180 : 0, curve: Curve.FastOutSlowIn })

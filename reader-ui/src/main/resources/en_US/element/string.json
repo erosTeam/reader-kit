@@ -92,6 +92,14 @@
       "value": "Shift spread by one page"
     },
     {
+      "name": "rkit_spread_split",
+      "value": "Use split spread"
+    },
+    {
+      "name": "rkit_spread_joined",
+      "value": "Use joined spread"
+    },
+    {
       "name": "rkit_vertical_paged",
       "value": "Vertical paging"
     },

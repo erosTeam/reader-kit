@@ -41,6 +41,34 @@ function decode(session, frame, width = 0, height = 0) {
   session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true, width, height)
 }
 
+test('spread presentation preserves source anchor, fragment, axis and topology but retires old navigation', async () => {
+  for (const layout of ['single', 'spread']) for (const direction of ['ltr', 'rtl']) {
+    const { session, key } = setup({ count: 5, wide: [0] })
+    session.setPolicy(policy({ layout, direction, pagingAxis: 'vertical', splitWidePages: true }))
+    await session.open(key); await tick()
+    if (layout === 'single') { session.move('next'); await tick() }
+    const before = session.snapshot()
+    const next = before.policy.copy(); next.spreadLayout = 'split'
+    session.setPolicy(next); await tick()
+    const after = session.snapshot()
+    assert.equal(after.policy.spreadLayout, 'split')
+    assert.equal(after.policy.pagingAxis, 'vertical')
+    assert.equal(after.policy.splitWidePages, true)
+    assert.equal(after.topologyRevision, before.topologyRevision)
+    assert.ok(after.navigationRevision > before.navigationRevision)
+    assert.deepEqual(after.anchor, before.anchor)
+    assert.deepEqual(after.displayKeys, before.displayKeys)
+    assert.deepEqual(after.frames.map(f => [f.part.sourceIndex, f.part.fragment]),
+      before.frames.map(f => [f.part.sourceIndex, f.part.fragment]))
+    assert.equal(session.selectDisplay(0, before.topologyRevision, before.navigationRevision), false)
+    const restore = after.policy.copy(); restore.spreadLayout = 'joined'
+    session.setPolicy(restore); await tick()
+    assert.deepEqual(session.snapshot().anchor, before.anchor)
+    assert.equal(session.snapshot().topologyRevision, before.topologyRevision)
+    session.close()
+  }
+})
+
 test('paging axis retires native topology while preserving original anchor and split fragment', async () => {
   for (const direction of ['ltr', 'rtl']) {
     const { session, key } = setup({ count: 4, wide: [0] })

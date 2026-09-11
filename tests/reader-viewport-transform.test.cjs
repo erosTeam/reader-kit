@@ -4,6 +4,36 @@ const load = require('./load-core.cjs')
 const { ReaderViewportGeometry: Geometry, ReaderViewportTransform: Transform } = load('ReaderViewportTransform')
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-8, `${actual} != ${expected}`)
 
+test('offset spread union reaches each exact outer edge without losing asymmetric travel', () => {
+  for (const center of [-4, 4]) {
+    const g = new Geometry(1260, 2720, 834, 2720, 2, center)
+    const left = new Transform(2).pan(g, -10000, 0)
+    const right = new Transform(2).pan(g, 10000, 0)
+    near(left.x, center === -4 ? -196 : -212)
+    near(right.x, center === -4 ? 212 : 196)
+    near(630 + (center + 417) * 2 + left.x, 1260)
+    near(630 + (center - 417) * 2 + right.x, 0)
+    near(new Transform(1, 999, 0).constrained(g).x, 0)
+  }
+})
+
+test('one-sided overflow permits only the direction needed to recover the hidden edge', () => {
+  const g = new Geometry(100, 100, 40, 40, 2, 20)
+  near(new Transform(2, -999).constrained(g).x, -30)
+  near(new Transform(2, 999).constrained(g).x, 0)
+  near(new Transform(1, 999).constrained(g).x, 0)
+})
+
+test('default zero content center exactly preserves legacy symmetric horizontal clamp', () => {
+  for (const width of [40, 400, 1000]) for (const content of [20, 400, 900]) {
+    for (const scale of [0.8, 1, 2, 4]) for (const x of [-10000, -13, 0, 29, 10000]) {
+      const g = new Geometry(width, 800, content, 600)
+      assert.equal(g.contentCenterX, 0)
+      near(new Transform(scale, x).constrained(g).x, Transform.clampOffset(x, width, content, scale))
+    }
+  }
+})
+
 test('focal pinch keeps the same content point under a moving finger center', () => {
   const g = new Geometry(400, 800, 400, 800, 4)
   const before = new Transform(2, 70, -180)

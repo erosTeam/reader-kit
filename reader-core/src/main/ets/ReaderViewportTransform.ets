@@ -5,14 +5,17 @@ export class ReaderViewportGeometry {
   contentWidth: number
   contentHeight: number
   nativeScale: number
+  contentCenterX: number
   constructor(
     width: number, height: number, contentWidth: number, contentHeight: number, nativeScale: number = 2,
+    contentCenterX: number = 0,
   ) {
     this.width = width
     this.height = height
     this.contentWidth = contentWidth
     this.contentHeight = contentHeight
     this.nativeScale = nativeScale
+    this.contentCenterX = contentCenterX
   }
 
   maxScale(): number { return Math.min(12, Math.max(4, this.nativeScale * 2)) }
@@ -37,8 +40,12 @@ export class ReaderViewportTransform {
   }
 
   constrained(geometry: ReaderViewportGeometry): ReaderViewportTransform {
+    const left = geometry.contentCenterX - geometry.contentWidth / 2
+    const right = geometry.contentCenterX + geometry.contentWidth / 2
+    const minX = Math.min(0, geometry.width / 2 - right * this.scale)
+    const maxX = Math.max(0, -geometry.width / 2 - left * this.scale)
     return new ReaderViewportTransform(this.scale,
-      ReaderViewportTransform.clampOffset(this.x, geometry.width, geometry.contentWidth, this.scale),
+      Math.max(minX, Math.min(maxX, this.x)),
       ReaderViewportTransform.clampOffset(this.y, geometry.height, geometry.contentHeight, this.scale))
   }
 
