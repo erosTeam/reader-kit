@@ -149,7 +149,9 @@ struct ReaderNativePager {
       }, (key: string): string => key)
     }
     .index(this.snapshot.displayIndex)
-    .direction(this.snapshot.policy.direction === 'rtl' ? Direction.Rtl : Direction.Ltr)
+    .vertical(this.snapshot.policy.pagingAxis === 'vertical')
+    .direction(this.snapshot.policy.pagingAxis !== 'vertical' && this.snapshot.policy.direction === 'rtl' ?
+      Direction.Rtl : Direction.Ltr)
     .loop(false).indicator(false).cachedCount(1)
     .disableSwipe(!this.active || this.snapshot.phase !== 'ready' || this.inputLocked)
     .width('100%').height('100%').id('rkit-native-pager')

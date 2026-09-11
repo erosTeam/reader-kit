@@ -523,7 +523,8 @@ export class ReaderPagedSession {
       keys.push((this.map.item(index)?.parts ?? []).map((part: ReaderDisplayPart) =>
         `${part.sourceIndex}:${part.fragment}`).join('+'))
     }
-    const signature = `${this.state.policy.layout}:${this.state.policy.direction}:` + keys.join('|')
+    const pagingAxis = this.state.policy.layout === 'continuous' ? 'horizontal' : this.state.policy.pagingAxis
+    const signature = `${this.state.policy.layout}:${this.state.policy.direction}:${pagingAxis}:` + keys.join('|')
     if (signature !== this.topologySignature) {
       this.topologySignature = signature
       this.topologyRevision += 1

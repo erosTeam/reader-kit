@@ -106,9 +106,10 @@ export struct ReaderChrome {
     } else if (mode === SliderChangeMode.End) this.commitSeek(value)
   }
 
-  private setLayout(layout: 'single' | 'spread' | 'continuous'): void {
+  private setLayout(layout: 'single' | 'spread' | 'continuous', axis: 'horizontal' | 'vertical' = 'horizontal'): void {
     const policy = this.snapshot.policy.copy()
     policy.layout = layout
+    policy.pagingAxis = axis
     this.onPolicy(policy)
   }
 
@@ -273,6 +274,8 @@ export struct ReaderChrome {
   private RuntimeMenu() {
     Menu() {
       MenuItem({ content: $r('app.string.rkit_single') }).onClick((): void => { this.setLayout('single') })
+      MenuItem({ content: $r('app.string.rkit_vertical_paged') }).id('rkit-vertical-paged')
+        .onClick((): void => { this.setLayout('single', 'vertical') })
       MenuItem({ content: $r('app.string.rkit_spread') }).onClick((): void => { this.setLayout('spread') })
       MenuItem({ content: $r('app.string.rkit_continuous') }).onClick((): void => { this.setLayout('continuous') })
       if (this.cropAvailable) {
@@ -462,7 +465,8 @@ export struct ReaderChrome {
             .id('rkit-toggle-spread').accessibilityText($r('app.string.rkit_spread'))
             .onClick((): void => { this.setLayout(this.snapshot.policy.layout === 'spread' ? 'single' : 'spread') })
           Button({ type: ButtonType.Circle }) {
-            SymbolGlyph(this.snapshot.policy.layout === 'continuous' ? $r('sys.symbol.scroll_vertical') :
+            SymbolGlyph(this.snapshot.policy.layout === 'continuous' || this.snapshot.policy.pagingAxis === 'vertical' ?
+              $r('sys.symbol.scroll_vertical') :
               this.snapshot.policy.direction === 'rtl' ? $r('sys.symbol.arrow_left_and_square') : $r('sys.symbol.arrow_right_and_square')).fontSize(22).fontColor([Color.White])
           }.width(44).height(44).backgroundColor(Color.Transparent)
             .enabled(this.active && this.snapshot.phase === 'ready')

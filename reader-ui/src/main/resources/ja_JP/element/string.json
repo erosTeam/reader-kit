@@ -92,6 +92,10 @@
       "value": "見開きを1ページずらす"
     },
     {
+      "name": "rkit_vertical_paged",
+      "value": "縦ページ送り"
+    },
+    {
       "name": "rkit_spread",
       "value": "見開き"
     },

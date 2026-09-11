@@ -14,6 +14,21 @@ const page = (index, id = `page-${index}`, width = 800, height = 1200, owner = k
 }
 const policy = values => Object.assign(new ReaderDisplayPolicy(), values)
 const pages = count => Array.from({ length: count }, (_, index) => page(index))
+
+test('paging axis defaults horizontal and is independently copied without changing display grouping', () => {
+  const original = new ReaderDisplayPolicy()
+  assert.equal(original.pagingAxis, 'horizontal')
+  original.pagingAxis = 'vertical'
+  const copied = original.copy()
+  assert.equal(copied.pagingAxis, 'vertical')
+  copied.pagingAxis = 'horizontal'
+  assert.equal(original.pagingAxis, 'vertical')
+  for (const layout of ['single', 'spread', 'continuous']) {
+    const horizontal = new ReaderDisplayMap(unit(4), pages(4), policy({ layout }))
+    const vertical = new ReaderDisplayMap(unit(4), pages(4), policy({ layout, pagingAxis: 'vertical' }))
+    assert.deepEqual(topology(vertical), topology(horizontal))
+  }
+})
 const topology = map => Array.from({ length: map.count() }, (_, index) =>
   map.item(index).parts.map(part => [part.sourceIndex, part.fragment]))
 

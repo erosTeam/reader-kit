@@ -92,6 +92,10 @@
       "value": "Shift spread by one page"
     },
     {
+      "name": "rkit_vertical_paged",
+      "value": "Vertical paging"
+    },
+    {
       "name": "rkit_spread",
       "value": "Spread"
     },

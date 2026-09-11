@@ -3,10 +3,12 @@ import { ReaderPage, ReaderUnit, ReaderUnitKey } from './ReaderContent'
 export type ReaderFragment = 'whole' | 'left' | 'right'
 export type ReaderDirection = 'ltr' | 'rtl'
 export type ReaderLayout = 'single' | 'spread' | 'continuous'
+export type ReaderPagingAxis = 'horizontal' | 'vertical'
 
 /** Runtime layout policy, not a new preference store or host enum mapping. */
 export class ReaderDisplayPolicy {
   layout: ReaderLayout = 'single'
+  pagingAxis: ReaderPagingAxis = 'horizontal'
   direction: ReaderDirection = 'ltr'
   firstPageAlone: boolean = false
   splitWidePages: boolean = false
@@ -15,6 +17,7 @@ export class ReaderDisplayPolicy {
   copy(): ReaderDisplayPolicy {
     const value = new ReaderDisplayPolicy()
     value.layout = this.layout
+    value.pagingAxis = this.pagingAxis
     value.direction = this.direction
     value.firstPageAlone = this.firstPageAlone
     value.splitWidePages = this.splitWidePages

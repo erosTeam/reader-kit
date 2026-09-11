@@ -41,6 +41,45 @@ function decode(session, frame, width = 0, height = 0) {
   session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true, width, height)
 }
 
+test('paging axis retires native topology while preserving original anchor and split fragment', async () => {
+  for (const direction of ['ltr', 'rtl']) {
+    const { session, key } = setup({ count: 4, wide: [0] })
+    session.setPolicy(policy({ splitWidePages: true, direction }))
+    await session.open(key); await tick()
+    session.move('next'); await tick()
+    const before = session.snapshot()
+    const changed = before.policy.copy(); changed.pagingAxis = 'vertical'
+    session.setPolicy(changed); await tick()
+    const after = session.snapshot()
+    assert.ok(after.topologyRevision > before.topologyRevision)
+    assert.deepEqual(after.anchor, before.anchor)
+    assert.deepEqual(after.displayKeys, before.displayKeys)
+    assert.equal(after.displayIndex, before.displayIndex)
+    assert.equal(after.policy.pagingAxis, 'vertical')
+    assert.equal(session.selectDisplay(0, before.topologyRevision, after.navigationRevision), false)
+    assert.equal(session.selectDisplay(0, after.topologyRevision, before.navigationRevision), false)
+    session.move('next'); await tick()
+    assert.equal(session.snapshot().anchor.sourceIndexHint, 1)
+    session.move('previous'); await tick()
+    assert.equal(session.snapshot().anchor.sourceIndexHint, before.anchor.sourceIndexHint)
+    assert.equal(session.snapshot().anchor.fragment, before.anchor.fragment)
+    session.close()
+  }
+})
+
+test('continuous ignores paging axis for native topology and keeps its source anchor', async () => {
+  const { session, key } = setup()
+  session.setPolicy(policy({ layout: 'continuous' }))
+  await session.open(key, 2); await tick()
+  const before = session.snapshot()
+  const changed = before.policy.copy(); changed.pagingAxis = 'vertical'
+  session.setPolicy(changed); await tick()
+  const after = session.snapshot()
+  assert.equal(after.topologyRevision, before.topologyRevision)
+  assert.deepEqual(after.anchor, before.anchor)
+  session.close()
+})
+
 test('one-page spread shift uses logical start, preserves overlap and re-pairs both directions', async () => {
   for (const direction of ['ltr', 'rtl']) {
     const { session, key, calls } = setup({ count: 7 })
