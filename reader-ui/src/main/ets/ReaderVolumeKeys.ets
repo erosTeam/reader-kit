@@ -5,13 +5,15 @@ import { ReaderInputPort, ReaderMoveIntent } from '@reader-kit/core'
 export class ReaderVolumeKeys {
   private input: ReaderInputPort
   private active: boolean = false
+  private reversed: boolean = false
   private epoch: number = 0
   private down: ((event: KeyEvent) => void) | null = null
   private up: ((event: KeyEvent) => void) | null = null
 
   constructor(input: ReaderInputPort) { this.input = input }
 
-  setActive(active: boolean): boolean {
+  setActive(active: boolean, reversed: boolean = false): boolean {
+    this.reversed = reversed
     if (!active) { this.close(); return false }
     if (this.active) return true
     this.close()
@@ -34,8 +36,9 @@ export class ReaderVolumeKeys {
 
   private dispatch(event: KeyEvent, epoch: number, intent: ReaderMoveIntent): void {
     if (!this.active || epoch !== this.epoch || event.action !== Action.DOWN) return
-    const accepted = this.input.move(intent)
-    console.info(`[ReaderVolumeKeys] intent=${intent} accepted=${accepted}`)
+    const mapped = this.reversed ? (intent === 'next' ? 'previous' : 'next') : intent
+    const accepted = this.input.move(mapped)
+    console.info(`[ReaderVolumeKeys] intent=${mapped} accepted=${accepted}`)
   }
 
   close(): void {
