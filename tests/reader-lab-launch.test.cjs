@@ -64,6 +64,27 @@ test('volume default preserves legacy false and leaves override unspecified', ()
   assert.equal(request.volumeKeysOverride, null)
 })
 
+test('progress persistence requires an explicit full-reader debug request', () => {
+  const direct = new (fixture().ReaderLabRequest)('work', 'unit', 0)
+  assert.equal(direct.progressReadWrite, false)
+  for (const input of [undefined, null, false, 'false', 1, 'TRUE']) {
+    const api = fixture()
+    api.captureReaderLabWant({ parameters: { readerLabWork: 'work', readerLabChrome: true,
+      readerLabProgressReadWrite: input } }, true)
+    assert.equal(api.connectReaderLabLaunch().consume().progressReadWrite, false)
+  }
+  for (const input of [true, 'true']) {
+    const api = fixture()
+    api.captureReaderLabWant({ parameters: { readerLabWork: 'work', readerLabChrome: true,
+      readerLabProgressReadWrite: input } }, true)
+    assert.equal(api.connectReaderLabLaunch().consume().progressReadWrite, true)
+  }
+  const api = fixture()
+  api.captureReaderLabWant({ parameters: { readerLabWork: 'work', readerLabChrome: false,
+    readerLabProgressReadWrite: true } }, true)
+  assert.equal(api.connectReaderLabLaunch().consume().progressReadWrite, false)
+})
+
 test('strict boolean and string overrides retain legacy interpretation', () => {
   for (const [input, expected] of [[true, true], ['true', true], [false, false], ['false', false]]) {
     const api = fixture()
