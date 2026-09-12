@@ -192,15 +192,17 @@ struct ReaderContinuousList {
     } catch (_) { /* A missing current viewport is not permission to infer a tap position. */ }
   }
 
-  private imageHeight(index: number): number {
+  private imageAspectRatio(index: number): number {
     const page = this.snapshot.pageMetadata.find((value) => value.sourceIndex === index)
     const width = this.snapshot.kind === 'thumbnail' ? page?.thumbnail.width ?? 0 : page?.width ?? 0
     const height = this.snapshot.kind === 'thumbnail' ? page?.thumbnail.height ?? 0 : page?.height ?? 0
     const crop = this.snapshot.cropForPage(index)
-    const ratio = this.snapshot.kind === 'original'
+    const heightRatio = this.snapshot.kind === 'original'
       ? (1 - crop.top - crop.bottom) / (1 - crop.left - crop.right) : 1
-    return width > 0 && height > 0 ? this.viewWidth * height / width * ratio : this.viewWidth / 0.75
+    return width > 0 && height > 0 ? width / height / heightRatio : 0.75
   }
+
+  private imageHeight(index: number): number { return this.viewWidth / this.imageAspectRatio(index) }
 
   private rowHeight(index: number): number {
     const frame = this.snapshot.forItem(this.snapshot.displayKeys[index]).frames[0]
@@ -316,6 +318,7 @@ struct ReaderContinuousList {
               (this.lockedKey.length === 0 || this.lockedKey === key),
             onLock: (identity: string, locked: boolean): void => { this.onImageLock(key, identity, locked) },
             imageHeight: this.imageHeight(this.snapshot.displayKeys.indexOf(key)),
+            imageAspectRatio: this.imageAspectRatio(this.snapshot.displayKeys.indexOf(key)),
             onRetry: (slot: number, request: number): void => {
               this.onRetry(this.createdRevision, key, slot, request)
             },
@@ -335,7 +338,7 @@ struct ReaderContinuousList {
               this.onFailed(this.createdRevision, key, slot, request, fragment)
             },
           })
-        }.height(this.rowHeight(this.snapshot.displayKeys.indexOf(key)))
+        }
           .zIndex(this.lockedKey === key ? 1 : 0)
       }, (key: string): string => key)
     }
@@ -380,6 +383,7 @@ struct ReaderContinuousCell {
   @Param entryPosition: ReaderContinuousEntryPosition | null = null
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param imageHeight: number
+  @Require @Param imageAspectRatio: number
   @Require @Param active: boolean
   @Event onTap: (windowX: number, windowY: number) => void = () => {}
   @Require @Param interactionAllowed: boolean
@@ -390,33 +394,39 @@ struct ReaderContinuousCell {
   @Event onRetry: (slot: number, request: number) => void = () => {}
 
   build() {
-    Stack() {
-      ForEach(this.snapshot.frames, (frame: ReaderPagedFrame) => {
-        if (this.snapshot.frames[0].asset.phase === 'failed') {
+    if (this.snapshot.frames[0]?.asset.phase === 'failed') {
+      Stack() {
+        ForEach(this.snapshot.frames, (frame: ReaderPagedFrame) => {
           ReaderFailurePanel({
             page: frame.part.sourceIndex + 1, compact: true, retryEnabled: this.active,
             // Failed acquisition can keep assetRequestId=0 across attempts; read the current epoch.
             onRetry: (): void => { this.onRetry(frame.slotId, this.snapshot.frames[0].asset.requestId) },
           })
-        } else if (this.snapshot.frames[0].asset.uri.length > 0) {
-          ReaderContinuousZoomImage({
-            imageInterpolation: this.imageInterpolation,
-            frame: this.snapshot.frames[0], navigation: this.snapshot.navigationRevision,
-            entryTransition: this.entryTransition, entryPosition: this.entryPosition,
-            imageHeight: this.imageHeight, active: this.active, interactionAllowed: this.interactionAllowed,
-            onLock: this.onLock,
-            onTap: this.onTap,
-            onPresented: this.onPresented,
-            onFailed: this.onFailed,
-          })
-            .onDisAppear((): void => { this.onRetired(frame.slotId, frame.asset.assetRequestId) })
+        }, (frame: ReaderPagedFrame): string => `${frame.slotId}:${frame.asset.assetRequestId}`)
+      }.width('100%').height(220).id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
+    } else {
+      Stack() {
+        ForEach(this.snapshot.frames, (frame: ReaderPagedFrame) => {
+          if (this.snapshot.frames[0].asset.uri.length > 0) {
+            ReaderContinuousZoomImage({
+              imageInterpolation: this.imageInterpolation,
+              frame: this.snapshot.frames[0], navigation: this.snapshot.navigationRevision,
+              entryTransition: this.entryTransition, entryPosition: this.entryPosition,
+              imageHeight: this.imageHeight, active: this.active, interactionAllowed: this.interactionAllowed,
+              onLock: this.onLock,
+              onTap: this.onTap,
+              onPresented: this.onPresented,
+              onFailed: this.onFailed,
+            })
+              .onDisAppear((): void => { this.onRetired(frame.slotId, frame.asset.assetRequestId) })
+          }
+        }, (frame: ReaderPagedFrame): string => `${frame.slotId}:${frame.asset.assetRequestId}`)
+        if (this.snapshot.frames.length === 0 || this.snapshot.frames[0].asset.phase === 'idle' ||
+          this.snapshot.frames[0].asset.phase === 'asset' || this.snapshot.frames[0].asset.phase === 'decoding') {
+          LoadingProgress().width(32).height(32)
         }
-      }, (frame: ReaderPagedFrame): string => `${frame.slotId}:${frame.asset.assetRequestId}`)
-      if (this.snapshot.frames.length === 0 || this.snapshot.frames[0].asset.phase === 'idle' ||
-        this.snapshot.frames[0].asset.phase === 'asset' || this.snapshot.frames[0].asset.phase === 'decoding') {
-        LoadingProgress().width(32).height(32)
-      }
-    }.width('100%').height('100%')
-      .id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
+      }.width('100%').aspectRatio(this.imageAspectRatio)
+        .id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
+    }
   }
 }

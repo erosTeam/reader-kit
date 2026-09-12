@@ -187,7 +187,7 @@ export struct ReaderContinuousZoomImage {
           this.onFailed(slot, request, fragment)
         },
       })
-        .width('100%').height(this.imageHeight)
+        .width('100%').height('100%')
         .scale({ x: this.imageTransform.scale, y: this.imageTransform.scale })
         .translate({ x: this.imageTransform.x, y: this.imageTransform.y })
         .animation({ duration: this.animating ? 180 : 0, curve: Curve.FastOutSlowIn })

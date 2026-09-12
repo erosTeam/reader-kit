@@ -103,7 +103,8 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
   request.entryLayout = want.parameters['readerLabEntryLayout'] === 'spread' ? 'spread' : 'single'
   request.entryDirection = want.parameters['readerLabEntryDirection'] === 'rtl' ? 'rtl' : 'ltr'
   const entryLayout = want.parameters['readerLabEntryLayout']
-  request.entryLayoutOverride = entryLayout === 'single' ? 'single' : entryLayout === 'spread' ? 'spread' : null
+  request.entryLayoutOverride = entryLayout === 'single' ? 'single' : entryLayout === 'spread' ? 'spread' :
+    entryLayout === 'continuous' ? 'continuous' : null
   const entryDirection = want.parameters['readerLabEntryDirection']
   request.entryDirectionOverride = entryDirection === 'ltr' ? 'ltr' : entryDirection === 'rtl' ? 'rtl' : null
   request.entryProbe = request.thumbnailEntry && want.parameters['readerLabEntryProbe'] === 'delay-once' ? 'delay-once' : ''
