@@ -1,4 +1,5 @@
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy, ReaderLayout,
+  ReaderReadingAnchor,
   ReaderInputPort, ReaderMoveIntent, ReaderImageShareHost, ReaderImageShareTarget,
   ReaderImageShareController, ReaderPagedFrame, ReaderImageInformation,
   ReaderImageSaveHost, ReaderImageSaveController, ReaderImageSaveChoice, ReaderAutoReadController } from '@reader-kit/core'
@@ -39,6 +40,8 @@ export struct ReaderSurface {
   @Param chapterNavigationAvailable: boolean = false
   @Param chapterNavigationBusy: boolean = false
   @Event onChapter: (direction: 'previous' | 'next', source: ReaderUnitKey) => void = () => {}
+  /** Native-visible original position only. The host decides whether and how to persist it. */
+  @Event onObserved: (anchor: ReaderReadingAnchor) => void = () => {}
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPreview: ReaderEntryPreviewSource | null = null
   @Event onClose: () => void = () => {}
@@ -70,6 +73,18 @@ export struct ReaderSurface {
   private chromeShowPending: boolean = false
   private chromeDisposed: boolean = false
   private chromeCloseRequested: boolean = false
+  private lastObservedSignature: string = ''
+
+  private publishObserved(state: ReaderPagedSnapshot): void {
+    const anchor = state.observedAnchor
+    if (!this.active || state.phase !== 'ready' || anchor === null ||
+      state.observedSelectionId !== state.selectionId || state.unit?.key.equals(anchor.unit) !== true) return
+    const signature = JSON.stringify([anchor.unit.scope, anchor.unit.work, anchor.unit.unit, anchor.pageKey,
+      anchor.sourceIndexHint, anchor.fragment, anchor.x, anchor.y, state.observedSelectionId])
+    if (signature === this.lastObservedSignature) return
+    this.lastObservedSignature = signature
+    this.onObserved(anchor.copy())
+  }
 
   aboutToAppear(): void {
     this.chromeDisposed = false
@@ -87,6 +102,7 @@ export struct ReaderSurface {
         this.informationEpoch += 1; this.informationBusy = false
       }
       this.state = state
+      this.publishObserved(state)
       this.entryTransition?.update(state)
       this.shareController.update(ReaderImageShareTarget.from(state), this.active)
       this.saveController.update(state, this.active)
