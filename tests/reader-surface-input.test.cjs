@@ -13,7 +13,15 @@ function evaluate(source) {
   vm.runInNewContext(ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, experimentalDecorators: true },
   }).outputText, {
-    exports, require: name => { assert.equal(name, '@reader-kit/core'); return core },
+    exports, require: name => {
+      if (name === '@reader-kit/core') return core
+      if (name === './ReaderPagerSurface') return { ReaderPagerCommand: class ReaderPagerCommand {
+        constructor(serial, targetIndex, topologyRevision, navigationRevision) {
+          Object.assign(this, { serial, targetIndex, topologyRevision, navigationRevision })
+        }
+      } }
+      assert.fail(`unexpected import: ${name}`)
+    },
     ObservedV2: value => value, ComponentV2: value => value,
     Trace() {}, Param() {}, Require() {}, Event() {}, Local() {}, Computed() {}, Monitor: () => () => {},
     ImageInterpolation: { Low: 'low', Medium: 'medium', High: 'high' },
@@ -78,6 +86,39 @@ test('null, moving, waiting, revealing and terminal entries retain the existing 
   edge.surface.session.move = intent => edge.moves.push(intent)
   assert.equal(edge.input.move('next'), false)
   assert.deepEqual(edge.moves, ['next'])
+})
+
+test('enabled page-turn animation emits one adjacent native pager command before session selection', () => {
+  const value = scenario()
+  value.surface.pageTurnAnimation = true
+  value.surface.state.displayIndex = 1
+  value.surface.state.displayCount = 3
+  value.surface.state.navigationRevision = 10
+  value.surface.session.snapshot = () => value.surface.state
+
+  assert.equal(value.input.move('next'), true)
+  assert.deepEqual(value.moves, [])
+  assert.equal(value.surface.pagerCommand.serial, 1)
+  assert.equal(value.surface.pagerCommand.targetIndex, 2)
+  assert.equal(value.surface.pagerCommand.topologyRevision, 7)
+  assert.equal(value.surface.pagerCommand.navigationRevision, 10)
+
+  value.surface.state.displayIndex = 0
+  assert.equal(value.input.move('previous'), false)
+  assert.equal(value.surface.pagerCommand.serial, 1)
+})
+
+test('disabled animation and continuous reading retain direct session-owned movement', () => {
+  for (const [enabled, layout] of [[false, 'single'], [true, 'continuous']]) {
+    const value = scenario()
+    value.surface.pageTurnAnimation = enabled
+    value.surface.state.policy.layout = layout
+    value.surface.state.displayIndex = 1
+    value.surface.state.displayCount = 3
+    assert.equal(value.input.move('next'), true)
+    assert.deepEqual(value.moves, ['next'])
+    assert.equal(value.surface.pagerCommand, null)
+  }
 })
 
 test('the pre-existing active, session, interaction and topology locks still reject external moves', () => {

@@ -12,6 +12,7 @@ export class ReaderLabRequest {
   thumbnailFailurePage: number = -1
   volumeKeys: boolean = false
   volumeKeysOverride: boolean | null = null
+  pageTurnAnimationOverride: boolean | null = null
   shareProbe: string = ''
   informationProbe: string = ''
   originalVariantProbe: string = ''
@@ -89,6 +90,9 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
   const volumeOverride = want.parameters['readerLabVolumeKeys']
   request.volumeKeysOverride = volumeOverride === true || volumeOverride === 'true' ? true :
     volumeOverride === false || volumeOverride === 'false' ? false : null
+  const pageTurnAnimationOverride = want.parameters['readerLabPageTurnAnimation']
+  request.pageTurnAnimationOverride = pageTurnAnimationOverride === true || pageTurnAnimationOverride === 'true' ? true :
+    pageTurnAnimationOverride === false || pageTurnAnimationOverride === 'false' ? false : null
   request.cropBorders = want.parameters['readerLabCropBorders'] === 'true' || want.parameters['readerLabCropBorders'] === true
   request.progressReadWrite = request.readingChrome &&
     (want.parameters['readerLabProgressReadWrite'] === 'true' || want.parameters['readerLabProgressReadWrite'] === true)

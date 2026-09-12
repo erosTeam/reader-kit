@@ -3,7 +3,7 @@ import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment,
   ReaderInputPort, ReaderMoveIntent, ReaderImageShareHost, ReaderImageShareTarget,
   ReaderImageShareController, ReaderPagedFrame, ReaderImageInformation,
   ReaderImageSaveHost, ReaderImageSaveController, ReaderImageSaveChoice, ReaderAutoReadController } from '@reader-kit/core'
-import { ReaderPagerSurface } from './ReaderPagerSurface'
+import { ReaderPagerCommand, ReaderPagerSurface } from './ReaderPagerSurface'
 import { ReaderContinuousSurface } from './ReaderContinuousSurface'
 import { ReaderChrome, ReaderRuntimePolicyIntent } from './ReaderChrome'
 import { ReaderPageStatus } from './ReaderPageStatus'
@@ -35,6 +35,7 @@ export struct ReaderSurface {
   @Param imageSave: ReaderImageSaveHost | null = null
   @Param autoReadAvailable: boolean = false
   @Param autoReadSeconds: number = 3
+  @Param pageTurnAnimation: boolean = false
   @Param cropBorders: boolean = false
   @Param cropAvailable: boolean = false
   @Param hostSettingsAvailable: boolean = false
@@ -59,6 +60,8 @@ export struct ReaderSurface {
   @Local private shareBusy: boolean = false
   @Local private saveBusy: boolean = false
   @Local private autoReadEnabled: boolean = false
+  @Local private pagerCommand: ReaderPagerCommand | null = null
+  private pagerCommandSerial: number = 0
   private autoReadController: ReaderAutoReadController = new ReaderAutoReadController((): boolean => {
     return this.externalMove('next')
   })
@@ -387,7 +390,7 @@ export struct ReaderSurface {
     const previous = action === 'previous' ||
       (action === 'left' && this.state.policy.direction === 'ltr') ||
       (action === 'right' && this.state.policy.direction === 'rtl')
-    this.session.move(previous ? 'previous' : 'next')
+    this.requestMove(previous ? 'previous' : 'next')
     return action
   }
 
@@ -399,7 +402,26 @@ export struct ReaderSurface {
     if (this.entryTransition?.phase === 'layout' || !this.active || this.state.phase !== 'ready' ||
       this.touching || this.menuVisible || this.shareBusy || this.saveBusy || this.informationBusy ||
       this.previewIndex >= 0 || this.inputTopology !== this.state.topologyRevision || this.inputLocked) return false
-    const navigation = this.session.snapshot().navigationRevision
+    return this.requestMove(intent)
+  }
+
+  private requestMove(intent: ReaderMoveIntent): boolean {
+    const before = this.session.snapshot()
+    if (this.pageTurnAnimation && before.policy.layout !== 'continuous' &&
+      before.topologyRevision === this.state.topologyRevision &&
+      before.navigationRevision === this.state.navigationRevision &&
+      before.displayIndex === this.state.displayIndex) {
+      const target = before.displayIndex + (intent === 'next' ? 1 : -1)
+      if (target < 0 || target >= before.displayCount) return false
+      this.pagerCommand = new ReaderPagerCommand(
+        ++this.pagerCommandSerial,
+        target,
+        before.topologyRevision,
+        before.navigationRevision,
+      )
+      return true
+    }
+    const navigation = before.navigationRevision
     this.session.move(intent)
     return this.session.snapshot().navigationRevision !== navigation
   }
@@ -447,6 +469,7 @@ export struct ReaderSurface {
           ReaderPagerSurface({
             imageInterpolation: this.imageInterpolation,
             snapshot: this.state, active: this.active,
+            command: this.pagerCommand,
             entryTransition: this.entryTransition,
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
             onTap: (x: number, y: number): void => { this.pageTap(x, y) },

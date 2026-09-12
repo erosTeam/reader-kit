@@ -15,7 +15,8 @@ function surface(layout = 'single', direction = 'ltr') {
   const host = method('ReaderSurface', 'ReaderSurface', 'pageTap'), moves = []
   Object.assign(host, { active: true, state: { phase: 'ready', topologyRevision: 2, policy: { layout, direction } },
     inputTopology: 2, previewIndex: -1, tapZoneResolver: null,
-    session: { snapshot: () => ({ navigationRevision: 0 }), move: action => moves.push(action) }, toggleChrome: () => moves.push('menu') })
+    session: { snapshot: () => ({ navigationRevision: 0 }), move: action => moves.push(action) },
+    requestMove: action => { moves.push(action); return true }, toggleChrome: () => moves.push('menu') })
   return { host, moves }
 }
 test('real Surface preserves defaults and interprets physical directions once', () => {

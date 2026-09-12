@@ -2,6 +2,21 @@ import { ReaderPagedSnapshot, ReaderFragment } from '@reader-kit/core'
 import { ReaderPagedViewport } from './ReaderPagedViewport'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 
+/** One adjacent host-requested move. The native pager consumes each serial at most once. */
+export class ReaderPagerCommand {
+  serial: number
+  targetIndex: number
+  topologyRevision: number
+  navigationRevision: number
+
+  constructor(serial: number, targetIndex: number, topologyRevision: number, navigationRevision: number) {
+    this.serial = serial
+    this.targetIndex = targetIndex
+    this.topologyRevision = topologyRevision
+    this.navigationRevision = navigationRevision
+  }
+}
+
 /** Immutable within one topology revision; a changed topology gets a new native pager. */
 class ReaderPagerIndexSource implements IDataSource {
   private keys: string[]
@@ -18,6 +33,7 @@ export struct ReaderPagerSurface {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
+  @Param command: ReaderPagerCommand | null = null
   @Param entryTransition: ReaderEntryTransition | null = null
   @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
   @Event onTap: (xFraction: number, yFraction: number) => void = () => {}
@@ -34,6 +50,7 @@ export struct ReaderPagerSurface {
           ReaderNativePager({
             imageInterpolation: this.imageInterpolation,
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
+            command: this.command,
             entryTransition: this.entryTransition,
             onInputLockChange: this.onInputLockChange,
             onSelect: this.onSelect, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
@@ -54,6 +71,7 @@ struct ReaderNativePager {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
+  @Param command: ReaderPagerCommand | null = null
   @Param entryTransition: ReaderEntryTransition | null = null
   @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
   @Event onTap: (xFraction: number, yFraction: number) => void = () => {}
@@ -64,10 +82,12 @@ struct ReaderNativePager {
   @Event onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetry: (topologyRevision: number, itemKey: string, slotId: number, requestId: number) => void = () => {}
   private source: ReaderPagerIndexSource = new ReaderPagerIndexSource([])
+  private controller: SwiperController = new SwiperController()
   @Local private inputLocked: boolean = false
   @Local private moving: boolean = false
   private gestureNavigation: number = -1
   private lastNavigation: number = -1
+  private lastCommandSerial: number = 0
   private pendingChange: number = 0
 
   aboutToAppear(): void {
@@ -104,6 +124,29 @@ struct ReaderNativePager {
     }
   }
 
+  @Monitor('command')
+  onCommandChanged(): void {
+    const command = this.command
+    if (command === null || command.serial <= this.lastCommandSerial) return
+    this.lastCommandSerial = command.serial
+    if (!this.active || this.inputLocked || this.moving || command.topologyRevision !== this.createdRevision ||
+      command.topologyRevision !== this.snapshot.topologyRevision ||
+      command.navigationRevision !== this.snapshot.navigationRevision ||
+      Math.abs(command.targetIndex - this.snapshot.displayIndex) !== 1 ||
+      command.targetIndex < 0 || command.targetIndex >= this.snapshot.displayCount) return
+    this.gestureNavigation = command.navigationRevision
+    this.beginMotion()
+    try {
+      this.controller.changeIndex(command.targetIndex, true)
+      console.info(`[ReaderPager] command=${command.serial} target=${command.targetIndex} ` +
+        `topology=${command.topologyRevision} navigation=${command.navigationRevision}`)
+    } catch (error) {
+      this.moving = false
+      this.gestureNavigation = -1
+      console.warn(`[ReaderPager] command_failed=${command.serial} ${(error as Error).message}`)
+    }
+  }
+
   private beginMotion(): void {
     this.entryTransition?.cancel()
     if (this.gestureNavigation < 0) this.gestureNavigation = this.snapshot.navigationRevision
@@ -129,7 +172,7 @@ struct ReaderNativePager {
   }
 
   build() {
-    Swiper() {
+    Swiper(this.controller) {
       LazyForEach(this.source, (key: string) => {
         ReaderPagedViewport({
           imageInterpolation: this.imageInterpolation,
