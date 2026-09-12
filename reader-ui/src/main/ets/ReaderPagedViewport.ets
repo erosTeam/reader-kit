@@ -93,7 +93,7 @@ export struct ReaderPagedViewport {
   @Require @Param active: boolean
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param selected: boolean = true
-  @Event onTap: (xFraction: number) => void = () => {}
+  @Event onTap: (xFraction: number, yFraction: number) => void = () => {}
   @Event onInputLockChange: (locked: boolean) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -374,7 +374,10 @@ export struct ReaderPagedViewport {
           .onAction((event?: GestureEvent): void => { this.doubleTap(event) }),
         TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => {
           if (this.active && this.selected && !this.pinching && this.tapSequence.allowed() && event !== undefined) {
-            this.onTap((event.tapLocation?.x ?? this.viewportWidth / 2) / this.viewportWidth)
+            const location = event.tapLocation
+            if (location !== undefined && Number.isFinite(location.x) && Number.isFinite(location.y)) {
+              this.onTap(location.x / this.viewportWidth, location.y / this.viewportHeight)
+            }
           }
         }),
       ),

@@ -14,7 +14,7 @@ export struct ReaderContinuousZoomImage {
   @Require @Param imageHeight: number
   @Require @Param active: boolean
   @Require @Param interactionAllowed: boolean
-  @Event onTap: () => void = () => {}
+  @Event onTap: (windowX: number, windowY: number) => void = () => {}
   @Event onLock: (identity: string, locked: boolean) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onFailed: (slot: number, request: number, fragment: ReaderFragment) => void = () => {}
@@ -211,8 +211,10 @@ export struct ReaderContinuousZoomImage {
     .gesture(GestureGroup(GestureMode.Parallel,
       GestureGroup(GestureMode.Exclusive,
         TapGesture({ count: 2, distanceThreshold: 8 }).onAction((event?: GestureEvent): void => { this.doubleTap(event) }),
-        TapGesture({ count: 1 }).onAction((): void => {
-          if (this.canInteract() && !this.pinching && this.tapSequence.allowed()) this.onTap()
+        TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => {
+          const location = event?.tapLocation
+          if (this.canInteract() && !this.pinching && this.tapSequence.allowed() && location !== undefined &&
+            Number.isFinite(location.windowX) && Number.isFinite(location.windowY)) this.onTap(location.windowX, location.windowY)
         }),
       ),
       PinchGesture({ fingers: 2 })

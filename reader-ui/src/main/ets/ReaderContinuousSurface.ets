@@ -4,6 +4,7 @@ import { ReaderContinuousZoomImage } from './ReaderContinuousZoomImage'
 import { ReaderFailurePanel } from './ReaderFailurePanel'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
+import { ReaderTapAction } from './ReaderTapAction'
 
 class ReaderContinuousIndexSource implements IDataSource {
   private keys: string[]
@@ -27,7 +28,7 @@ export struct ReaderContinuousSurface {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
-  @Event onTap: () => void = () => {}
+  @Event onTap: (xFraction: number, yFraction: number) => ReaderTapAction = () => 'none'
   @Event onRange: (start: number, end: number, topology: number, navigation: number) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (topology: number, navigation: number, key: string, slot: number, request: number, x: number, y: number) => void = () => {}
@@ -61,7 +62,7 @@ struct ReaderContinuousList {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
-  @Event onTap: () => void = () => {}
+  @Event onTap: (xFraction: number, yFraction: number) => ReaderTapAction = () => 'none'
   @Require @Param createdRevision: number
   @Event onRange: (start: number, end: number, topology: number, navigation: number) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
@@ -161,6 +162,31 @@ struct ReaderContinuousList {
       !this.positionInFlight && !this.moving && this.lockedKey.length === 0 && this.positionEpoch === epoch && token.matches(this.snapshot) &&
       this.viewWidth === width && this.imageHeight(frame.part.sourceIndex) === height)
     this.entryPosition = token
+  }
+
+  private imageTap(key: string, windowX: number, windowY: number): void {
+    if (!this.active || this.disposed || this.pendingPosition || this.positionInFlight || !this.fullyVisible ||
+      this.moving || (this.lockedKey.length > 0 && this.lockedKey !== key) || this.snapshot.phase !== 'ready' ||
+      this.createdRevision !== this.snapshot.topologyRevision || this.entryTransition?.pending() ||
+      !Number.isFinite(windowX) || !Number.isFinite(windowY)) return
+    const frame = this.snapshot.forItem(key).frames[0]
+    if (frame === undefined || frame.asset.phase !== 'displayed') return
+    const navigation = this.snapshot.navigationRevision
+    try {
+      const context = this.getUIContext()
+      const rect = context.getComponentUtils().getRectangleById('rkit-continuous-list')
+      const width = context.px2vp(rect.size.width), height = context.px2vp(rect.size.height)
+      const x = windowX - context.px2vp(rect.windowOffset.x)
+      const y = windowY - context.px2vp(rect.windowOffset.y)
+      if (!Number.isFinite(width) || !Number.isFinite(height) || !Number.isFinite(x) || !Number.isFinite(y) ||
+        width <= 0 || height <= 0 ||
+        x < 0 || y < 0 || x > width || y > height) return
+      const action = this.onTap(x / width, y / height)
+      if (!this.active || this.disposed || this.pendingPosition || this.positionInFlight ||
+        this.lockedKey.length > 0 || navigation !== this.snapshot.navigationRevision) return
+      if (action === 'previous' || action === 'left') this.scroller.scrollBy(0, -height * 0.75)
+      else if (action === 'next' || action === 'right') this.scroller.scrollBy(0, height * 0.75)
+    } catch (_) { /* A missing current viewport is not permission to infer a tap position. */ }
   }
 
   private imageHeight(index: number): number {
@@ -281,7 +307,7 @@ struct ReaderContinuousList {
             entryTransition: this.entryTransition,
             entryPosition: this.entryPosition?.key === key ? this.entryPosition : null,
             active: this.active,
-            onTap: this.onTap,
+            onTap: (x: number, y: number): void => this.imageTap(key, x, y),
             interactionAllowed: !this.pendingPosition && this.fullyVisible &&
               (this.lockedKey.length === 0 || this.lockedKey === key),
             onLock: (identity: string, locked: boolean): void => { this.onImageLock(key, identity, locked) },
@@ -350,7 +376,7 @@ struct ReaderContinuousCell {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param imageHeight: number
   @Require @Param active: boolean
-  @Event onTap: () => void = () => {}
+  @Event onTap: (windowX: number, windowY: number) => void = () => {}
   @Require @Param interactionAllowed: boolean
   @Event onLock: (identity: string, locked: boolean) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}

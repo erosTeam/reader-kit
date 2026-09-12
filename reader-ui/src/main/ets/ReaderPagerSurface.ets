@@ -19,7 +19,7 @@ export struct ReaderPagerSurface {
   @Require @Param active: boolean
   @Param entryTransition: ReaderEntryTransition | null = null
   @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
-  @Event onTap: (xFraction: number) => void = () => {}
+  @Event onTap: (xFraction: number, yFraction: number) => void = () => {}
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -53,7 +53,7 @@ struct ReaderNativePager {
   @Require @Param active: boolean
   @Param entryTransition: ReaderEntryTransition | null = null
   @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
-  @Event onTap: (xFraction: number) => void = () => {}
+  @Event onTap: (xFraction: number, yFraction: number) => void = () => {}
   @Require @Param createdRevision: number
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}

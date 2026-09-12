@@ -1,4 +1,4 @@
-import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy,
+import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy, ReaderLayout,
   ReaderInputPort, ReaderMoveIntent, ReaderImageShareHost, ReaderImageShareTarget,
   ReaderImageShareController, ReaderPagedFrame, ReaderImageInformation,
   ReaderImageSaveHost, ReaderImageSaveController, ReaderImageSaveChoice, ReaderAutoReadController } from '@reader-kit/core'
@@ -10,6 +10,7 @@ import { ReaderThumbnailRail } from './ReaderThumbnailRail'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderEntryPreview, ReaderEntryPreviewSource } from './ReaderEntryPreview'
+import { ReaderTapAction } from './ReaderTapAction'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -18,6 +19,7 @@ export struct ReaderSurface {
   @Require @Param initialUnit: ReaderUnitKey
   @Require @Param active: boolean
   @Param closing: boolean = false
+  @Param tapZoneResolver: ((xFraction: number, yFraction: number, layout: ReaderLayout) => ReaderTapAction) | null = null
   @Param beforeShowChrome: ((isCurrent: () => boolean) => Promise<boolean>) | null = null
   @Param initialIndex: number = 0
   @Param topInset: number = 0
@@ -337,13 +339,30 @@ export struct ReaderSurface {
     void this.prepareChromeShow(++this.chromeEpoch, gate)
   }
 
-  private pageTap(x: number): void {
-    if (!this.active) return
-    if (x >= 1 / 3 && x <= 2 / 3) this.toggleChrome()
-    else {
-      const previous = (x < 1 / 3) === (this.state.policy.direction === 'ltr')
-      this.session.move(previous ? 'previous' : 'next')
-    }
+  private pageTap(x: number, y: number): ReaderTapAction {
+    if (!this.active || this.closing || this.chromeDisposed || this.chromeCloseRequested ||
+      this.entryTransition?.pending() || this.state.phase !== 'ready' || this.menuVisible ||
+      this.shareBusy || this.saveBusy || this.informationBusy || this.previewIndex >= 0 ||
+      this.inputTopology !== this.state.topologyRevision ||
+      !Number.isFinite(x) || !Number.isFinite(y)) return 'none'
+    const continuous = this.state.policy.layout === 'continuous'
+    const session = this.session
+    const topology = this.state.topologyRevision
+    const navigation = this.state.navigationRevision
+    const sessionNavigation = session.snapshot().navigationRevision
+    const action: ReaderTapAction = this.tapZoneResolver !== null
+      ? this.tapZoneResolver(x, y, this.state.policy.layout)
+      : continuous || (x >= 1 / 3 && x <= 2 / 3) ? 'menu' : x < 1 / 3 ? 'left' : 'right'
+    if (!this.active || this.closing || this.chromeDisposed || this.chromeCloseRequested ||
+      this.session !== session || this.state.topologyRevision !== topology ||
+      this.state.navigationRevision !== navigation || session.snapshot().navigationRevision !== sessionNavigation) return 'none'
+    if (action === 'menu') { this.toggleChrome(); return 'menu' }
+    if (continuous || action === 'none') return action
+    const previous = action === 'previous' ||
+      (action === 'left' && this.state.policy.direction === 'ltr') ||
+      (action === 'right' && this.state.policy.direction === 'rtl')
+    this.session.move(previous ? 'previous' : 'next')
+    return action
   }
 
   private retry(topology: number, key: string, slot: number, request: number): void {
@@ -380,7 +399,7 @@ export struct ReaderSurface {
             snapshot: this.state, active: this.active,
             entryTransition: this.entryTransition,
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
-            onTap: (): void => { this.toggleChrome() },
+            onTap: (x: number, y: number): ReaderTapAction => this.pageTap(x, y),
             onRange: (start: number, end: number, topology: number, navigation: number): void => {
               this.session.setContinuousRange(start, end, topology, navigation)
             },
@@ -402,7 +421,7 @@ export struct ReaderSurface {
             snapshot: this.state, active: this.active,
             entryTransition: this.entryTransition,
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
-            onTap: (x: number): void => { this.pageTap(x) },
+            onTap: (x: number, y: number): void => { this.pageTap(x, y) },
             onSelect: (index: number, topology: number, navigation: number): void => {
               this.session.selectDisplay(index, topology, navigation)
             },
