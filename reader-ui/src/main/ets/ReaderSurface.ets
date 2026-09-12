@@ -16,6 +16,8 @@ import { ReaderTapAction } from './ReaderTapAction'
 @ComponentV2
 export struct ReaderSurface {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
+  @Param canvasBackground: ResourceColor = Color.Black
+  @Param canvasForeground: ResourceColor = Color.White
   @Require @Param session: ReaderPagedSession
   @Require @Param initialUnit: ReaderUnitKey
   @Require @Param active: boolean
@@ -446,7 +448,7 @@ export struct ReaderSurface {
       }
       if (this.state.error.length > 0) {
         Column({ space: 16 }) {
-          Text($r('app.string.rkit_catalog_failed')).fontColor(Color.White).fontSize(16)
+          Text($r('app.string.rkit_catalog_failed')).fontColor(this.canvasForeground).fontSize(16)
           Button($r('app.string.rkit_retry')).height(40).constraintSize({ minWidth: 120 })
             .backgroundColor(this.accent).fontColor(Color.White)
             .onClick((): void => { void this.session.retry() })
@@ -515,7 +517,7 @@ export struct ReaderSurface {
         ReaderPageStatus({ value: `${(this.state.anchor?.sourceIndexHint ?? 0) + 1} / ${this.state.unit.pageCount}`,
           bottomMargin: this.bottomInset + 8 })
       }
-    }.width('100%').height('100%').backgroundColor(Color.Black).id('rkit-reading-surface')
+    }.width('100%').height('100%').backgroundColor(this.canvasBackground).id('rkit-reading-surface')
       .onTouch((event: TouchEvent): void => {
         this.touching = event.type !== TouchType.Up && event.type !== TouchType.Cancel
         this.syncAutoRead()
