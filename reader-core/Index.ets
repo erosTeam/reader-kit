@@ -1,7 +1,8 @@
 export {
   ReaderUnitKey, ReaderUnit, ReaderPage, ReaderThumbnail, ReaderAsset,
   ReaderCatalog, ReaderAssetProvider, ReaderCancellation, ReaderSnapshot,
-  ReaderSession, ReaderPhase, ReaderAssetKind, ReaderAssetVariant, ReaderOriginalAssetPlan,
+  ReaderSession, ReaderPhase, ReaderAssetKind, ReaderAssetVariant, ReaderProcessedAssetVariant,
+  ReaderOriginalAssetPlan, ReaderVariantAssetPlan, ReaderResolvedAssetPlan,
 } from './src/main/ets/ReaderSession'
 export {
   ReaderFragment, ReaderDirection, ReaderLayout, ReaderDisplayPolicy,

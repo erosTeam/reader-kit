@@ -6,7 +6,8 @@ export { ReaderUnitKey, ReaderUnit, ReaderPage, ReaderThumbnail } from './Reader
 
 export type ReaderAssetKind = 'original' | 'thumbnail'
 /** Body-image quality is independent from the existing body/thumbnail kind. */
-export type ReaderAssetVariant = 'default' | 'original'
+export type ReaderAssetVariant = 'default' | 'original' | 'enhanced' | 'translated'
+export type ReaderProcessedAssetVariant = 'enhanced' | 'translated'
 export type ReaderPhase = 'idle' | 'catalog' | 'asset' | 'decoding' | 'displayed' | 'failed' | 'closed'
 
 /** A consumer cancellation fence; adapters must separately declare transport support. */
@@ -56,13 +57,26 @@ export interface ReaderAssetProvider {
   load(page: ReaderPage, kind: ReaderAssetKind, cancellation: ReaderCancellation, forceReload: boolean): Promise<ReaderAsset>
   /** Resolve only; failure must not replace the currently displayed default image. */
   prepareOriginal?(page: ReaderPage, cancellation: ReaderCancellation): Promise<ReaderOriginalAssetPlan>
+  /** Host processing stays outside reader-kit; resolution failure leaves the current body untouched. */
+  prepareVariant?(page: ReaderPage, variant: ReaderProcessedAssetVariant,
+    cancellation: ReaderCancellation): Promise<ReaderVariantAssetPlan>
 }
 
 /** A host-owned resolved recipe, not a downloaded asset or a persistent reader preference. */
 export interface ReaderOriginalAssetPlan {
   page: ReaderPage
+  variant?: 'original'
   load(cancellation: ReaderCancellation, forceReload: boolean): Promise<ReaderAsset>
 }
+
+/** A host-owned, already resolved enhanced or translated recipe for one exact source page. */
+export interface ReaderVariantAssetPlan {
+  page: ReaderPage
+  variant: ReaderProcessedAssetVariant
+  load(cancellation: ReaderCancellation, forceReload: boolean): Promise<ReaderAsset>
+}
+
+export type ReaderResolvedAssetPlan = ReaderOriginalAssetPlan | ReaderVariantAssetPlan
 
 export class ReaderSnapshot {
   phase: ReaderPhase = 'idle'
@@ -117,7 +131,7 @@ export class ReaderSession {
   private listener: ((snapshot: ReaderSnapshot) => void) | null = null
   private cancellation: ReaderCancellation = new ReaderCancellation()
   private asset: ReaderAsset | null = null
-  private originalPlan: ReaderOriginalAssetPlan | null = null
+  private originalPlan: ReaderResolvedAssetPlan | null = null
   private epoch: number = 0
   private disposed: boolean = false
   private pendingUnit: ReaderUnitKey | null = null
@@ -207,23 +221,23 @@ export class ReaderSession {
   }
 
   async show(index: number, kind: ReaderAssetKind = 'original', forceReload: boolean = false,
-    originalPlan: ReaderOriginalAssetPlan | null = null): Promise<void> {
+    assetPlan: ReaderResolvedAssetPlan | null = null): Promise<void> {
     if (this.disposed || this.state.unit === null) return
     const unit = this.state.unit
     this.pendingUnit = null
     const epoch = this.begin()
-    await this.load(unit, this.boundedIndex(index, unit), kind, epoch, this.cancellation, forceReload, originalPlan)
+    await this.load(unit, this.boundedIndex(index, unit), kind, epoch, this.cancellation, forceReload, assetPlan)
   }
 
   /** Asset slot entry for an already prepared catalog; does not reopen the host unit. */
   async openPrepared(unit: ReaderUnit, index: number, kind: ReaderAssetKind,
-    originalPlan: ReaderOriginalAssetPlan | null = null): Promise<void> {
+    assetPlan: ReaderResolvedAssetPlan | null = null): Promise<void> {
     if (this.disposed) return
     if (!Number.isSafeInteger(unit.pageCount) || unit.pageCount < 1) throw new Error('reader_catalog_unavailable')
     const epoch = this.begin()
     this.pendingUnit = null
     this.state.unit = unit.copy()
-    await this.load(this.state.unit, this.boundedIndex(index, unit), kind, epoch, this.cancellation, false, originalPlan)
+    await this.load(this.state.unit, this.boundedIndex(index, unit), kind, epoch, this.cancellation, false, assetPlan)
   }
 
   async switchUnit(direction: 'next' | 'previous'): Promise<void> {
@@ -248,13 +262,13 @@ export class ReaderSession {
   private async load(
     unit: ReaderUnit, index: number, kind: ReaderAssetKind,
     epoch: number, cancellation: ReaderCancellation, forceReload: boolean = false,
-    originalPlan: ReaderOriginalAssetPlan | null = null,
+    assetPlan: ReaderResolvedAssetPlan | null = null,
   ): Promise<void> {
     this.state.phase = 'asset'
     this.state.sourceIndex = index
     this.state.kind = kind
-    this.originalPlan = kind === 'original' ? originalPlan : null
-    this.state.variant = this.originalPlan === null ? 'default' : 'original'
+    this.originalPlan = kind === 'original' ? assetPlan : null
+    this.state.variant = this.originalPlan?.variant ?? (this.originalPlan === null ? 'default' : 'original')
     this.state.originalAvailable = false
     this.state.page = null
     this.state.informationAvailable = false
@@ -286,7 +300,7 @@ export class ReaderSession {
       this.asset = asset
       this.state.uri = asset.uri
       this.state.informationAvailable = asset.information !== null
-      this.state.originalAvailable = plan !== null || asset.originalAvailable
+      this.state.originalAvailable = this.state.variant === 'original' || asset.originalAvailable
       this.state.assetRequestId = epoch
       this.state.phase = 'decoding'
       this.emit()

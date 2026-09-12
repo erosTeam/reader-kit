@@ -1,6 +1,7 @@
 import { ReaderUnitKey, ReaderUnit, ReaderPage } from './ReaderContent'
 import {
-  ReaderSession, ReaderSnapshot, ReaderCatalog, ReaderAssetProvider, ReaderAssetKind, ReaderCancellation, ReaderOriginalAssetPlan,
+  ReaderSession, ReaderSnapshot, ReaderCatalog, ReaderAssetProvider, ReaderAssetKind, ReaderAssetVariant,
+  ReaderCancellation, ReaderProcessedAssetVariant, ReaderResolvedAssetPlan,
 } from './ReaderSession'
 import { ReaderDisplayMap, ReaderDisplayPolicy, ReaderDisplayPart, ReaderReadingAnchor, ReaderFragment } from './ReaderDisplayMap'
 import { ReaderThumbnailWindow } from './ReaderThumbnailWindow'
@@ -49,6 +50,7 @@ export class ReaderPagedSnapshot {
   policy: ReaderDisplayPolicy = new ReaderDisplayPolicy()
   kind: ReaderAssetKind = 'original'
   originalPreparing: boolean = false
+  variantPreparing: boolean = false
   cropEnabled: boolean = false
   displayIndex: number = 0
   displayCount: number = 0
@@ -82,6 +84,7 @@ export class ReaderPagedSnapshot {
     value.policy = this.policy.copy()
     value.kind = this.kind
     value.originalPreparing = this.originalPreparing
+    value.variantPreparing = this.variantPreparing
     value.cropEnabled = this.cropEnabled
     value.displayIndex = this.displayKeys.indexOf(key)
     value.displayCount = this.displayCount
@@ -107,15 +110,15 @@ class ReaderPageSlot {
   index: number
   kind: ReaderAssetKind
   session: ReaderSession
-  originalPlan: ReaderOriginalAssetPlan | null
+  assetPlan: ReaderResolvedAssetPlan | null
 
   constructor(id: number, index: number, kind: ReaderAssetKind, session: ReaderSession,
-    originalPlan: ReaderOriginalAssetPlan | null = null) {
+    assetPlan: ReaderResolvedAssetPlan | null = null) {
     this.id = id
     this.index = index
     this.kind = kind
     this.session = session
-    this.originalPlan = originalPlan
+    this.assetPlan = assetPlan
   }
 }
 
@@ -134,8 +137,9 @@ export class ReaderPagedSession {
   private pages: Map<number, ReaderPage> = new Map()
   private cropPages: Map<number, ReaderImageCropBounds> = new Map()
   private slots: ReaderPageSlot[] = []
-  private originalPlans: Map<number, ReaderOriginalAssetPlan> = new Map()
+  private assetPlans: Map<number, ReaderResolvedAssetPlan> = new Map()
   private originalPreparations: Map<number, ReaderCancellation> = new Map()
+  private preparationVariants: Map<number, ReaderAssetVariant> = new Map()
   private prefetchNeighbors: boolean = false
   private displayKeys: string[] = []
   private topologySignature: string = ''
@@ -162,6 +166,7 @@ export class ReaderPagedSession {
   cancellationMode(): string { return this.assets.cancellationMode }
   informationSupported(): boolean { return this.assets.informationSupported === true }
   originalSelectionSupported(): boolean { return this.assets.prepareOriginal !== undefined }
+  variantSelectionSupported(): boolean { return this.assets.prepareVariant !== undefined }
 
   /** Runtime presentation only. Does not modify host preferences or source dimensions. */
   setCropEnabled(enabled: boolean): void {
@@ -193,12 +198,24 @@ export class ReaderPagedSession {
     if (this.originalPreparations.size === 0) return
     this.originalPreparations.forEach((cancellation: ReaderCancellation) => cancellation.cancel())
     this.originalPreparations.clear()
+    this.preparationVariants.clear()
     this.emit()
   }
 
   /** Per-source selection within this reading unit; resolution failure keeps the current asset. */
   async selectOriginal(slotId: number, requestId: number, unit: ReaderUnitKey, navigation: number,
     enabled: boolean): Promise<'changed' | 'unchanged' | 'unavailable' | 'stale'> {
+    return this.selectAssetVariant(slotId, requestId, unit, navigation, enabled ? 'original' : 'default')
+  }
+
+  /** Apply one host-resolved derivative without moving the logical page or owning the host service. */
+  async selectVariant(slotId: number, requestId: number, unit: ReaderUnitKey, navigation: number,
+    variant: ReaderProcessedAssetVariant | 'default'): Promise<'changed' | 'unchanged' | 'unavailable' | 'stale'> {
+    return this.selectAssetVariant(slotId, requestId, unit, navigation, variant)
+  }
+
+  private async selectAssetVariant(slotId: number, requestId: number, unit: ReaderUnitKey, navigation: number,
+    variant: ReaderAssetVariant): Promise<'changed' | 'unchanged' | 'unavailable' | 'stale'> {
     const currentFrame = (): ReaderPagedFrame | undefined => {
       if (this.disposed || !this.active || this.state.phase !== 'ready' || this.state.kind !== 'original' ||
         this.state.unit === null || !this.state.unit.key.equals(unit) || this.navigationRevision !== navigation) return undefined
@@ -211,24 +228,31 @@ export class ReaderPagedSession {
     const previous = this.originalPreparations.get(index)
     previous?.cancel()
     this.originalPreparations.delete(index)
+    this.preparationVariants.delete(index)
     if (previous !== undefined) this.emit()
-    if ((frame.asset.variant === 'original') === enabled) return 'unchanged'
-    if (enabled && (frame.asset.phase !== 'displayed' || !frame.asset.originalAvailable ||
+    if (frame.asset.variant === variant) return 'unchanged'
+    if (variant === 'original' && (frame.asset.phase !== 'displayed' || !frame.asset.originalAvailable ||
       this.assets.prepareOriginal === undefined)) return 'unavailable'
+    if ((variant === 'enhanced' || variant === 'translated') &&
+      (frame.asset.phase !== 'displayed' || this.assets.prepareVariant === undefined)) return 'unavailable'
     const cancellation = new ReaderCancellation()
     this.originalPreparations.set(index, cancellation)
+    this.preparationVariants.set(index, variant)
     this.emit()
     try {
-      let plan: ReaderOriginalAssetPlan | null = null
-      if (enabled && this.assets.prepareOriginal !== undefined) {
+      let plan: ReaderResolvedAssetPlan | null = null
+      if (variant === 'original' && this.assets.prepareOriginal !== undefined) {
         plan = await this.assets.prepareOriginal(frame.asset.page.copy(), cancellation)
-        if (cancellation.isCancelled() || currentFrame() === undefined) return 'stale'
-        if (!plan.page.unit.equals(frame.asset.page.unit) || plan.page.key !== frame.asset.page.key ||
-          plan.page.sourceIndex !== index) return 'unavailable'
+      } else if ((variant === 'enhanced' || variant === 'translated') && this.assets.prepareVariant !== undefined) {
+        plan = await this.assets.prepareVariant(frame.asset.page.copy(), variant, cancellation)
       }
       if (cancellation.isCancelled() || currentFrame() === undefined) return 'stale'
-      if (plan === null) this.originalPlans.delete(index)
-      else this.originalPlans.set(index, plan)
+      if (plan !== null && (!plan.page.unit.equals(frame.asset.page.unit) || plan.page.key !== frame.asset.page.key ||
+        plan.page.sourceIndex !== index || (plan.variant ?? 'original') !== variant)) {
+        return 'unavailable'
+      }
+      if (plan === null) this.assetPlans.delete(index)
+      else this.assetPlans.set(index, plan)
       this.cropPages.delete(index)
       this.state.selectionId += 1
       this.reconcile()
@@ -238,6 +262,7 @@ export class ReaderPagedSession {
     } finally {
       if (this.originalPreparations.get(index) === cancellation) {
         this.originalPreparations.delete(index)
+        this.preparationVariants.delete(index)
         this.emit()
       }
     }
@@ -275,7 +300,9 @@ export class ReaderPagedSession {
     value.error = this.state.error
     value.policy = this.state.policy.copy()
     value.kind = this.state.kind
-    value.originalPreparing = this.originalPreparations.size > 0
+    value.originalPreparing = Array.from(this.preparationVariants.values())
+      .some((variant: ReaderAssetVariant): boolean => variant === 'original')
+    value.variantPreparing = this.originalPreparations.size > 0
     value.cropEnabled = this.cropEnabled
     value.displayIndex = this.state.displayIndex
     value.displayCount = this.map?.count() ?? 0
@@ -371,7 +398,7 @@ export class ReaderPagedSession {
         throw new Error('reader_catalog_unavailable')
       }
       this.releaseSlots()
-      this.originalPlans.clear()
+      this.assetPlans.clear()
       this.pages.clear()
       this.cropPages.clear()
       this.topologySignature = ''
@@ -553,7 +580,7 @@ export class ReaderPagedSession {
     })
     if (unit === null) return
     const retained = this.slots.filter((slot: ReaderPageSlot) => slot.kind === this.state.kind &&
-      slot.originalPlan === (this.state.kind === 'original' ? this.originalPlans.get(slot.index) ?? null : null) &&
+      slot.assetPlan === (this.state.kind === 'original' ? this.assetPlans.get(slot.index) ?? null : null) &&
       parts.some((part: ReaderDisplayPart) => part.sourceIndex === slot.index))
     const removed = this.slots.filter((slot: ReaderPageSlot) => !retained.includes(slot))
     this.slots = retained
@@ -563,7 +590,7 @@ export class ReaderPagedSession {
       if (this.slots.some((slot: ReaderPageSlot) => slot.index === part.sourceIndex)) return
       const slot = new ReaderPageSlot(++this.slotSerial, part.sourceIndex, this.state.kind,
         new ReaderSession(this.catalog, this.assets),
-        this.state.kind === 'original' ? this.originalPlans.get(part.sourceIndex) ?? null : null)
+        this.state.kind === 'original' ? this.assetPlans.get(part.sourceIndex) ?? null : null)
       this.slots.push(slot)
       added.push(slot)
     })
@@ -571,7 +598,7 @@ export class ReaderPagedSession {
     added.forEach((slot: ReaderPageSlot) => {
       if (!this.slots.includes(slot)) return
       slot.session.subscribe((snapshot: ReaderSnapshot): void => { this.slotChanged(slot, snapshot) })
-      void slot.session.openPrepared(unit, slot.index, slot.kind, slot.originalPlan)
+      void slot.session.openPrepared(unit, slot.index, slot.kind, slot.assetPlan)
     })
   }
 
@@ -695,7 +722,7 @@ export class ReaderPagedSession {
 
   close(): void {
     this.cancelOriginalPreparations()
-    this.originalPlans.clear()
+    this.assetPlans.clear()
     if (this.disposed) return
     this.disposed = true
     this.active = false
