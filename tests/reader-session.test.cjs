@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict')
 const test = require('node:test')
-const { ReaderSession, ReaderUnitKey, ReaderUnit, ReaderPage, ReaderAsset } = require('./load-core.cjs')('ReaderSession')
+const { ReaderSession, ReaderUnitKey, ReaderUnit, ReaderPage, ReaderAsset, ReaderCancellation } = require('./load-core.cjs')('ReaderSession')
 
 const key = (unit = 'A') => new ReaderUnitKey('test', 'work', unit)
 const deferred = () => {
@@ -19,6 +19,21 @@ class Assets {
   released = []
   async load(page) { return new ReaderAsset(page.key, () => this.released.push(page.key)) }
 }
+
+test('cancellation hooks release host work once and may be detached', () => {
+  const cancellation = new ReaderCancellation()
+  const calls = []
+  cancellation.onCancel(() => calls.push('kept'))
+  const detach = cancellation.onCancel(() => calls.push('detached'))
+  cancellation.onCancel(() => { calls.push('throwing'); throw new Error('host cleanup failed') })
+  cancellation.onCancel(() => calls.push('after-throw'))
+  detach()
+  cancellation.cancel()
+  cancellation.cancel()
+  assert.deepEqual(calls, ['kept', 'throwing', 'after-throw'])
+  cancellation.onCancel(() => calls.push('late'))
+  assert.deepEqual(calls, ['kept', 'throwing', 'after-throw', 'late'])
+})
 
 test('open owns its requested key even if the caller mutates it during preparation', async () => {
   const pending = deferred()

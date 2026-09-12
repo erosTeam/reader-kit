@@ -13,9 +13,33 @@ export type ReaderPhase = 'idle' | 'catalog' | 'asset' | 'decoding' | 'displayed
 /** A consumer cancellation fence; adapters must separately declare transport support. */
 export class ReaderCancellation {
   private cancelled: boolean = false
+  private listeners: Array<() => void> = []
 
-  cancel(): void { this.cancelled = true }
+  cancel(): void {
+    if (this.cancelled) return
+    this.cancelled = true
+    const listeners = this.listeners
+    this.listeners = []
+    listeners.forEach((listener: () => void): void => {
+      try { listener() } catch (_error) {}
+    })
+  }
   isCancelled(): boolean { return this.cancelled }
+  /** Hosts may detach an owned transport or processor immediately; the returned function removes the hook. */
+  onCancel(listener: () => void): () => void {
+    if (this.cancelled) {
+      try { listener() } catch (_error) {}
+      return (): void => {}
+    }
+    this.listeners.push(listener)
+    let active: boolean = true
+    return (): void => {
+      if (!active) return
+      active = false
+      const index = this.listeners.indexOf(listener)
+      if (index >= 0) this.listeners.splice(index, 1)
+    }
+  }
   check(): void {
     if (this.cancelled) throw new Error('reader_request_cancelled')
   }
@@ -58,7 +82,7 @@ export interface ReaderAssetProvider {
   /** Resolve only; failure must not replace the currently displayed default image. */
   prepareOriginal?(page: ReaderPage, cancellation: ReaderCancellation): Promise<ReaderOriginalAssetPlan>
   /** Host processing stays outside reader-kit; resolution failure leaves the current body untouched. */
-  prepareVariant?(page: ReaderPage, variant: ReaderProcessedAssetVariant,
+  prepareVariant?(page: ReaderPage, variant: ReaderProcessedAssetVariant, identity: string,
     cancellation: ReaderCancellation): Promise<ReaderVariantAssetPlan>
 }
 
@@ -73,6 +97,8 @@ export interface ReaderOriginalAssetPlan {
 export interface ReaderVariantAssetPlan {
   page: ReaderPage
   variant: ReaderProcessedAssetVariant
+  /** Exact host processing identity, including every setting that can change the output. */
+  identity: string
   load(cancellation: ReaderCancellation, forceReload: boolean): Promise<ReaderAsset>
 }
 
@@ -85,6 +111,7 @@ export class ReaderSnapshot {
   sourceIndex: number = 0
   kind: ReaderAssetKind = 'original'
   variant: ReaderAssetVariant = 'default'
+  variantIdentity: string = ''
   originalAvailable: boolean = false
   uri: string = ''
   requestId: number = 0
@@ -106,6 +133,7 @@ export class ReaderSnapshot {
     value.sourceIndex = this.sourceIndex
     value.kind = this.kind
     value.variant = this.variant
+    value.variantIdentity = this.variantIdentity
     value.originalAvailable = this.originalAvailable
     value.uri = this.uri
     value.requestId = this.requestId
@@ -269,6 +297,8 @@ export class ReaderSession {
     this.state.kind = kind
     this.originalPlan = kind === 'original' ? assetPlan : null
     this.state.variant = this.originalPlan?.variant ?? (this.originalPlan === null ? 'default' : 'original')
+    this.state.variantIdentity = this.originalPlan?.variant === 'enhanced' || this.originalPlan?.variant === 'translated'
+      ? this.originalPlan.identity : ''
     this.state.originalAvailable = false
     this.state.page = null
     this.state.informationAvailable = false

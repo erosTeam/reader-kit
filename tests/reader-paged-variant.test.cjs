@@ -15,9 +15,9 @@ async function fixture() {
   const provider = {
     cancellationMode: 'consumer-only',
     async load(p) { return new ReaderAsset(`default-${p.sourceIndex}`, () => releases.push(p.sourceIndex)) },
-    async prepareVariant(p, variant) {
-      calls.push([p.sourceIndex, variant])
-      return { page: p.copy(), variant, async load(_c, force) {
+    async prepareVariant(p, variant, identity) {
+      calls.push([p.sourceIndex, variant, identity])
+      return { page: p.copy(), variant, identity, async load(_c, force) {
         return new ReaderAsset(`${variant}-${p.sourceIndex}-${force ? 'retry' : 'first'}`)
       } }
     },
@@ -26,9 +26,9 @@ async function fixture() {
   s.setViewportActive(true); await s.open(key); await tick()
   const decode = () => s.snapshot().frames.forEach(f => s.reportPresentation(f.slotId, f.asset.assetRequestId, true))
   const frame = () => s.snapshot().frames[0]
-  const choose = (variant, nav = s.snapshot().navigationRevision) => {
+  const choose = (variant, nav = s.snapshot().navigationRevision, identity = variant === 'default' ? '' : `${variant}:v1`) => {
     const current = frame()
-    return s.selectVariant(current.slotId, current.asset.requestId, key.copy(), nav, variant)
+    return s.selectVariant(current.slotId, current.asset.requestId, key.copy(), nav, variant, identity)
   }
   decode()
   return { s, key, provider, calls, releases, decode, frame, choose }
@@ -36,9 +36,9 @@ async function fixture() {
 
 test('resolved host variant preserves page identity and changes only after preparation', async () => {
   const f = await fixture(), before = f.s.snapshot(); let resolve, cancellation
-  f.provider.prepareVariant = async (page, variant, c) => {
+  f.provider.prepareVariant = async (page, variant, identity, c) => {
     cancellation = c
-    return new Promise(done => { resolve = () => done({ page: page.copy(), variant,
+    return new Promise(done => { resolve = () => done({ page: page.copy(), variant, identity,
       async load() { return new ReaderAsset('enhanced-ready') } }) })
   }
   const pending = f.choose('enhanced')
@@ -58,9 +58,9 @@ test('resolved host variant preserves page identity and changes only after prepa
 test('wrong derivative identity or variant leaves the displayed body untouched', async () => {
   for (const wrong of ['page', 'variant']) {
     const f = await fixture(), current = f.frame()
-    f.provider.prepareVariant = async (page, variant) => {
+    f.provider.prepareVariant = async (page, variant, identity) => {
       if (wrong === 'page') page.key = 'wrong'
-      return { page, variant: wrong === 'variant' ? 'translated' : variant,
+      return { page, variant: wrong === 'variant' ? 'translated' : variant, identity,
         async load() { throw new Error('must not load') } }
     }
     assert.equal(await f.choose('enhanced'), 'unavailable')
@@ -74,9 +74,9 @@ test('wrong derivative identity or variant leaves the displayed body untouched',
 test('navigation, background and close fence late host processing before its recipe loads', async () => {
   for (const action of ['next', 'background', 'close']) {
     const f = await fixture(); let resolve, cancellation, loads = 0
-    f.provider.prepareVariant = async (page, variant, c) => {
+    f.provider.prepareVariant = async (page, variant, identity, c) => {
       cancellation = c
-      return new Promise(done => { resolve = () => done({ page, variant,
+      return new Promise(done => { resolve = () => done({ page, variant, identity,
         async load() { loads++; return new ReaderAsset('stale') } }) })
     }
     const pending = f.choose('translated')
@@ -99,13 +99,13 @@ test('one source can replace enhanced with translated then reveal its default ag
   assert.equal(await f.choose('default'), 'changed'); await tick(); f.decode()
   assert.equal(f.frame().asset.variant, 'default')
   assert.equal(f.frame().asset.uri, 'default-0')
-  assert.deepEqual(f.calls, [[0, 'enhanced'], [0, 'translated']])
+  assert.deepEqual(f.calls, [[0, 'enhanced', 'enhanced:v1'], [0, 'translated', 'translated:v1']])
   f.s.close()
 })
 
 test('processed load failure stays explicit, retries the same recipe, and may return to default', async () => {
   const f = await fixture(), forces = []
-  f.provider.prepareVariant = async (page, variant) => ({ page, variant, async load(_c, force) {
+  f.provider.prepareVariant = async (page, variant, identity) => ({ page, variant, identity, async load(_c, force) {
     forces.push(force)
     if (!force) throw new Error('processing artifact unavailable')
     return new ReaderAsset('translated-recovered')
@@ -117,6 +117,21 @@ test('processed load failure stays explicit, retries the same recipe, and may re
   assert.equal(f.frame().asset.uri, 'translated-recovered')
   assert.equal(await f.choose('default'), 'changed'); await tick(); f.decode()
   assert.equal(f.frame().asset.uri, 'default-0'); f.s.close()
+})
+
+test('a changed processing identity replaces the same variant while stale identities are rejected', async () => {
+  const f = await fixture()
+  assert.equal(await f.choose('enhanced'), 'changed'); await tick(); f.decode()
+  assert.equal(f.frame().asset.variantIdentity, 'enhanced:v1')
+  assert.equal(await f.choose('enhanced'), 'unchanged')
+  assert.equal(await f.choose('enhanced', f.s.snapshot().navigationRevision, 'enhanced:v2'), 'changed')
+  await tick(); f.decode()
+  assert.equal(f.frame().asset.variantIdentity, 'enhanced:v2')
+  f.provider.prepareVariant = async (page, variant) => ({ page, variant, identity: 'wrong',
+    async load() { throw new Error('must not load') } })
+  assert.equal(await f.choose('enhanced', f.s.snapshot().navigationRevision, 'enhanced:v3'), 'unavailable')
+  assert.equal(f.frame().asset.variantIdentity, 'enhanced:v2')
+  f.s.close()
 })
 
 test('unsupported hosts reject processed variants and opening a unit clears selections', async () => {

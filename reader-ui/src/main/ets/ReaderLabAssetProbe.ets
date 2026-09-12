@@ -1,5 +1,6 @@
 import { ReaderAsset, ReaderAssetKind, ReaderAssetProvider, ReaderCancellation, ReaderPage,
-  ReaderImageInformation, ReaderImageInformationSource, ReaderOriginalAssetPlan } from '@reader-kit/core'
+  ReaderImageInformation, ReaderImageInformationSource, ReaderOriginalAssetPlan,
+  ReaderProcessedAssetVariant, ReaderVariantAssetPlan } from '@reader-kit/core'
 import { ReaderFileInformation } from './ReaderFileInformation'
 
 class ReaderLabInformationSource implements ReaderImageInformationSource {
@@ -29,6 +30,8 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
   cancellationMode: 'consumer-only' | 'transport'
   informationSupported: boolean
   prepareOriginal?: (page: ReaderPage, cancellation: ReaderCancellation) => Promise<ReaderOriginalAssetPlan>
+  prepareVariant?: (page: ReaderPage, variant: ReaderProcessedAssetVariant, identity: string,
+    cancellation: ReaderCancellation) => Promise<ReaderVariantAssetPlan>
   private provider: ReaderAssetProvider
   private thumbnailIndex: number
   private injected: boolean = false
@@ -62,6 +65,14 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
           })
         }
         return this.provider.prepareOriginal(page, cancellation)
+      }
+    }
+    if (provider.prepareVariant !== undefined) {
+      this.prepareVariant = (page: ReaderPage, variant: ReaderProcessedAssetVariant, identity: string,
+        cancellation: ReaderCancellation): Promise<ReaderVariantAssetPlan> => {
+        cancellation.check()
+        if (this.provider.prepareVariant === undefined) throw new Error('reader_variant_unavailable')
+        return this.provider.prepareVariant(page, variant, identity, cancellation)
       }
     }
   }

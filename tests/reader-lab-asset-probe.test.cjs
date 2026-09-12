@@ -114,6 +114,22 @@ test('optional original capability is forwarded only when supported and retains 
   assert.throws(() => probe.prepareOriginal(original, cancellation))
 })
 
+test('optional processed variant capability forwards exact host identity and cancellation', async () => {
+  const backend = provider()
+  assert.equal(new ReaderLabAssetProbe(backend, -1).prepareVariant, undefined)
+  const original = page(0), cancellation = new core.ReaderCancellation()
+  backend.prepareVariant = async function(p, variant, identity, c) {
+    assert.equal(this, backend); assert.equal(p, original); assert.equal(variant, 'enhanced')
+    assert.equal(identity, 'model-a:2000'); assert.equal(c, cancellation)
+    return { page: p, variant, identity, load: async () => backend.asset }
+  }
+  const probe = new ReaderLabAssetProbe(backend, -1)
+  const plan = await probe.prepareVariant(original, 'enhanced', 'model-a:2000', cancellation)
+  assert.equal(plan.identity, 'model-a:2000')
+  cancellation.cancel()
+  assert.throws(() => probe.prepareVariant(original, 'enhanced', 'model-a:2000', cancellation))
+})
+
 test('information wrapping preserves original availability and delegates lease release once', async () => {
   const backend = provider(); let releases = 0
   backend.asset = new core.ReaderAsset('file:///real', () => releases++, { read: async () => ({}) })

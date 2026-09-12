@@ -121,6 +121,56 @@ test('disabled animation and continuous reading retain direct session-owned move
   }
 })
 
+test('preferred host variant follows exact processing identity and returns to default', async () => {
+  const surface = new ReaderSurface()
+  surface.active = true; surface.closing = false; surface.chromeDisposed = false
+  surface.preferredVariant = 'enhanced'; surface.preferredVariantIdentity = 'model-a:2000'
+  const key = new core.ReaderUnitKey('source', 'work', 'unit')
+  const calls = []
+  const session = new core.ReaderPagedSession({
+    open: async k => new core.ReaderUnit(k, 'Title', 2),
+    page: async (unit, index) => new core.ReaderPage(unit.key, `p${index}`, index), adjacent: () => null,
+  }, { cancellationMode: 'consumer-only', async load(page) { return new core.ReaderAsset(`default-${page.sourceIndex}`) },
+    async prepareVariant(page, variant, identity) { calls.push(identity); return { page, variant, identity,
+      async load() { return new core.ReaderAsset(`${variant}-${identity}`) } } },
+  })
+  surface.session = session
+  session.setViewportActive(true)
+  session.subscribe(state => { surface.state = state; surface.syncPreferredVariant(state) })
+  await session.open(key); await new Promise(resolve => setImmediate(resolve))
+  let frame = session.snapshot().frames[0]
+  session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true)
+  await new Promise(resolve => setImmediate(resolve))
+  frame = session.snapshot().frames[0]
+  session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true)
+  assert.equal(frame.asset.variant, 'enhanced')
+  assert.equal(frame.asset.variantIdentity, 'model-a:2000')
+  surface.preferredVariantIdentity = 'model-b:3000'; surface.onPreferredVariantChanged()
+  await new Promise(resolve => setImmediate(resolve))
+  frame = session.snapshot().frames[0]
+  session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true)
+  assert.equal(frame.asset.variantIdentity, 'model-b:3000')
+  surface.preferredVariant = 'default'; surface.preferredVariantIdentity = ''; surface.onPreferredVariantChanged()
+  await new Promise(resolve => setImmediate(resolve))
+  frame = session.snapshot().frames[0]
+  session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true)
+  assert.equal(frame.asset.variant, 'default')
+  assert.deepEqual(calls, ['model-a:2000', 'model-b:3000'])
+  session.close()
+})
+
+test('host interaction signal is edge-triggered and clears after the gesture', () => {
+  const surface = new ReaderSurface(), events = []
+  Object.assign(surface, { active: true, closing: false, chromeDisposed: false, inputLocked: false,
+    onInteractionBusy: busy => events.push(busy) })
+  surface.reportInteractionBusy()
+  surface.touching = true; surface.reportInteractionBusy(); surface.reportInteractionBusy()
+  surface.touching = false; surface.reportInteractionBusy()
+  surface.inputLocked = true; surface.reportInteractionBusy()
+  surface.active = false; surface.reportInteractionBusy()
+  assert.deepEqual(events, [true, false, true, false])
+})
+
 test('the pre-existing active, session, interaction and topology locks still reject external moves', () => {
   for (const [field, locked] of [['active', false], ['touching', true], ['menuVisible', true],
     ['shareBusy', true], ['informationBusy', true], ['previewIndex', 0], ['inputTopology', 6], ['inputLocked', true]]) {

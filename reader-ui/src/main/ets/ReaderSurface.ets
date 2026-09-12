@@ -1,5 +1,5 @@
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy, ReaderLayout,
-  ReaderReadingAnchor,
+  ReaderReadingAnchor, ReaderProcessedAssetVariant,
   ReaderInputPort, ReaderMoveIntent, ReaderImageShareHost, ReaderImageShareTarget,
   ReaderImageShareController, ReaderPagedFrame, ReaderImageInformation,
   ReaderImageSaveHost, ReaderImageSaveController, ReaderImageSaveChoice, ReaderAutoReadController } from '@reader-kit/core'
@@ -36,6 +36,9 @@ export struct ReaderSurface {
   @Param autoReadAvailable: boolean = false
   @Param autoReadSeconds: number = 3
   @Param pageTurnAnimation: boolean = false
+  /** Optional host policy. reader-kit only requests exact host-prepared derivatives. */
+  @Param preferredVariant: ReaderProcessedAssetVariant | 'default' = 'default'
+  @Param preferredVariantIdentity: string = ''
   @Param cropBorders: boolean = false
   @Param cropAvailable: boolean = false
   @Param hostSettingsAvailable: boolean = false
@@ -53,6 +56,8 @@ export struct ReaderSurface {
   @Param entryPreview: ReaderEntryPreviewSource | null = null
   @Event onClose: () => void = () => {}
   @Event onChromeVisible: (visible: boolean) => void = () => {}
+  /** Host-neutral foreground interaction signal for pausable processors. */
+  @Event onInteractionBusy: (busy: boolean) => void = () => {}
   @Local private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
   @Local private chromeVisible: boolean = true
   @Local private thumbnailsVisible: boolean = false
@@ -83,6 +88,42 @@ export struct ReaderSurface {
   private chromeDisposed: boolean = false
   private chromeCloseRequested: boolean = false
   private lastObservedSignature: string = ''
+  private variantAttemptContext: string = ''
+  private variantAttempts: Set<string> = new Set<string>()
+  private interactionBusyReported: boolean = false
+
+  private syncPreferredVariant(state: ReaderPagedSnapshot): void {
+    const unit = state.unit?.key
+    const context = JSON.stringify([unit?.scope ?? '', unit?.work ?? '', unit?.unit ?? '', state.navigationRevision,
+      this.preferredVariant, this.preferredVariantIdentity])
+    if (context !== this.variantAttemptContext) {
+      this.variantAttemptContext = context
+      this.variantAttempts.clear()
+    }
+    if (!this.active || this.closing || this.chromeDisposed || state.phase !== 'ready' || unit === undefined ||
+      (this.preferredVariant !== 'default' && this.preferredVariantIdentity.length === 0)) return
+    state.frames.forEach((frame: ReaderPagedFrame): void => {
+      if (frame.asset.phase !== 'displayed') return
+      const wantsDefault = this.preferredVariant === 'default'
+      if (wantsDefault && frame.asset.variant !== 'enhanced') return
+      if (!wantsDefault && (frame.asset.variant === 'original' || frame.asset.variant === 'translated' ||
+        (frame.asset.variant === this.preferredVariant && frame.asset.variantIdentity === this.preferredVariantIdentity))) return
+      const attempt = JSON.stringify([frame.part.sourceIndex, frame.slotId, frame.asset.requestId,
+        this.preferredVariant, this.preferredVariantIdentity])
+      if (this.variantAttempts.has(attempt)) return
+      this.variantAttempts.add(attempt)
+      void this.session.selectVariant(frame.slotId, frame.asset.requestId, unit.copy(), state.navigationRevision,
+        this.preferredVariant, this.preferredVariantIdentity)
+    })
+  }
+
+  private reportInteractionBusy(): void {
+    const busy = this.active && !this.closing && !this.chromeDisposed &&
+      (this.touching || this.menuVisible || this.inputLocked || this.entryTransition?.pending() === true)
+    if (busy === this.interactionBusyReported) return
+    this.interactionBusyReported = busy
+    this.onInteractionBusy?.(busy)
+  }
 
   private publishObserved(state: ReaderPagedSnapshot): void {
     const anchor = state.observedAnchor
@@ -112,6 +153,7 @@ export struct ReaderSurface {
       }
       this.state = state
       this.publishObserved(state)
+      this.syncPreferredVariant(state)
       this.entryTransition?.update(state)
       this.shareController.update(ReaderImageShareTarget.from(state), this.active)
       this.saveController.update(state, this.active)
@@ -131,6 +173,10 @@ export struct ReaderSurface {
     this.saveController.close()
     this.saveFeedback = null
     this.input?.disconnect(this.inputConnection)
+    if (this.interactionBusyReported) {
+      this.interactionBusyReported = false
+      this.onInteractionBusy(false)
+    }
     this.session.close()
   }
 
@@ -142,12 +188,23 @@ export struct ReaderSurface {
       this.entryTransition?.cancel()
       this.previewIndex = -1; this.touching = false
       if (!this.informationPresented) { this.informationEpoch += 1; this.informationBusy = false }
+      this.variantAttemptContext = ''
+      this.variantAttempts?.clear()
     }
     this.shareController.update(ReaderImageShareTarget.from(this.session.snapshot()), this.active)
     this.saveController.update(this.session.snapshot(), this.active)
     this.flushSaveFeedback()
     this.session.setViewportActive(this.active)
+    this.reportInteractionBusy?.()
+    this.syncPreferredVariant(this.session.snapshot())
     this.syncAutoRead()
+  }
+
+  @Monitor('preferredVariant', 'preferredVariantIdentity')
+  onPreferredVariantChanged(): void {
+    this.variantAttemptContext = ''
+    this.variantAttempts?.clear()
+    this.syncPreferredVariant(this.session.snapshot())
   }
 
   @Monitor('autoReadAvailable', 'autoReadSeconds', 'shareBusy', 'saveBusy', 'informationBusy', 'previewIndex')
@@ -308,7 +365,10 @@ export struct ReaderSurface {
       this.autoReadController.stop()
       this.saveController.close()
       this.invalidateChromeShow()
+      this.variantAttemptContext = ''
+      this.variantAttempts?.clear()
     }
+    this.reportInteractionBusy?.()
   }
 
   private requestClose(): void {
@@ -430,6 +490,7 @@ export struct ReaderSurface {
     if (topology !== this.state.topologyRevision) return
     this.inputTopology = topology
     this.inputLocked = locked
+    this.reportInteractionBusy()
     this.syncAutoRead()
   }
 
@@ -548,7 +609,9 @@ export struct ReaderSurface {
           informationAvailable: this.session.informationSupported(),
           onInformation: (frame: ReaderPagedFrame): void => { void this.showInformation(frame) },
           onShare: (): void => { void this.shareImage() },
-          onMenuVisible: (visible: boolean): void => { this.menuVisible = visible; this.syncAutoRead() },
+          onMenuVisible: (visible: boolean): void => {
+            this.menuVisible = visible; this.reportInteractionBusy(); this.syncAutoRead()
+          },
           onThumbnails: (): void => { this.thumbnailsVisible = !this.thumbnailsVisible },
           onPolicy: (policy: ReaderDisplayPolicy, intent: ReaderRuntimePolicyIntent): void => {
             this.session.setPolicy(policy)
@@ -575,6 +638,7 @@ export struct ReaderSurface {
     }.width('100%').height('100%').backgroundColor(this.canvasBackground).id('rkit-reading-surface')
       .onTouch((event: TouchEvent): void => {
         this.touching = event.type !== TouchType.Up && event.type !== TouchType.Cancel
+        this.reportInteractionBusy()
         this.syncAutoRead()
       })
   }

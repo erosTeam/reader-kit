@@ -1,7 +1,7 @@
 import { ReaderUnitKey, ReaderUnit, ReaderPage } from './ReaderContent'
 import {
   ReaderSession, ReaderSnapshot, ReaderCatalog, ReaderAssetProvider, ReaderAssetKind, ReaderAssetVariant,
-  ReaderCancellation, ReaderProcessedAssetVariant, ReaderResolvedAssetPlan,
+  ReaderCancellation, ReaderProcessedAssetVariant, ReaderResolvedAssetPlan, ReaderVariantAssetPlan,
 } from './ReaderSession'
 import { ReaderDisplayMap, ReaderDisplayPolicy, ReaderDisplayPart, ReaderReadingAnchor, ReaderFragment } from './ReaderDisplayMap'
 import { ReaderThumbnailWindow } from './ReaderThumbnailWindow'
@@ -210,12 +210,13 @@ export class ReaderPagedSession {
 
   /** Apply one host-resolved derivative without moving the logical page or owning the host service. */
   async selectVariant(slotId: number, requestId: number, unit: ReaderUnitKey, navigation: number,
-    variant: ReaderProcessedAssetVariant | 'default'): Promise<'changed' | 'unchanged' | 'unavailable' | 'stale'> {
-    return this.selectAssetVariant(slotId, requestId, unit, navigation, variant)
+    variant: ReaderProcessedAssetVariant | 'default', identity: string = ''):
+    Promise<'changed' | 'unchanged' | 'unavailable' | 'stale'> {
+    return this.selectAssetVariant(slotId, requestId, unit, navigation, variant, identity)
   }
 
   private async selectAssetVariant(slotId: number, requestId: number, unit: ReaderUnitKey, navigation: number,
-    variant: ReaderAssetVariant): Promise<'changed' | 'unchanged' | 'unavailable' | 'stale'> {
+    variant: ReaderAssetVariant, identity: string = ''): Promise<'changed' | 'unchanged' | 'unavailable' | 'stale'> {
     const currentFrame = (): ReaderPagedFrame | undefined => {
       if (this.disposed || !this.active || this.state.phase !== 'ready' || this.state.kind !== 'original' ||
         this.state.unit === null || !this.state.unit.key.equals(unit) || this.navigationRevision !== navigation) return undefined
@@ -230,11 +231,12 @@ export class ReaderPagedSession {
     this.originalPreparations.delete(index)
     this.preparationVariants.delete(index)
     if (previous !== undefined) this.emit()
-    if (frame.asset.variant === variant) return 'unchanged'
+    if (frame.asset.variant === variant &&
+      (variant === 'default' || variant === 'original' || frame.asset.variantIdentity === identity)) return 'unchanged'
     if (variant === 'original' && (frame.asset.phase !== 'displayed' || !frame.asset.originalAvailable ||
       this.assets.prepareOriginal === undefined)) return 'unavailable'
     if ((variant === 'enhanced' || variant === 'translated') &&
-      (frame.asset.phase !== 'displayed' || this.assets.prepareVariant === undefined)) return 'unavailable'
+      (frame.asset.phase !== 'displayed' || identity.length === 0 || this.assets.prepareVariant === undefined)) return 'unavailable'
     const cancellation = new ReaderCancellation()
     this.originalPreparations.set(index, cancellation)
     this.preparationVariants.set(index, variant)
@@ -244,11 +246,13 @@ export class ReaderPagedSession {
       if (variant === 'original' && this.assets.prepareOriginal !== undefined) {
         plan = await this.assets.prepareOriginal(frame.asset.page.copy(), cancellation)
       } else if ((variant === 'enhanced' || variant === 'translated') && this.assets.prepareVariant !== undefined) {
-        plan = await this.assets.prepareVariant(frame.asset.page.copy(), variant, cancellation)
+        plan = await this.assets.prepareVariant(frame.asset.page.copy(), variant, identity, cancellation)
       }
       if (cancellation.isCancelled() || currentFrame() === undefined) return 'stale'
       if (plan !== null && (!plan.page.unit.equals(frame.asset.page.unit) || plan.page.key !== frame.asset.page.key ||
-        plan.page.sourceIndex !== index || (plan.variant ?? 'original') !== variant)) {
+        plan.page.sourceIndex !== index || (plan.variant ?? 'original') !== variant ||
+        ((variant === 'enhanced' || variant === 'translated') &&
+          (plan as ReaderVariantAssetPlan).identity !== identity))) {
         return 'unavailable'
       }
       if (plan === null) this.assetPlans.delete(index)
