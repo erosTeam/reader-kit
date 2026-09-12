@@ -135,6 +135,8 @@
       "name": "rkit_cover_off",
       "value": "Cover: pair"
     },
+    { "name": "rkit_host_settings", "value": "Reader settings" },
+    { "name": "rkit_open_external", "value": "Open in external browser" },
     { "name": "rkit_crop_on", "value": "Enable border crop" },
     { "name": "rkit_crop_off", "value": "Disable border crop" }
   ]

@@ -10,7 +10,7 @@ export { ReaderSystemSharePresentation } from './src/main/ets/ReaderSystemShareP
 export { ReaderSystemImageSaveHost } from './src/main/ets/ReaderSystemImageSaveHost'
 export { ReaderFileInformation } from './src/main/ets/ReaderFileInformation'
 export { ReaderFileCropSource } from './src/main/ets/ReaderFileCropSource'
-export { ReaderChrome } from './src/main/ets/ReaderChrome'
+export { ReaderChrome, ReaderRuntimePolicyIntent } from './src/main/ets/ReaderChrome'
 export { ReaderTrialWindow } from './src/main/ets/ReaderTrialWindow'
 export { ReaderKeepScreenOn } from './src/main/ets/ReaderKeepScreenOn'
 export { ReaderTrialLayoutCommit } from './src/main/ets/ReaderTrialLayoutCommit'

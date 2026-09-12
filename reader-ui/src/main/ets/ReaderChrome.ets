@@ -4,6 +4,9 @@ import { uiMaterial } from '@kit.ArkUI'
 import { deviceInfo } from '@kit.BasicServicesKit'
 import { SymbolGlyphModifier } from '@kit.ArkUI'
 
+export type ReaderRuntimePolicyIntent = 'layout' | 'direction' | 'spread_layout' |
+  'first_page_alone' | 'split_wide_pages'
+
 /** Default overlay chrome. It emits intentions; it never opens a catalog or writes preferences. */
 @ComponentV2
 export struct ReaderChrome {
@@ -31,12 +34,16 @@ export struct ReaderChrome {
   @Param chapterNavigationAvailable: boolean = false
   @Param chapterNavigationBusy: boolean = false
   @Event onChapter: (direction: 'previous' | 'next', source: ReaderUnitKey) => void = () => {}
+  @Param hostSettingsAvailable: boolean = false
+  @Event onHostSettings: () => void = () => {}
+  @Param externalOpenAvailable: boolean = false
+  @Event onExternalOpen: (source: ReaderUnitKey) => void = () => {}
   @Event onInformation: (frame: ReaderPagedFrame) => void = () => {}
   @Event onShare: () => void = () => {}
   @Event onThumbnails: () => void = () => {}
   @Event onMenuVisible: (visible: boolean) => void = () => {}
   @Event onClose: () => void = () => {}
-  @Event onPolicy: (policy: ReaderDisplayPolicy) => void = () => {}
+  @Event onPolicy: (policy: ReaderDisplayPolicy, intent: ReaderRuntimePolicyIntent) => void = () => {}
   @Event onShiftSpread: (unit: ReaderUnitKey, topology: number, navigation: number) => void = () => {}
   @Event onSeek: (index: number, unit: ReaderUnitKey, navigation: number) => void = () => {}
   @Event onPreview: (index: number, unit: ReaderUnitKey | null, navigation: number) => void = () => {}
@@ -110,14 +117,14 @@ export struct ReaderChrome {
     const policy = this.snapshot.policy.copy()
     policy.layout = layout
     policy.pagingAxis = axis
-    this.onPolicy(policy)
+    this.onPolicy(policy, 'layout')
   }
 
   private toggleSpreadLayout(): void {
     const policy = this.snapshot.policy.copy()
     if (policy.layout !== 'spread') return
     policy.spreadLayout = policy.spreadLayout === 'joined' ? 'split' : 'joined'
-    this.onPolicy(policy)
+    this.onPolicy(policy, 'spread_layout')
   }
 
   private canOriginal(frame: ReaderPagedFrame): boolean {
@@ -238,6 +245,13 @@ export struct ReaderChrome {
     }
   }
 
+  private selectExternalOpen(): void {
+    const source = this.moreUnit
+    this.moreShown = false
+    if (this.active && this.externalOpenAvailable && this.snapshot.phase === 'ready' && source !== null &&
+      this.snapshot.unit?.key.equals(source)) this.onExternalOpen(source.copy())
+  }
+
   @Builder
   private InformationChoice() {
     Menu() {
@@ -265,6 +279,11 @@ export struct ReaderChrome {
             const frame = this.informationFrames()[0]
             if (frame !== undefined) this.selectInformation(frame)
           })
+      }
+      if (this.externalOpenAvailable) {
+        MenuItem({ content: $r('app.string.rkit_open_external') }).id('rkit-open-external')
+          .enabled(this.active && this.snapshot.phase === 'ready' && this.moreUnit !== null)
+          .onClick((): void => { this.selectExternalOpen() })
       }
       if (this.chapterNavigationAvailable) {
         MenuItem({ content: $r('app.string.rkit_previous_unit') }).id('rkit-previous-chapter')
@@ -296,25 +315,25 @@ export struct ReaderChrome {
           .onClick((): void => { this.onCrop() })
       }
       MenuItem({ content: this.snapshot.policy.direction === 'ltr' ? $r('app.string.rkit_rtl') : $r('app.string.rkit_ltr') })
-        .enabled(this.snapshot.policy.layout !== 'continuous')
+        .enabled(this.snapshot.policy.layout !== 'continuous' && this.snapshot.policy.pagingAxis !== 'vertical')
         .onClick((): void => {
           const policy = this.snapshot.policy.copy()
           policy.direction = policy.direction === 'ltr' ? 'rtl' : 'ltr'
-          this.onPolicy(policy)
+          this.onPolicy(policy, 'direction')
         })
       MenuItem({ content: this.snapshot.policy.firstPageAlone ? $r('app.string.rkit_cover_off') : $r('app.string.rkit_cover_on') })
         .enabled(this.snapshot.policy.layout === 'spread')
         .onClick((): void => {
           const policy = this.snapshot.policy.copy()
           policy.firstPageAlone = !policy.firstPageAlone
-          this.onPolicy(policy)
+          this.onPolicy(policy, 'first_page_alone')
         })
       MenuItem({ content: this.snapshot.policy.splitWidePages ? $r('app.string.rkit_split_off') : $r('app.string.rkit_split_on') })
         .enabled(this.snapshot.policy.layout === 'single')
         .onClick((): void => {
           const policy = this.snapshot.policy.copy()
           policy.splitWidePages = !policy.splitWidePages
-          this.onPolicy(policy)
+          this.onPolicy(policy, 'split_wide_pages')
         })
     }
   }
@@ -341,16 +360,25 @@ export struct ReaderChrome {
               .enabled(this.active && this.snapshot.phase === 'ready' && !this.shareBusy && !this.saveBusy && !this.snapshot.originalPreparing)
               .onClick(this.onShare)
           }
-          Button({ type: ButtonType.Circle }) {
-            SymbolGlyph($r('sys.symbol.gearshape')).fontSize(22).fontColor([Color.White])
-          }.width(44).height(44).backgroundColor(Color.Transparent)
-            .id('rkit-runtime-settings').accessibilityText($r('app.string.rkit_runtime_settings'))
-            .enabled(this.active && this.snapshot.phase === 'ready')
-            .bindMenu(this.RuntimeMenu, {
-              aboutToAppear: (): void => { this.onMenuVisible(true) },
-              onDisappear: (): void => { this.onMenuVisible(false) },
-            })
-          if (this.informationAvailable || this.chapterNavigationAvailable) {
+          if (this.hostSettingsAvailable) {
+            Button({ type: ButtonType.Circle }) {
+              SymbolGlyph($r('sys.symbol.gearshape')).fontSize(22).fontColor([Color.White])
+            }.width(44).height(44).backgroundColor(Color.Transparent)
+              .id('rkit-host-settings').accessibilityText($r('app.string.rkit_host_settings'))
+              .enabled(this.active && this.snapshot.phase === 'ready')
+              .onClick(this.onHostSettings)
+          } else {
+            Button({ type: ButtonType.Circle }) {
+              SymbolGlyph($r('sys.symbol.gearshape')).fontSize(22).fontColor([Color.White])
+            }.width(44).height(44).backgroundColor(Color.Transparent)
+              .id('rkit-runtime-settings').accessibilityText($r('app.string.rkit_runtime_settings'))
+              .enabled(this.active && this.snapshot.phase === 'ready')
+              .bindMenu(this.RuntimeMenu, {
+                aboutToAppear: (): void => { this.onMenuVisible(true) },
+                onDisappear: (): void => { this.onMenuVisible(false) },
+              })
+          }
+          if (this.informationAvailable || this.externalOpenAvailable || this.chapterNavigationAvailable) {
             Button({ type: ButtonType.Circle }) {
               if (this.informationPreparing) {
                 LoadingProgress().width(22).height(22).color(Color.White)
