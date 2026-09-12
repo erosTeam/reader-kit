@@ -1,10 +1,14 @@
 import { ReaderPagedFrame, ReaderFragment, ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/core'
 import { ReaderPagedImage } from './ReaderPagedViewport'
 import { ReaderTapSequence } from './ReaderTapSequence'
+import { ReaderEntryTransition } from './ReaderEntryTransition'
+import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
 
 /** Image interaction only. The parent List owns scrolling, stacking and visible-position reporting. */
 @ComponentV2
 export struct ReaderContinuousZoomImage {
+  @Param entryTransition: ReaderEntryTransition | null = null
+  @Param entryPosition: ReaderContinuousEntryPosition | null = null
   @Require @Param frame: ReaderPagedFrame
   @Require @Param navigation: number
   @Require @Param imageHeight: number
@@ -175,6 +179,7 @@ export struct ReaderContinuousZoomImage {
       ReaderPagedImage({
         frame: this.frame, slotId: this.frame.slotId, assetRequestId: this.frame.asset.assetRequestId,
         selectionId: 0, renderedFragment: this.frame.part.fragment, active: false,
+        entryTransition: this.entryTransition, continuousEntry: this.entryPosition,
         onPresented: this.onPresented,
         onFailed: (_selection: number, slot: number, request: number, fragment: ReaderFragment): void => {
           this.onFailed(slot, request, fragment)

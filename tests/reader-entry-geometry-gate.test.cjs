@@ -23,6 +23,7 @@ const entry = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderEntryTransition.
 const viewport = fs.readFileSync(path.join(uiPath, 'ReaderPagedViewport.ets'), 'utf8')
 const { ReaderEntryGeometryGate: gate } = evaluate(viewport.slice(0, viewport.indexOf('@ComponentV2')), {
   '@reader-kit/core': core, './ReaderEntryTransition': entry,
+  '@kit.ArkUI': { FrameCallback: class {} },
 })
 function frame(index = 0, width = 0, height = 0) {
   const unit = new core.ReaderUnitKey('eh', 'work', 'work')

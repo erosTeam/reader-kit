@@ -64,6 +64,57 @@ function unchangedFlight(value) {
   assert.equal(value.previewSource.rect.x, 40); assert.equal(value.previewSource.rect.y, 55)
 }
 
+test('continuous clip preserves the complete long-image flight scale and independent window clip', () => {
+  const value = scenario(null, 'whole-page')
+  value.target.contentRect = new ReaderEntryRect(0, -300, 400, 2400)
+  value.target.clipRect = new ReaderEntryRect(0, 100, 400, 700)
+  value.entry.publishTarget(value.target)
+  value.preview.source.rect = new ReaderEntryRect(40, 55, 100, 600)
+  value.preview.advance()
+  assert.equal(value.preview.previewScale, 4)
+  assert.equal(value.preview.destination.height, 2400)
+  assert.equal(value.preview.y, -300)
+  assert.equal(value.preview.previewClip().height, 700)
+  assert.equal(value.animations[0].duration, 280)
+  value.target.clipRect.y = 101
+  value.entry.publishTarget(value.target); value.preview.advance()
+  assert.equal(value.entry.phase, 'cancelled')
+})
+
+test('unknown continuous preview stays in its visible container without changing original geometry', () => {
+  const value = scenario(null, 'unknown')
+  // Actual N197 source and original dimensions; exercise real advance, not a UI acceptance fixture.
+  value.preview.source.rect = new ReaderEntryRect(764, 1960, 317, 488)
+  value.target.contentRect = new ReaderEntryRect(0, 0, 1260, 16756.25)
+  value.target.clipRect = new ReaderEntryRect(0, 124, 1260, 2596)
+  value.entry.publishTarget(value.target)
+  value.preview.advance()
+  const height = 488 * value.preview.previewScale
+  assert.equal(value.preview.previewScale, 1260 / 317)
+  assert.ok(value.preview.y >= 124)
+  assert.ok(value.preview.y + height <= 2720)
+  assert.equal(value.preview.destination.height, 16756.25)
+  assert.equal(value.entry.target.contentRect.height, 16756.25)
+  assert.equal(value.entry.target.contentRect.y, 0)
+  assert.equal(value.animations[0].duration, 280)
+  value.animations[0].onFinish()
+  value.target.decodedReady = true; value.entry.publishTarget(value.target); value.preview.advance()
+  assert.equal(value.entry.phase, 'finished')
+  assert.equal(value.preview.previewOpacity, 0)
+  assert.equal(value.animations.at(-1).duration, 0)
+})
+
+test('unknown continuous preview rejects an empty visible container before flight', () => {
+  const value = scenario(null, 'unknown')
+  value.target.contentRect = new ReaderEntryRect(0, 3000, 400, 2400)
+  value.target.clipRect = new ReaderEntryRect(0, 100, 400, 700)
+  value.entry.publishTarget(value.target)
+  value.preview.advance()
+  assert.equal(value.entry.phase, 'cancelled')
+  assert.equal(value.animations.length, 0)
+  assert.equal(value.entry.target.contentRect.y, 3000)
+})
+
 test('source defaults to allowing legacy callers and forwards the exact entry id', () => {
   assert.equal(new ReaderEntryPreviewSource(pixels(), new ReaderEntryRect()).authorizeDeparture(11), true)
   const ids = []

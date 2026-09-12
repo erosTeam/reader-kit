@@ -28,6 +28,8 @@ export class ReaderEntryTarget {
   assetRequestId: number = 0
   layoutRevision: number = 0
   contentRect: ReaderEntryRect = new ReaderEntryRect()
+  /** Continuous images can exceed this independently measured window viewport. */
+  clipRect: ReaderEntryRect | null = null
   geometryReady: boolean = false
   decodedReady: boolean = false
   failed: boolean = false
@@ -44,6 +46,7 @@ export class ReaderEntryTarget {
     value.assetRequestId = this.assetRequestId
     value.layoutRevision = this.layoutRevision
     value.contentRect = this.contentRect.copy()
+    value.clipRect = this.clipRect?.copy() ?? null
     value.geometryReady = this.geometryReady
     value.decodedReady = this.decodedReady
     value.failed = this.failed

@@ -3,6 +3,14 @@ import { ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/cor
 import { ReaderFailurePanel } from './ReaderFailurePanel'
 import { ReaderTapSequence } from './ReaderTapSequence'
 import { ReaderEntryRect, ReaderEntryTarget, ReaderEntryTransition } from './ReaderEntryTransition'
+import { FrameCallback } from '@kit.ArkUI'
+import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
+
+class ReaderEntryAfterLayout extends FrameCallback {
+  private action: () => void
+  constructor(action: () => void) { super(); this.action = action }
+  onIdle(_remaining: number): void { this.action() }
+}
 
 /** One monotonic layout clock also survives a selected leaf being remounted. */
 class ReaderEntryLayoutRevision {
@@ -454,6 +462,7 @@ struct ReaderPagedCell {
 
 @ComponentV2
 export struct ReaderPagedImage {
+  @Param continuousEntry: ReaderContinuousEntryPosition | null = null
   @Require @Param frame: ReaderPagedFrame
   @Require @Param slotId: number
   @Require @Param assetRequestId: number
@@ -493,7 +502,7 @@ export struct ReaderPagedImage {
   @Monitor('active', 'selectionId', 'frame')
   onSelectionChanged(): void { this.publishEntryTarget(); this.reportVisible() }
 
-  @Monitor('frame', 'entryTransition', 'entryLayoutWidth', 'entryLayoutHeight', 'topologyRevision', 'navigationRevision')
+  @Monitor('frame', 'entryTransition', 'entryLayoutWidth', 'entryLayoutHeight', 'topologyRevision', 'navigationRevision', 'continuousEntry')
   onEntryLayoutChanged(): void { this.publishEntryTarget() }
 
   @Monitor('entryPhase')
@@ -518,19 +527,37 @@ export struct ReaderPagedImage {
   }
 
   private publishEntryTarget(failed: boolean = false): void {
+    const position = this.continuousEntry
+    if (position !== null) {
+      if (!position.isCurrent()) return
+      // The closure keeps the positioning token that scheduled this measurement.
+      this.getUIContext().postFrameCallback(new ReaderEntryAfterLayout((): void => {
+        if (this.continuousEntry !== position || !position.isCurrent()) return
+        this.measureEntryTarget(failed, position)
+      }))
+      return
+    }
+    this.measureEntryTarget(failed, null)
+  }
+
+  private measureEntryTarget(failed: boolean, position: ReaderContinuousEntryPosition | null): void {
     if (!failed && this.reportInvalidDecodedMetrics()) return
     const transition = this.entryTransition
-    if (transition === null || !transition.pending() || !this.entryMounted || !this.active ||
+    if (transition === null || !transition.pending() || !this.entryMounted ||
+      (position === null ? !this.active : this.continuousEntry !== position || !position.isCurrent()) ||
       !transition.matches(this.frame.part)) return
+    if (position !== null && this.decoded && ReaderEntryGeometryGate.dimensions(this.decodedWidth, this.decodedHeight) !== 'ready') {
+      transition.cancel(); return
+    }
     if (this.measuredEntryId !== transition.entryId) {
       this.measuredEntryId = transition.entryId
       this.measuredEntryRect = null
       this.entryLayoutRevision = 0
     }
     const target = new ReaderEntryTarget(this.frame.part)
-    target.selectionId = this.selectionId
-    target.topologyRevision = this.topologyRevision
-    target.navigationRevision = this.navigationRevision
+    target.selectionId = position?.selection ?? this.selectionId
+    target.topologyRevision = position?.topology ?? this.topologyRevision
+    target.navigationRevision = position?.navigation ?? this.navigationRevision
     target.slotId = this.slotId
     target.requestId = this.frame.asset.requestId
     target.assetRequestId = this.assetRequestId
@@ -552,7 +579,9 @@ export struct ReaderPagedImage {
     // completed() reports into core first; the callback's old @Param may still contain zero.
     // Wait for its current snapshot and the actual fitted area, never publish the fallback ratio.
     if (dimensions === 'unknown') return
-    if (!this.entryContentLaidOut || this.entryLayoutWidth <= 0 || this.entryLayoutHeight <= 0) return
+    const layoutWidth = position?.width ?? this.entryLayoutWidth
+    const layoutHeight = position?.height ?? this.entryLayoutHeight
+    if (!this.entryContentLaidOut || layoutWidth <= 0 || layoutHeight <= 0) return
     if (this.frame.asset.uri.length > 0 && !this.entryLeafLaidOut) return
     try {
       const context = this.getUIContext()
@@ -568,21 +597,32 @@ export struct ReaderPagedImage {
           return
         }
       }
-      const viewport = context.getComponentUtils().getRectangleById('rkit-image-viewport')
+      const viewport = context.getComponentUtils().getRectangleById(position === null ? 'rkit-image-viewport' : 'rkit-continuous-list')
       const rect = new ReaderEntryRect(context.px2vp(leaf.windowOffset.x), context.px2vp(leaf.windowOffset.y),
         context.px2vp(leaf.size.width), context.px2vp(leaf.size.height))
       if (!rect.valid()) return
       // Parent/child area callbacks have no guaranteed order. Wait until this
       // leaf has actually applied the current cell fit before publishing it.
-      if (Math.abs(leaf.size.width - context.vp2px(this.entryLayoutWidth)) > 1 ||
-        Math.abs(leaf.size.height - context.vp2px(this.entryLayoutHeight)) > 1) {
+      if (Math.abs(leaf.size.width - context.vp2px(layoutWidth)) > 1 ||
+        Math.abs(leaf.size.height - context.vp2px(layoutHeight)) > 1) {
         if (transition.phase !== 'layout') transition.cancel()
         return
       }
-      if (leaf.windowOffset.x < viewport.windowOffset.x - 1 || leaf.windowOffset.y < viewport.windowOffset.y - 1 ||
+      if (position === null && (leaf.windowOffset.x < viewport.windowOffset.x - 1 || leaf.windowOffset.y < viewport.windowOffset.y - 1 ||
         leaf.windowOffset.x + leaf.size.width > viewport.windowOffset.x + viewport.size.width + 1 ||
-        leaf.windowOffset.y + leaf.size.height > viewport.windowOffset.y + viewport.size.height + 1) {
+        leaf.windowOffset.y + leaf.size.height > viewport.windowOffset.y + viewport.size.height + 1)) {
         transition.cancel(); return
+      }
+      if (position !== null) {
+        const root = context.getComponentUtils().getRectangleById('rkit-entry-preview-root')
+        const left = Math.max(viewport.windowOffset.x, root.windowOffset.x)
+        const top = Math.max(viewport.windowOffset.y, root.windowOffset.y)
+        const right = Math.min(viewport.windowOffset.x + viewport.size.width, root.windowOffset.x + root.size.width)
+        const bottom = Math.min(viewport.windowOffset.y + viewport.size.height, root.windowOffset.y + root.size.height)
+        const clip = new ReaderEntryRect(context.px2vp(left), context.px2vp(top), context.px2vp(right - left), context.px2vp(bottom - top))
+        if (!clip.valid() || rect.x >= clip.x + clip.width || rect.y >= clip.y + clip.height ||
+          rect.x + rect.width <= clip.x || rect.y + rect.height <= clip.y) { transition.cancel(); return }
+        target.clipRect = clip
       }
       // Contain must occupy the measured Image itself. Unexpected decoded
       // proportions are not permission to stretch a thumbnail to this box.
@@ -597,6 +637,12 @@ export struct ReaderPagedImage {
       const priorRect = previous?.contentRect ?? this.measuredEntryRect ?? inheritedRect
       const moved = priorRect !== null && (priorRect.x !== rect.x || priorRect.y !== rect.y ||
         priorRect.width !== rect.width || priorRect.height !== rect.height)
+      const oldClip = previous?.clipRect ?? null
+      const clipChanged = previous !== null && ((oldClip === null) !== (target.clipRect === null) ||
+        (oldClip !== null && target.clipRect !== null &&
+        (oldClip.x !== target.clipRect.x || oldClip.y !== target.clipRect.y ||
+        oldClip.width !== target.clipRect.width || oldClip.height !== target.clipRect.height)))
+      if (clipChanged && transition.phase !== 'layout') { transition.cancel(); return }
       if (moved && transition.phase !== 'layout') { transition.cancel(); return }
       const sameIdentity = previous !== null && previous.selectionId === target.selectionId &&
         previous.topologyRevision === target.topologyRevision && previous.navigationRevision === target.navigationRevision &&
@@ -604,15 +650,16 @@ export struct ReaderPagedImage {
         previous.assetRequestId === target.assetRequestId
       // A publication redraws the optional presenter. Identical leaf reports
       // must not feed that redraw back into another target publication.
-      if (sameIdentity && !moved && previous !== null && previous.geometryReady &&
+      if (sameIdentity && !moved && !clipChanged && previous !== null && previous.geometryReady &&
         previous.decodedReady === target.decodedReady && !previous.failed) return
-      if (previous === null || moved || !sameIdentity) {
+      if (previous === null || moved || clipChanged || !sameIdentity) {
         target.layoutRevision = ReaderEntryLayoutRevision.next(target.layoutRevision)
       }
       this.entryLayoutRevision = target.layoutRevision
       this.measuredEntryRect = rect.copy()
       target.contentRect = rect
       target.geometryReady = true
+      if (position !== null && (this.continuousEntry !== position || !position.isCurrent())) return
       transition.publishTarget(target)
       // Rejected retired-leaf callbacks must not replace the next leaf's baseline.
       if (this.entryMeasurement !== null && transition.target?.layoutRevision === target.layoutRevision &&

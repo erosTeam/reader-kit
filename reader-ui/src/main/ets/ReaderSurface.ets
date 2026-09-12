@@ -378,6 +378,7 @@ export struct ReaderSurface {
         if (this.state.policy.layout === 'continuous') {
           ReaderContinuousSurface({
             snapshot: this.state, active: this.active,
+            entryTransition: this.entryTransition,
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
             onTap: (): void => { this.toggleChrome() },
             onRange: (start: number, end: number, topology: number, navigation: number): void => {

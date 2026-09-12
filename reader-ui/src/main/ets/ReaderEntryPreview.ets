@@ -51,6 +51,7 @@ export struct ReaderEntryPreview {
   private firstFrame: boolean = false
   private origin: ReaderEntryRect = new ReaderEntryRect()
   private destination: ReaderEntryRect | null = null
+  private destinationClip: ReaderEntryRect | null = null
   private epoch: number = 0
 
   aboutToDisappear(): void { this.mounted = false; this.epoch += 1; this.entry.cancel() }
@@ -65,16 +66,35 @@ export struct ReaderEntryPreview {
       committed.width !== target.contentRect.width || committed.height !== target.contentRect.height)) {
       this.entry.cancel(); return
     }
+    const clip = target.clipRect
+    const committedClip = this.destinationClip
+    if (committed !== null && ((committedClip === null) !== (clip === null) ||
+      (committedClip !== null && clip !== null && (committedClip.x !== clip.x || committedClip.y !== clip.y ||
+      committedClip.width !== clip.width || committedClip.height !== clip.height)))) {
+      this.entry.cancel(); return
+    }
     if (this.entry.phase === 'layout') {
       const entry = this.entry
       const source = this.source
+      const destination = target.contentRect
+      let previewFrame = destination
+      if (source.coverage === 'unknown' && clip !== null) {
+        // A partial preview has no pixel correspondence with the original. Contain it in
+        // the visible destination area without changing the original's measured geometry.
+        const x = Math.max(destination.x, clip.x)
+        const y = Math.max(destination.y, clip.y)
+        previewFrame = new ReaderEntryRect(x, y,
+          Math.min(destination.x + destination.width, clip.x + clip.width) - x,
+          Math.min(destination.y + destination.height, clip.y + clip.height) - y)
+        if (!previewFrame.valid()) { entry.cancel(); return }
+      }
       if (!source.authorizeDeparture(entry.entryId)) { entry.cancel(); return }
       // The host may synchronously retire this hidden trial while authorizing its source.
       if (!this.mounted || this.entry !== entry || this.source !== source || !entry.pending() ||
         entry.phase !== 'layout' || entry.target !== target) return
-      const destination = target.contentRect
       this.destination = destination.copy()
-      const scale = Math.min(destination.width / this.source.rect.width, destination.height / this.source.rect.height)
+      this.destinationClip = clip?.copy() ?? null
+      const scale = Math.min(previewFrame.width / this.source.rect.width, previewFrame.height / this.source.rect.height)
       const epoch = ++this.epoch
       this.entry.beginMove()
       this.getUIContext().animateTo({ duration: 280, curve: Curve.FastOutSlowIn,
@@ -87,8 +107,8 @@ export struct ReaderEntryPreview {
         // Monitor-driven V2 changes otherwise mark the animation end frame after animateTo has closed.
         UIUtils.applySync((): void => {
           this.previewScale = scale
-          this.x = destination.x - this.origin.x + (destination.width - this.source.rect.width * scale) / 2
-          this.y = destination.y - this.origin.y + (destination.height - this.source.rect.height * scale) / 2
+          this.x = previewFrame.x - this.origin.x + (previewFrame.width - this.source.rect.width * scale) / 2
+          this.y = previewFrame.y - this.origin.y + (previewFrame.height - this.source.rect.height * scale) / 2
         })
       })
     } else if (this.entry.phase === 'waiting' && target.decodedReady) {
@@ -118,16 +138,36 @@ export struct ReaderEntryPreview {
     }
   }
 
+  private previewClip(): ReaderEntryRect { return this.entry.target?.clipRect ?? this.origin }
+
+  private clipped(): boolean { return this.entry.target?.clipRect !== null && this.entry.target?.clipRect !== undefined }
+
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
       if (this.entry.pending()) {
-        Image(this.source.pixels)
+        if (this.clipped()) {
+          Stack({ alignContent: Alignment.TopStart }) {
+            Image(this.source.pixels)
+              .width(this.source.rect.width).height(this.source.rect.height)
+              .objectFit(ImageFit.Contain)
+              .scale({ x: this.previewScale, y: this.previewScale, centerX: 0, centerY: 0 })
+              .translate({ x: this.x - this.previewClip().x + this.origin.x,
+                y: this.y - this.previewClip().y + this.origin.y })
+              .opacity(this.previewOpacity)
+              .id('rkit-entry-preview-image')
+          }
+          .width(this.previewClip().width).height(this.previewClip().height)
+          .position({ x: this.previewClip().x - this.origin.x, y: this.previewClip().y - this.origin.y })
+          .clip(true)
+        } else {
+          Image(this.source.pixels)
           .width(this.source.rect.width).height(this.source.rect.height)
           .objectFit(ImageFit.Contain)
           .scale({ x: this.previewScale, y: this.previewScale, centerX: 0, centerY: 0 })
           .translate({ x: this.x, y: this.y })
           .opacity(this.previewOpacity)
           .id('rkit-entry-preview-image')
+        }
       }
     }.width('100%').height('100%').id('rkit-entry-preview-root')
       .hitTestBehavior(HitTestMode.None)
