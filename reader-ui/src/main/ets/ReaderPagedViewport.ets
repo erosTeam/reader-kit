@@ -89,6 +89,7 @@ export class ReaderEntryGeometryGate {
 /** Selected display-item rendering only; no app navigation, settings or progress owner. */
 @ComponentV2
 export struct ReaderPagedViewport {
+  @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param entryTransition: ReaderEntryTransition | null = null
@@ -323,6 +324,7 @@ export struct ReaderPagedViewport {
           // Only stable identity comes from the ForEach closure. Cell state is
           // resolved from the current snapshot so same-key updates are not lost.
           ReaderPagedCell({
+            imageInterpolation: this.imageInterpolation,
             snapshot: this.snapshot, slotId: frame.slotId,
             entryTransition: this.entryTransition,
             entryMeasurement: this.entryMeasurement,
@@ -397,6 +399,7 @@ export struct ReaderPagedViewport {
 
 @ComponentV2
 struct ReaderPagedCell {
+  @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Require @Param snapshot: ReaderPagedSnapshot
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryMeasurement: ReaderEntryMeasurement | null = null
@@ -439,6 +442,7 @@ struct ReaderPagedCell {
         })
       } else if (this.frame().asset.uri.length > 0 || this.entryContentReady()) {
         ReaderPagedImage({
+          imageInterpolation: this.imageInterpolation,
           frame: this.frame(), selectionId: this.snapshot.selectionId,
           topologyRevision: this.snapshot.topologyRevision, navigationRevision: this.snapshot.navigationRevision,
           entryTransition: this.entryTransition,
@@ -465,6 +469,7 @@ struct ReaderPagedCell {
 
 @ComponentV2
 export struct ReaderPagedImage {
+  @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param continuousEntry: ReaderContinuousEntryPosition | null = null
   @Require @Param frame: ReaderPagedFrame
   @Require @Param slotId: number
@@ -744,6 +749,7 @@ export struct ReaderPagedImage {
             .width(this.viewportWidth / this.frame.crop.region(this.frame.part).width)
             .height(this.viewportHeight / this.frame.crop.region(this.frame.part).height)
             .id(`rkit-cropped-image-${this.frame.part.sourceIndex}-${this.frame.part.fragment}`)
+            .interpolation(this.imageInterpolation)
             .objectFit(ImageFit.Fill)
             .position({
               x: -this.viewportWidth * this.frame.crop.region(this.frame.part).x / this.frame.crop.region(this.frame.part).width,
@@ -758,6 +764,7 @@ export struct ReaderPagedImage {
       } else if (this.frame.asset.uri.length > 0) {
         Image(this.frame.asset.uri)
           .width('100%').height('100%')
+          .interpolation(this.frame.asset.kind === 'original' ? this.imageInterpolation : ImageInterpolation.Low)
           .objectFit(this.thumbnailCover && this.frame.asset.kind === 'thumbnail' ? ImageFit.Cover : ImageFit.Contain)
           .id(this.entryLeafId())
           .onAreaChange((): void => {

@@ -15,6 +15,7 @@ class ReaderPagerIndexSource implements IDataSource {
 /** Native page container only. Session ownership and diagnostic chrome stay outside. */
 @ComponentV2
 export struct ReaderPagerSurface {
+  @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param entryTransition: ReaderEntryTransition | null = null
@@ -31,6 +32,7 @@ export struct ReaderPagerSurface {
       if (this.snapshot.displayCount > 0) {
         ForEach([this.snapshot.topologyRevision], (revision: number) => {
           ReaderNativePager({
+            imageInterpolation: this.imageInterpolation,
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
             entryTransition: this.entryTransition,
             onInputLockChange: this.onInputLockChange,
@@ -49,6 +51,7 @@ export struct ReaderPagerSurface {
 
 @ComponentV2
 struct ReaderNativePager {
+  @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param entryTransition: ReaderEntryTransition | null = null
@@ -129,6 +132,7 @@ struct ReaderNativePager {
     Swiper() {
       LazyForEach(this.source, (key: string) => {
         ReaderPagedViewport({
+          imageInterpolation: this.imageInterpolation,
           snapshot: this.snapshot.forItem(key),
           entryTransition: key === this.snapshot.displayKeys[this.snapshot.displayIndex] ? this.entryTransition : null,
           selected: key === this.snapshot.displayKeys[this.snapshot.displayIndex],

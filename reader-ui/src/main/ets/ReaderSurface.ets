@@ -15,6 +15,7 @@ import { ReaderTapAction } from './ReaderTapAction'
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
 export struct ReaderSurface {
+  @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Require @Param session: ReaderPagedSession
   @Require @Param initialUnit: ReaderUnitKey
   @Require @Param active: boolean
@@ -397,6 +398,7 @@ export struct ReaderSurface {
       WithTheme({ colorMode: ThemeColorMode.DARK }) {
         if (this.state.policy.layout === 'continuous') {
           ReaderContinuousSurface({
+            imageInterpolation: this.imageInterpolation,
             snapshot: this.state, active: this.active,
             entryTransition: this.entryTransition,
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
@@ -419,6 +421,7 @@ export struct ReaderSurface {
           })
         } else {
           ReaderPagerSurface({
+            imageInterpolation: this.imageInterpolation,
             snapshot: this.state, active: this.active,
             entryTransition: this.entryTransition,
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },

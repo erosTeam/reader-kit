@@ -7,6 +7,7 @@ import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
 /** Image interaction only. The parent List owns scrolling, stacking and visible-position reporting. */
 @ComponentV2
 export struct ReaderContinuousZoomImage {
+  @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPosition: ReaderContinuousEntryPosition | null = null
   @Require @Param frame: ReaderPagedFrame
@@ -177,6 +178,7 @@ export struct ReaderContinuousZoomImage {
   build() {
     Stack() {
       ReaderPagedImage({
+        imageInterpolation: this.imageInterpolation,
         frame: this.frame, slotId: this.frame.slotId, assetRequestId: this.frame.asset.assetRequestId,
         selectionId: 0, renderedFragment: this.frame.part.fragment, active: false,
         entryTransition: this.entryTransition, continuousEntry: this.entryPosition,

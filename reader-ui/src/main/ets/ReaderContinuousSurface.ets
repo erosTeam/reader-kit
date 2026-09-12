@@ -24,6 +24,7 @@ class ReaderContinuousAfterLayout extends FrameCallback {
 /** Continuous layout only. Host navigation, commands and resource ownership stay outside. */
 @ComponentV2
 export struct ReaderContinuousSurface {
+  @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param entryTransition: ReaderEntryTransition | null = null
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
@@ -40,6 +41,7 @@ export struct ReaderContinuousSurface {
       if (this.snapshot.displayCount > 0) {
         ForEach([this.snapshot.topologyRevision], (revision: number) => {
           ReaderContinuousList({
+            imageInterpolation: this.imageInterpolation,
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
             entryTransition: this.entryTransition,
             onInputLockChange: this.onInputLockChange,
@@ -57,6 +59,7 @@ export struct ReaderContinuousSurface {
 
 @ComponentV2
 struct ReaderContinuousList {
+  @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param entryTransition: ReaderEntryTransition | null = null
   @Local private entryPosition: ReaderContinuousEntryPosition | null = null
   @Require @Param snapshot: ReaderPagedSnapshot
@@ -303,6 +306,7 @@ struct ReaderContinuousList {
       LazyForEach(this.source, (key: string) => {
         ListItem() {
           ReaderContinuousCell({
+            imageInterpolation: this.imageInterpolation,
             snapshot: this.snapshot.forItem(key),
             entryTransition: this.entryTransition,
             entryPosition: this.entryPosition?.key === key ? this.entryPosition : null,
@@ -371,6 +375,7 @@ struct ReaderContinuousList {
 
 @ComponentV2
 struct ReaderContinuousCell {
+  @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPosition: ReaderContinuousEntryPosition | null = null
   @Require @Param snapshot: ReaderPagedSnapshot
@@ -395,6 +400,7 @@ struct ReaderContinuousCell {
           })
         } else if (this.snapshot.frames[0].asset.uri.length > 0) {
           ReaderContinuousZoomImage({
+            imageInterpolation: this.imageInterpolation,
             frame: this.snapshot.frames[0], navigation: this.snapshot.navigationRevision,
             entryTransition: this.entryTransition, entryPosition: this.entryPosition,
             imageHeight: this.imageHeight, active: this.active, interactionAllowed: this.interactionAllowed,

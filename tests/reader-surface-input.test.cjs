@@ -16,6 +16,7 @@ function evaluate(source) {
     exports, require: name => { assert.equal(name, '@reader-kit/core'); return core },
     ObservedV2: value => value, ComponentV2: value => value,
     Trace() {}, Param() {}, Require() {}, Event() {}, Local() {}, Computed() {}, Monitor: () => () => {},
+    ImageInterpolation: { Low: 'low', Medium: 'medium', High: 'high' },
     console: { info() {} },
   })
   return exports
