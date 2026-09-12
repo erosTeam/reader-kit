@@ -19,6 +19,7 @@ export struct ReaderSurface {
   @Require @Param initialUnit: ReaderUnitKey
   @Require @Param active: boolean
   @Param closing: boolean = false
+  @Param showPageNumber: boolean = true
   @Param tapZoneResolver: ((xFraction: number, yFraction: number, layout: ReaderLayout) => ReaderTapAction) | null = null
   @Param beforeShowChrome: ((isCurrent: () => boolean) => Promise<boolean>) | null = null
   @Param initialIndex: number = 0
@@ -507,7 +508,7 @@ export struct ReaderSurface {
             console.info(`[ReaderSurface] seek_source=${index} accepted=${accepted}`)
           },
         })
-      } else if (this.state.unit !== null && this.state.unit.pageCount > 0) {
+      } else if (this.showPageNumber && this.state.unit !== null && this.state.unit.pageCount > 0) {
         ReaderPageStatus({ value: `${(this.state.anchor?.sourceIndexHint ?? 0) + 1} / ${this.state.unit.pageCount}`,
           bottomMargin: this.bottomInset + 8 })
       }
