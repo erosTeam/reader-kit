@@ -118,6 +118,7 @@ export struct ReaderPagedViewport {
   private ignorePan: boolean = false
   private pinchAdjusted: boolean = false
   private animationTimer: number = 0
+  private visibilityTimer: number = 0
   private tapSequence: ReaderTapSequence = new ReaderTapSequence()
   private entryMeasurement: ReaderEntryMeasurement = new ReaderEntryMeasurement()
 
@@ -173,10 +174,15 @@ export struct ReaderPagedViewport {
     } else {
       this.zoomState = this.zoomState.constrained(this.geometry())
     }
+    this.scheduleSelectedVisible()
   }
 
   aboutToAppear(): void { this.onContentChanged() }
-  aboutToDisappear(): void { this.cancelGesture() }
+  aboutToDisappear(): void {
+    this.cancelGesture()
+    if (this.visibilityTimer !== 0) clearTimeout(this.visibilityTimer)
+    this.visibilityTimer = 0
+  }
 
   @Monitor('zoomState', 'zoomAnimating', 'pinching', 'active', 'selected')
   onInputStateChanged(): void {
@@ -189,6 +195,37 @@ export struct ReaderPagedViewport {
   private gesturesEnabled(): boolean {
     return this.active && this.selected && this.snapshot.phase === 'ready' && this.snapshot.frames.length > 0 &&
       this.snapshot.frames.every((frame: ReaderPagedFrame) => frame.asset.phase === 'displayed')
+  }
+
+  /**
+   * The selected pager item is the native visibility owner. A spread can have
+   * two independently decoded Image leaves, so neither leaf is allowed to
+   * choose progress. Publish only the anchor-named original after its selected
+   * viewport has adopted the displayed snapshot; the session still performs
+   * the final selection/request/crop fences and deduplication.
+   */
+  private reportSelectedVisible(): void {
+    const anchor = this.snapshot.anchor
+    if (!this.active || !this.selected || this.snapshot.phase !== 'ready' || anchor === null ||
+      this.zoomAnimating || this.pinching || this.zoomState.scale !== 1 ||
+      this.entryTransition?.pending() === true) return
+    const frame = this.snapshot.frames.find((value: ReaderPagedFrame): boolean =>
+      value.part.sourceIndex === anchor.sourceIndexHint && value.part.pageKey === anchor.pageKey &&
+      value.asset.kind === 'original' && value.asset.phase === 'displayed' &&
+      value.asset.page?.key === anchor.pageKey && value.asset.assetRequestId > 0)
+    if (frame === undefined) return
+    this.onVisible(this.snapshot.selectionId, frame.slotId, frame.asset.assetRequestId, frame.part.fragment)
+  }
+
+  private scheduleSelectedVisible(): void {
+    if (this.visibilityTimer !== 0) clearTimeout(this.visibilityTimer)
+    const selection = this.snapshot.selectionId
+    const navigation = this.snapshot.navigationRevision
+    this.visibilityTimer = setTimeout((): void => {
+      this.visibilityTimer = 0
+      if (this.snapshot.selectionId !== selection || this.snapshot.navigationRevision !== navigation) return
+      this.reportSelectedVisible()
+    }, 0)
   }
 
   private stopAnimation(): void {
