@@ -159,6 +159,31 @@ test('preferred host variant follows exact processing identity and returns to de
   session.close()
 })
 
+test('preferred host variant waits for the original asset instead of consuming its attempt on a thumbnail', () => {
+  const surface = new ReaderSurface()
+  surface.active = true; surface.closing = false; surface.chromeDisposed = false
+  surface.preferredVariant = 'enhanced'; surface.preferredVariantIdentity = 'model-a:2000'
+  const calls = []
+  surface.session = { selectVariant(...args) { calls.push(args); return Promise.resolve('changed') } }
+  const state = new core.ReaderPagedSnapshot()
+  state.phase = 'ready'; state.kind = 'thumbnail'
+  state.unit = new core.ReaderUnit(new core.ReaderUnitKey('source', 'work', 'unit'), 'Title', 1)
+  state.frames = [{ part: { sourceIndex: 0 }, slotId: 7,
+    asset: { requestId: 11, phase: 'displayed', variant: 'default', variantIdentity: '' } }]
+
+  surface.syncPreferredVariant(state)
+  assert.equal(calls.length, 0)
+  assert.equal(surface.variantAttempts.size, 0)
+
+  state.kind = 'original'
+  surface.syncPreferredVariant(state)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0][0], 7)
+  assert.equal(calls[0][1], 11)
+  assert.equal(calls[0][4], 'enhanced')
+  assert.equal(calls[0][5], 'model-a:2000')
+})
+
 test('host interaction signal is edge-triggered and clears after the gesture', () => {
   const surface = new ReaderSurface(), events = []
   Object.assign(surface, { active: true, closing: false, chromeDisposed: false, inputLocked: false,

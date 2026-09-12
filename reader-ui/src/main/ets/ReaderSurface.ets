@@ -100,7 +100,8 @@ export struct ReaderSurface {
       this.variantAttemptContext = context
       this.variantAttempts.clear()
     }
-    if (!this.active || this.closing || this.chromeDisposed || state.phase !== 'ready' || unit === undefined ||
+    if (!this.active || this.closing || this.chromeDisposed || state.phase !== 'ready' ||
+      state.kind !== 'original' || unit === undefined ||
       (this.preferredVariant !== 'default' && this.preferredVariantIdentity.length === 0)) return
     state.frames.forEach((frame: ReaderPagedFrame): void => {
       if (frame.asset.phase !== 'displayed') return
