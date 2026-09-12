@@ -13,7 +13,8 @@ export { ReaderViewportGeometry, ReaderViewportTransform } from './src/main/ets/
 export { ReaderThumbnailWindow, ReaderThumbnailFrame } from './src/main/ets/ReaderThumbnailWindow'
 export { ReaderInputPort, ReaderMoveIntent } from './src/main/ets/ReaderInputPort'
 export { ReaderImageInformation, ReaderImageInformationSource } from './src/main/ets/ReaderImageInformation'
-export { ReaderImageCropBounds, ReaderImageCropRegion, ReaderImageCropSource } from './src/main/ets/ReaderImageCrop'
+export { ReaderImageCropBounds, ReaderImageCropRegion, ReaderImageCropSource,
+  ReaderImageCropDetector } from './src/main/ets/ReaderImageCrop'
 export { ReaderImageShareTarget, ReaderImageSharePresentation, ReaderImageShareHost,
   ReaderImageShareOutcome, ReaderImageShareController } from './src/main/ets/ReaderImageShare'
 export { ReaderImageSaveChoice, ReaderImageSaveItemStatus, ReaderImageSaveOutcome,

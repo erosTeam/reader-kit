@@ -17,6 +17,7 @@ function evaluate(source) {
     ObservedV2: value => value, ComponentV2: value => value,
     Trace() {}, Param() {}, Require() {}, Event() {}, Local() {}, Computed() {}, Monitor: () => () => {},
     ImageInterpolation: { Low: 'low', Medium: 'medium', High: 'high' },
+    Color: { Black: '#000000', White: '#FFFFFF' },
     console: { info() {} },
   })
   return exports
