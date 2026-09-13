@@ -55,6 +55,51 @@ test('resolved host variant preserves page identity and changes only after prepa
   f.s.close()
 })
 
+test('host can warm a loaded neighbor variant without moving or replacing the current source', async () => {
+  const f = await fixture()
+  f.s.setNeighborPreload(true); await tick()
+  f.s.snapshot().window.flatMap(item => item.frames).forEach(frame =>
+    f.s.reportPresentation(frame.slotId, frame.asset.assetRequestId, true))
+  const before = f.s.snapshot(), navigation = before.navigationRevision
+  assert.equal(await f.s.prepareVariantForSource(1, f.key.copy(), navigation, 'translated', 'translated:v1'), 'changed')
+  await tick()
+  f.s.snapshot().window.flatMap(item => item.frames).forEach(frame =>
+    f.s.reportPresentation(frame.slotId, frame.asset.assetRequestId, true))
+  assert.equal(f.frame().part.sourceIndex, 0)
+  assert.equal(f.frame().asset.uri, 'default-0')
+  assert.equal(f.s.snapshot().anchor.sourceIndexHint, before.anchor.sourceIndexHint)
+  assert.equal(f.s.snapshot().navigationRevision, navigation)
+  const warm = f.s.snapshot().window.flatMap(item => item.frames)
+    .find(frame => frame.part.sourceIndex === 1)
+  assert.equal(warm.asset.uri, 'translated-1-first')
+  assert.equal(warm.asset.variant, 'translated')
+  f.s.move('next'); await tick(); f.decode()
+  assert.equal(f.frame().part.sourceIndex, 1)
+  assert.equal(f.frame().asset.uri, 'translated-1-first')
+  assert.deepEqual(f.calls, [[1, 'translated', 'translated:v1']])
+  f.s.close()
+})
+
+test('navigation cancels a late neighbor variant preparation before it becomes a warm plan', async () => {
+  const f = await fixture(); let resolve, cancellation
+  f.s.setNeighborPreload(true); await tick()
+  f.s.snapshot().window.flatMap(item => item.frames).forEach(frame =>
+    f.s.reportPresentation(frame.slotId, frame.asset.assetRequestId, true))
+  f.provider.prepareVariant = async (page, variant, identity, value) => {
+    cancellation = value
+    return new Promise(done => { resolve = () => done({ page, variant, identity,
+      async load() { return new ReaderAsset('late-neighbor') } }) })
+  }
+  const pending = f.s.prepareVariantForSource(1, f.key.copy(), f.s.snapshot().navigationRevision,
+    'translated', 'translated:v1')
+  f.s.move('next')
+  assert.equal(cancellation.isCancelled(), true)
+  resolve(); assert.equal(await pending, 'stale'); await tick(); f.decode()
+  assert.equal(f.frame().part.sourceIndex, 1)
+  assert.equal(f.frame().asset.uri, 'default-1')
+  f.s.close()
+})
+
 test('wrong derivative identity or variant leaves the displayed body untouched', async () => {
   for (const wrong of ['page', 'variant']) {
     const f = await fixture(), current = f.frame()

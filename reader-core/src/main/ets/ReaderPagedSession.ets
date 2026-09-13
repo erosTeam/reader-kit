@@ -215,6 +215,66 @@ export class ReaderPagedSession {
     return this.selectAssetVariant(slotId, requestId, unit, navigation, variant, identity)
   }
 
+  /** Prepare one loaded canonical source through the host provider without moving the reading anchor.
+   * Visible targets update in place; neighbor targets remain warm until navigation reaches them.
+   */
+  async prepareVariantForSource(sourceIndex: number, unit: ReaderUnitKey, navigation: number,
+    variant: ReaderProcessedAssetVariant, identity: string):
+    Promise<'changed' | 'unchanged' | 'unavailable' | 'stale'> {
+    const loadedFrame = (): ReaderPagedFrame | undefined => {
+      if (this.disposed || !this.active || this.state.phase !== 'ready' || this.state.kind !== 'original' ||
+        this.state.unit === null || !this.state.unit.key.equals(unit) || this.navigationRevision !== navigation) {
+        return undefined
+      }
+      for (const item of this.snapshot().window) {
+        const frame = item.frames.find((candidate: ReaderPagedFrame): boolean =>
+          candidate.part.sourceIndex === sourceIndex && candidate.asset.page !== null)
+        if (frame !== undefined) return frame
+      }
+      return undefined
+    }
+    const frame = loadedFrame()
+    if (frame === undefined || frame.asset.page === null) return 'stale'
+    if (frame.asset.phase !== 'displayed' || identity.length === 0 || this.assets.prepareVariant === undefined) {
+      return 'unavailable'
+    }
+    const existing = this.assetPlans.get(sourceIndex)
+    if (existing?.variant === variant && (existing as ReaderVariantAssetPlan).identity === identity) return 'unchanged'
+    const previous = this.originalPreparations.get(sourceIndex)
+    previous?.cancel()
+    this.originalPreparations.delete(sourceIndex)
+    this.preparationVariants.delete(sourceIndex)
+    const cancellation = new ReaderCancellation()
+    this.originalPreparations.set(sourceIndex, cancellation)
+    this.preparationVariants.set(sourceIndex, variant)
+    this.emit()
+    try {
+      const page = frame.asset.page.copy()
+      const plan = await this.assets.prepareVariant(page, variant, identity, cancellation)
+      if (cancellation.isCancelled() || loadedFrame() === undefined) return 'stale'
+      if (!plan.page.unit.equals(page.unit) || plan.page.key !== page.key ||
+        plan.page.sourceIndex !== sourceIndex || plan.variant !== variant || plan.identity !== identity) {
+        return 'unavailable'
+      }
+      this.assetPlans.set(sourceIndex, plan)
+      this.cropPages.delete(sourceIndex)
+      if (this.framesAt(this.state.displayIndex).some(
+        (candidate: ReaderPagedFrame): boolean => candidate.part.sourceIndex === sourceIndex)) {
+        this.state.selectionId += 1
+      }
+      this.reconcile()
+      return 'changed'
+    } catch (_error) {
+      return cancellation.isCancelled() || loadedFrame() === undefined ? 'stale' : 'unavailable'
+    } finally {
+      if (this.originalPreparations.get(sourceIndex) === cancellation) {
+        this.originalPreparations.delete(sourceIndex)
+        this.preparationVariants.delete(sourceIndex)
+        this.emit()
+      }
+    }
+  }
+
   private async selectAssetVariant(slotId: number, requestId: number, unit: ReaderUnitKey, navigation: number,
     variant: ReaderAssetVariant, identity: string = ''): Promise<'changed' | 'unchanged' | 'unavailable' | 'stale'> {
     const currentFrame = (): ReaderPagedFrame | undefined => {
