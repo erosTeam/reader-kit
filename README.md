@@ -476,7 +476,10 @@ the following upward swipe. Each accepted boundary produced one intent, opened
 the adjacent chapter at its first page, kept the reader chrome intact, and left
 the production library and progress files byte-identical. This is host handoff
 evidence for the optional lab, not production-reader replacement or persistence
-acceptance. The complete platform-free suite now has 316 passing tests.
+acceptance. A bounded debug-only chapter probe also proves that preparation
+failure and background cancellation retain the source chapter and emit no opened
+target; ordinary requests cannot enable it. The complete platform-free suite now
+has 317 passing tests.
 
 Run core behavioral tests with `node --test tests/*.test.cjs`.
 They execute the actual platform-free ArkTS core through the DevEco TypeScript

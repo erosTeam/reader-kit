@@ -25,6 +25,8 @@ export class ReaderLabRequest {
   entryLayoutOverride: string | null = null
   entryDirectionOverride: string | null = null
   entryProbe: string = ''
+  /** Debug-only host handoff probe; never changes ordinary reader requests. */
+  chapterProbe: string = ''
 
   constructor(work: string, unit: string, pageIndex: number, failurePage: number = -1,
     delayedMetricsPage: number = -1, failureLayout: string = 'continuous') {
@@ -112,5 +114,8 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
   const entryDirection = want.parameters['readerLabEntryDirection']
   request.entryDirectionOverride = entryDirection === 'ltr' ? 'ltr' : entryDirection === 'rtl' ? 'rtl' : null
   request.entryProbe = request.thumbnailEntry && want.parameters['readerLabEntryProbe'] === 'delay-once' ? 'delay-once' : ''
+  const chapterProbe = want.parameters['readerLabChapterProbe']
+  request.chapterProbe = request.readingChrome && typeof chapterProbe === 'string' &&
+    (chapterProbe === 'prepare-fail-once' || chapterProbe === 'prepare-delay-once') ? chapterProbe : ''
   connectReaderLabLaunch().publish(request)
 }
