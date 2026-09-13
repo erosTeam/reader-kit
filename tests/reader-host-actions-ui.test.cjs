@@ -74,6 +74,26 @@ test('generic host page actions carry only an exact stale-guarded reading target
   assert.equal(calls.length, 1)
 })
 
+test('manual reload emits one exact visible frame and rejects stale menu context', () => {
+  const Chrome = methods(['currentReloadFrame', 'selectReload'])
+  const key = { value: 'u', copy() { return { value: this.value, copy: this.copy, equals: this.equals } },
+    equals(other) { return other?.value === this.value } }
+  const frame = { slotId: 3, asset: { requestId: 9, phase: 'displayed', page: { key: 'p0' } } }
+  const calls = []
+  const chrome = new Chrome()
+  Object.assign(chrome, { active: true, reloadAvailable: true, moreShown: true, moreUnit: key,
+    moreTopology: 4, moreNavigation: 7, snapshot: { phase: 'ready', topologyRevision: 4,
+      navigationRevision: 7, displayIndex: 0, displayKeys: ['0:whole'], frames: [frame], unit: { key } },
+    onReload: (...values) => calls.push(values) })
+  chrome.selectReload(frame)
+  assert.deepEqual(calls.map(values => [values[0].slotId, values[2], values[3], values[4]]),
+    [[3, 4, 7, '0:whole']])
+  chrome.moreShown = true; chrome.moreUnit = key; chrome.moreTopology = 4; chrome.moreNavigation = 7
+  chrome.snapshot.navigationRevision = 8
+  chrome.selectReload(frame)
+  assert.equal(calls.length, 1)
+})
+
 test('surface keeps per-source variant policy and completion feedback host-owned', () => {
   assert.match(surfaceSource, /variantPreferenceResolver\?\.\(frame\.part\.sourceIndex\)/)
   assert.match(surfaceSource, /this\.variantPreferenceRevision/)
@@ -110,4 +130,11 @@ test('surface publishes host-neutral crop and policy events after applying runti
 test('single and spread image-information entries keep distinct semantic ids', () => {
   assert.equal((chromeSource.match(/\.id\('rkit-image-info'\)/g) ?? []).length, 1)
   assert.match(chromeSource, /\.id\('rkit-image-info-spread'\)/)
+})
+
+test('manual source reload keeps single and spread semantic ids distinct', () => {
+  assert.equal((chromeSource.match(/\.id\('rkit-reload-source'\)/g) ?? []).length, 1)
+  assert.match(chromeSource, /\.id\('rkit-reload-source-spread'\)/)
+  assert.match(chromeSource, /rkit-reload-source-\$\{frame\.part\.sourceIndex\}/)
+  assert.match(surfaceSource, /this\.session\.reloadItem\(topology, navigation, itemKey, frame\.slotId, frame\.asset\.requestId\)/)
 })

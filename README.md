@@ -1,5 +1,19 @@
 # Reader Kit (experimental)
 
+## Exact manual source reload (2026-09-13)
+
+The shared More menu can now force-reload a successfully displayed image, not
+only retry a failed decoder. A single page reloads directly; a spread first
+selects its left or right source. The command is bound to the current unit,
+topology, navigation, item, slot and asset request, so a menu opened before a
+seek, reflow or replacement cannot refresh a different page.
+
+Processed variants return to a force-refreshed host source first. The existing
+host-owned variant preference may then select a fresh enhanced or translated
+result; the core does not know either feature. The other spread pane, reading
+anchor, observed progress and catalog stay unchanged. The full local suite is
+355/355 after the new core and chrome regressions.
+
 ## Optional host-owned preference output (2026-09-13)
 
 `ReaderSurface.onPolicyChanged` and `onCropChanged` publish only the runtime

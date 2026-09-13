@@ -12,6 +12,7 @@
     { "name": "rkit_save_partial", "value": "已保存 %d / %d 张图片" },
     { "name": "rkit_more", "value": "更多" },
     { "name": "rkit_image_info", "value": "图片信息" },
+    { "name": "rkit_reload_source", "value": "重新加载图片来源" },
     { "name": "rkit_info_title", "value": "图片信息 · 第 %d 页" },
     { "name": "rkit_info_left", "value": "左侧 · 第 %d 页" },
     { "name": "rkit_info_right", "value": "右侧 · 第 %d 页" },

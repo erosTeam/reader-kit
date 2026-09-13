@@ -654,6 +654,32 @@ export class ReaderPagedSession {
     return true
   }
 
+  /** Force-reload one exact visible source. Processed variants return to the refreshed source first;
+   * the surface may then re-apply its current host-owned variant preference.
+   */
+  async reloadItem(topologyRevision: number, navigationRevision: number, itemKey: string,
+    slotId: number, requestId: number): Promise<boolean> {
+    if (this.disposed || !this.active || this.state.phase !== 'ready' ||
+      topologyRevision !== this.topologyRevision || navigationRevision !== this.navigationRevision) return false
+    const index = this.displayKeys.indexOf(itemKey)
+    const visible = this.state.policy.layout === 'continuous'
+      ? this.continuousStart >= 0 && index >= this.continuousStart && index <= this.continuousEnd
+      : index === this.state.displayIndex
+    if (!visible) return false
+    const frame = this.framesAt(index).find((candidate: ReaderPagedFrame) => candidate.slotId === slotId &&
+      candidate.asset.requestId === requestId && candidate.asset.page !== null &&
+      (candidate.asset.phase === 'displayed' || candidate.asset.phase === 'failed'))
+    const slot = frame === undefined ? undefined : this.slots.find((candidate: ReaderPageSlot) => candidate.id === slotId)
+    if (slot === undefined) return false
+    const keepOriginal = frame?.asset.variant === 'original' && slot.assetPlan?.variant === 'original'
+    if (!keepOriginal) {
+      this.assetPlans.delete(slot.index)
+      slot.assetPlan = null
+    }
+    await slot.session.show(slot.index, slot.kind, true, slot.assetPlan)
+    return true
+  }
+
   private rebuild(): void {
     if (this.state.unit === null || this.state.anchor === null) return
     this.map = new ReaderDisplayMap(this.state.unit, Array.from(this.pages.values()), this.state.policy)

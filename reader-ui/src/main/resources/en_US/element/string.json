@@ -12,6 +12,7 @@
     { "name": "rkit_save_partial", "value": "Saved %d of %d images" },
     { "name": "rkit_more", "value": "More" },
     { "name": "rkit_image_info", "value": "Image information" },
+    { "name": "rkit_reload_source", "value": "Reload image source" },
     { "name": "rkit_info_title", "value": "Image information · Page %d" },
     { "name": "rkit_info_left", "value": "Left · Page %d" },
     { "name": "rkit_info_right", "value": "Right · Page %d" },

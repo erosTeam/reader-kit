@@ -12,6 +12,7 @@
     { "name": "rkit_save_partial", "value": "%d / %d 枚を保存しました" },
     { "name": "rkit_more", "value": "その他" },
     { "name": "rkit_image_info", "value": "画像情報" },
+    { "name": "rkit_reload_source", "value": "画像ソースを再読み込み" },
     { "name": "rkit_info_title", "value": "画像情報 · %d ページ" },
     { "name": "rkit_info_left", "value": "左側 · %d ページ" },
     { "name": "rkit_info_right", "value": "右側 · %d ページ" },

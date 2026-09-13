@@ -677,6 +677,10 @@ export struct ReaderSurface {
           informationBusy: this.informationBusy,
           informationPreparing: this.informationBusy && !this.informationPresented,
           informationAvailable: this.session.informationSupported(),
+          onReload: (frame: ReaderPagedFrame, _unit: ReaderUnitKey, topology: number, navigation: number,
+            itemKey: string): void => {
+            void this.session.reloadItem(topology, navigation, itemKey, frame.slotId, frame.asset.requestId)
+          },
           onInformation: (frame: ReaderPagedFrame): void => { void this.showInformation(frame) },
           onShare: (): void => { void this.shareImage() },
           onMenuVisible: (visible: boolean): void => {

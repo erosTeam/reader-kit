@@ -741,6 +741,44 @@ test('item retry can target one failed spread pane and leaves the other failure 
   session.close()
 })
 
+test('manual reload targets one exact spread pane and force-refreshes only its source', async () => {
+  const { session, key, calls } = setup({ count: 4 })
+  session.setPolicy(policy({ layout: 'spread', direction: 'rtl' }))
+  await session.open(key); await tick()
+  let s = session.snapshot()
+  s.frames.forEach(frame => decode(session, frame))
+  s = session.snapshot()
+  const right = s.frames.find(frame => frame.part.sourceIndex === 0)
+  assert.equal(await session.reloadItem(s.topologyRevision, s.navigationRevision,
+    s.displayKeys[s.displayIndex], right.slotId, right.asset.requestId), true)
+  const current = session.snapshot()
+  assert.equal(current.frames.find(frame => frame.part.sourceIndex === 0).asset.phase, 'decoding')
+  assert.equal(current.frames.find(frame => frame.part.sourceIndex === 1).asset.phase, 'displayed')
+  assert.deepEqual(calls.load.filter(call => call[2]), [['A-0', 'original', true]])
+  assert.equal(await session.reloadItem(s.topologyRevision, s.navigationRevision,
+    s.displayKeys[s.displayIndex], right.slotId, right.asset.requestId), false)
+  session.close()
+})
+
+test('manual reload rejects inactive, stale navigation and offscreen targets', async () => {
+  const { session, key, calls } = setup({ count: 5 })
+  session.setNeighborPreload(true)
+  await session.open(key); await tick()
+  let s = session.snapshot()
+  s.frames.forEach(frame => decode(session, frame))
+  const visible = s.frames[0]
+  const neighbor = s.window.find(item => item.index === 1).frames[0]
+  assert.equal(await session.reloadItem(s.topologyRevision, s.navigationRevision + 1,
+    s.displayKeys[s.displayIndex], visible.slotId, visible.asset.requestId), false)
+  assert.equal(await session.reloadItem(s.topologyRevision, s.navigationRevision,
+    s.displayKeys[1], neighbor.slotId, neighbor.asset.requestId), false)
+  session.setViewportActive(false)
+  assert.equal(await session.reloadItem(s.topologyRevision, s.navigationRevision,
+    s.displayKeys[s.displayIndex], visible.slotId, visible.asset.requestId), false)
+  assert.equal(calls.load.filter(call => call[2]).length, 0)
+  session.close()
+})
+
 test('late metrics for a previous continuous row preserve the core current original point', async () => {
   const { session, key, catalog } = setup()
   const originalPage = catalog.page

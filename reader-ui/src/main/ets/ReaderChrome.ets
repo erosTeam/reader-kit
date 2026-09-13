@@ -32,6 +32,9 @@ export struct ReaderChrome {
   @Param informationBusy: boolean = false
   @Param informationPreparing: boolean = false
   @Param informationAvailable: boolean = false
+  @Param reloadAvailable: boolean = true
+  @Event onReload: (frame: ReaderPagedFrame, unit: ReaderUnitKey, topology: number, navigation: number,
+    itemKey: string) => void = () => {}
   @Param chapterNavigationAvailable: boolean = false
   @Param chapterNavigationBusy: boolean = false
   @Event onChapter: (direction: 'previous' | 'next', source: ReaderUnitKey) => void = () => {}
@@ -65,12 +68,14 @@ export struct ReaderChrome {
   private seekUnit: ReaderUnitKey | null = null
   private seekNavigation: number = -1
   private moreUnit: ReaderUnitKey | null = null
+  private moreTopology: number = -1
   private moreNavigation: number = -1
 
   @Monitor('snapshot', 'active')
   onSnapshotChanged(): void {
     if (this.moreShown && (!this.active || this.moreUnit !== null &&
       (this.snapshot.unit?.key.equals(this.moreUnit) !== true ||
+        this.snapshot.topologyRevision !== this.moreTopology ||
         this.snapshot.navigationRevision !== this.moreNavigation))) this.moreShown = false
     if (this.originalMenuShown && (!this.active || !this.originalTargetsCurrent())) this.originalMenuShown = false
     if (this.saveMenuShown && (!this.active || !this.saveTargetsCurrent())) this.saveMenuShown = false
@@ -240,6 +245,25 @@ export struct ReaderChrome {
     if (current !== undefined) this.onInformation(current)
   }
 
+  private currentReloadFrame(slotId: number): ReaderPagedFrame | undefined {
+    return this.snapshot.frames.find(frame => frame.slotId === slotId && frame.asset.page !== null &&
+      (frame.asset.phase === 'displayed' || frame.asset.phase === 'failed'))
+  }
+
+  private selectReload(frame: ReaderPagedFrame): void {
+    const current = this.currentReloadFrame(frame.slotId)
+    const source = this.moreUnit
+    const topology = this.moreTopology
+    const navigation = this.moreNavigation
+    const itemKey = this.snapshot.displayKeys[this.snapshot.displayIndex] ?? ''
+    this.moreShown = false
+    if (this.active && this.reloadAvailable && current !== undefined && source !== null && itemKey.length > 0 &&
+      this.snapshot.phase === 'ready' && this.snapshot.unit?.key.equals(source) &&
+      this.snapshot.topologyRevision === topology && this.snapshot.navigationRevision === navigation) {
+      this.onReload(current, source.copy(), topology, navigation, itemKey)
+    }
+  }
+
   private selectChapter(direction: 'previous' | 'next'): void {
     const source = this.moreUnit
     const available = direction === 'previous' ? this.snapshot.canPreviousUnit : this.snapshot.canNextUnit
@@ -283,8 +307,33 @@ export struct ReaderChrome {
   }
 
   @Builder
+  private ReloadChoice() {
+    Menu() {
+      ForEach(this.snapshot.frames, (frame: ReaderPagedFrame, index: number) => {
+        MenuItem({ content: index === 0 ? $r('app.string.rkit_info_left', frame.part.sourceIndex + 1) :
+          $r('app.string.rkit_info_right', frame.part.sourceIndex + 1) })
+          .enabled(this.currentReloadFrame(frame.slotId) !== undefined)
+          .id(`rkit-reload-source-${frame.part.sourceIndex}`)
+          .onClick((): void => { this.selectReload(frame) })
+      }, (frame: ReaderPagedFrame): string => `${frame.slotId}`)
+    }
+  }
+
+  @Builder
   private MoreMenu() {
     Menu() {
+      if (this.reloadAvailable && this.snapshot.frames.length > 1) {
+        MenuItem({ content: $r('app.string.rkit_reload_source'), builder: this.ReloadChoice })
+          .id('rkit-reload-source-spread')
+          .enabled(this.snapshot.frames.some(frame => this.currentReloadFrame(frame.slotId) !== undefined))
+      } else if (this.reloadAvailable) {
+        MenuItem({ content: $r('app.string.rkit_reload_source') }).id('rkit-reload-source')
+          .enabled(this.snapshot.frames.some(frame => this.currentReloadFrame(frame.slotId) !== undefined))
+          .onClick((): void => {
+            const frame = this.snapshot.frames[0]
+            if (frame !== undefined) this.selectReload(frame)
+          })
+      }
       if (this.informationAvailable && this.snapshot.frames.length > 1) {
         MenuItem({ content: $r('app.string.rkit_image_info'), builder: this.InformationChoice })
           .id('rkit-image-info-spread')
@@ -403,7 +452,7 @@ export struct ReaderChrome {
                 onDisappear: (): void => { this.onMenuVisible(false) },
               })
           }
-          if (this.informationAvailable || this.externalOpenAvailable || this.chapterNavigationAvailable ||
+          if (this.reloadAvailable || this.informationAvailable || this.externalOpenAvailable || this.chapterNavigationAvailable ||
             this.hostActions.length > 0) {
             Button({ type: ButtonType.Circle }) {
               if (this.informationPreparing) {
@@ -419,6 +468,7 @@ export struct ReaderChrome {
                 !this.chapterNavigationBusy && !this.informationBusy && !this.shareBusy && !this.saveBusy && !this.snapshot.originalPreparing)
               .onClick((): void => {
                 this.moreUnit = this.snapshot.unit?.key.copy() ?? null
+                this.moreTopology = this.snapshot.topologyRevision
                 this.moreNavigation = this.snapshot.navigationRevision
                 this.moreShown = true
               })
