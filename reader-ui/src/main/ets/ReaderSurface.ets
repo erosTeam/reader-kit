@@ -327,6 +327,14 @@ export struct ReaderSurface {
     this.onChapter(direction, source.copy())
   }
 
+  private requestBoundaryChapter(direction: 'previous' | 'next', topology: number, navigation: number): void {
+    const current = this.session.snapshot()
+    const available = direction === 'previous' ? current.canPreviousUnit : current.canNextUnit
+    if (!available || topology !== current.topologyRevision || navigation !== current.navigationRevision ||
+      current.unit === null) return
+    this.requestChapter(direction, current.unit.key)
+  }
+
   private commitChromeVisible(visible: boolean): void {
     this.chromeVisible = visible
     if (!this.chromeVisible) this.previewIndex = -1
@@ -420,6 +428,9 @@ export struct ReaderSurface {
             snapshot: this.state, active: this.active,
             entryTransition: this.entryTransition,
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
+            onBoundary: (direction: 'previous' | 'next', topology: number, navigation: number): void => {
+              this.requestBoundaryChapter(direction, topology, navigation)
+            },
             onTap: (x: number, y: number): ReaderTapAction => this.pageTap(x, y),
             onRange: (start: number, end: number, topology: number, navigation: number): void => {
               this.session.setContinuousRange(start, end, topology, navigation)
@@ -443,6 +454,9 @@ export struct ReaderSurface {
             snapshot: this.state, active: this.active,
             entryTransition: this.entryTransition,
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
+            onBoundary: (direction: 'previous' | 'next', topology: number, navigation: number): void => {
+              this.requestBoundaryChapter(direction, topology, navigation)
+            },
             onTap: (x: number, y: number): void => { this.pageTap(x, y) },
             onSelect: (index: number, topology: number, navigation: number): void => {
               this.session.selectDisplay(index, topology, navigation)

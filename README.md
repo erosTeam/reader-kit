@@ -460,6 +460,24 @@ exact original-point oracle. High magnification, continuous zoom plus crop, moti
 thumbnail transitions and Koma crop remain unaccepted. Detailed reports and actual
 screenshots are in NextN protocols244–254 and its active acceptance ledger.
 
+## Optional adjacent-unit boundary intent (D12)
+
+Paged and continuous surfaces can emit the existing host-neutral `onChapter`
+intent after one explicit swipe begins at a real unit boundary. Native `Swiper`
+and `List` retain gesture ownership: the shared layer adds no competing Pan, does
+not use `List.onReachEnd`, and never opens a chapter itself. Direction is mapped
+through horizontal LTR/RTL or vertical paging, then fenced by the captured
+topology and navigation revisions and the current adjacent-unit availability.
+
+Koma197's optional shared-reader lab accepted paged and continuous forward and
+reverse boundaries against two real neighboring chapters. The continuous forward
+case first scrolled the final image to the actual List end and switched only on
+the following upward swipe. Each accepted boundary produced one intent, opened
+the adjacent chapter at its first page, kept the reader chrome intact, and left
+the production library and progress files byte-identical. This is host handoff
+evidence for the optional lab, not production-reader replacement or persistence
+acceptance. The complete platform-free suite now has 316 passing tests.
+
 Run core behavioral tests with `node --test tests/*.test.cjs`.
 They execute the actual platform-free ArkTS core through the DevEco TypeScript
 compiler. Set `READER_KIT_TYPESCRIPT` if that compiler is installed elsewhere.
