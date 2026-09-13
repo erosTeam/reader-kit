@@ -56,20 +56,35 @@ export class ReaderCancellation {
   }
 }
 
-/** File/URI ownership belongs to the provider. Releasing a reader never deletes a download. */
+/**
+ * File/URI ownership belongs to the provider. The URI content must remain immutable
+ * until release(): ArkUI may keep decoding it after a replacement request begins.
+ * Releasing a reader never deletes a host-owned download.
+ */
 export class ReaderAsset {
   uri: string
   crop: ReaderImageCropSource | null = null
   originalAvailable: boolean = false
   private released: boolean = false
   private releaseResource: () => void
+  private presented: boolean = false
+  private presentResource: () => void
 
   information: ReaderImageInformationSource | null
 
-  constructor(uri: string, releaseResource: () => void = () => {}, information: ReaderImageInformationSource | null = null) {
+  constructor(uri: string, releaseResource: () => void = () => {},
+    information: ReaderImageInformationSource | null = null, presentResource: () => void = () => {}) {
     this.uri = uri
     this.releaseResource = releaseResource
     this.information = information
+    this.presentResource = presentResource
+  }
+
+  /** Reports the first successful native presentation to the provider. */
+  present(): void {
+    if (this.released || this.presented) return
+    this.presented = true
+    this.presentResource()
   }
 
   release(): void {
@@ -125,6 +140,9 @@ export class ReaderSnapshot {
   variantIdentity: string = ''
   originalAvailable: boolean = false
   uri: string = ''
+  /** Previous displayed pixels kept below an exact in-place replacement. */
+  retainedUri: string = ''
+  retainedAssetRequestId: number = 0
   requestId: number = 0
   /** Identity of uri/page, retained while a different unit is only being prepared. */
   assetRequestId: number = 0
@@ -147,6 +165,8 @@ export class ReaderSnapshot {
     value.variantIdentity = this.variantIdentity
     value.originalAvailable = this.originalAvailable
     value.uri = this.uri
+    value.retainedUri = this.retainedUri
+    value.retainedAssetRequestId = this.retainedAssetRequestId
     value.requestId = this.requestId
     value.assetRequestId = this.assetRequestId
     value.informationAvailable = this.informationAvailable
@@ -170,6 +190,7 @@ export class ReaderSession {
   private listener: ((snapshot: ReaderSnapshot) => void) | null = null
   private cancellation: ReaderCancellation = new ReaderCancellation()
   private asset: ReaderAsset | null = null
+  private retiredAsset: ReaderAsset | null = null
   private originalPlan: ReaderResolvedAssetPlan | null = null
   private epoch: number = 0
   private disposed: boolean = false
@@ -303,28 +324,40 @@ export class ReaderSession {
     epoch: number, cancellation: ReaderCancellation, forceReload: boolean = false,
     assetPlan: ReaderResolvedAssetPlan | null = null,
   ): Promise<void> {
-    this.state.phase = 'asset'
-    this.state.sourceIndex = index
-    this.state.kind = kind
+    const retainDisplayed = forceReload && this.state.phase === 'displayed' && this.state.unit !== null &&
+      this.state.unit.key.equals(unit.key) && this.state.sourceIndex === index && this.state.kind === kind &&
+      this.asset !== null
     this.originalPlan = kind === 'original' ? assetPlan : null
-    this.state.variant = this.originalPlan?.variant ?? (this.originalPlan === null ? 'default' : 'original')
-    this.state.variantIdentity = this.originalPlan?.variant === 'enhanced' || this.originalPlan?.variant === 'translated'
+    const variant: ReaderAssetVariant = this.originalPlan?.variant ?? (this.originalPlan === null ? 'default' : 'original')
+    const variantIdentity: string = this.originalPlan?.variant === 'enhanced' || this.originalPlan?.variant === 'translated'
       ? this.originalPlan.identity : ''
-    this.state.originalAvailable = false
-    this.state.page = null
-    this.state.informationAvailable = false
-    this.state.uri = ''
-    this.state.assetRequestId = 0
-    this.releaseAsset()
-    this.emit()
+    if (!retainDisplayed) {
+      this.state.phase = 'asset'
+      this.state.sourceIndex = index
+      this.state.kind = kind
+      this.state.variant = variant
+      this.state.variantIdentity = variantIdentity
+      this.state.originalAvailable = false
+      this.state.page = null
+      this.state.informationAvailable = false
+      this.state.uri = ''
+      this.state.retainedUri = ''
+      this.state.retainedAssetRequestId = 0
+      this.state.assetRequestId = 0
+      this.releaseRetiredAsset()
+      this.releaseAsset()
+      this.emit()
+    }
     try {
       const page = (await this.catalog.page(unit.copy(), index, cancellation)).copy()
       if (!this.current(epoch)) return
       if (!page.unit.equals(unit.key) || page.sourceIndex !== index || page.key.length === 0) {
         throw new Error('reader_page_identity_mismatch')
       }
-      this.state.page = page
-      this.emit()
+      if (!retainDisplayed) {
+        this.state.page = page
+        this.emit()
+      }
       const plan = this.originalPlan
       if (plan !== null && (!plan.page.unit.equals(page.unit) || plan.page.key !== page.key ||
         plan.page.sourceIndex !== page.sourceIndex)) throw new Error('reader_original_plan_identity_mismatch')
@@ -338,7 +371,22 @@ export class ReaderSession {
         asset.release()
         throw new Error('reader_empty_asset')
       }
+      if (retainDisplayed) {
+        // Double-buffer against the most recently displayed native source. A
+        // consecutive replacement must retain the source that actually owned
+        // the immediately preceding frame, not an older fallback whose Image
+        // node has already left the active presentation chain.
+        this.releaseRetiredAsset()
+        this.retiredAsset = this.asset
+        this.state.retainedUri = this.state.uri
+        this.state.retainedAssetRequestId = this.state.assetRequestId
+      }
       this.asset = asset
+      this.state.sourceIndex = index
+      this.state.kind = kind
+      this.state.variant = variant
+      this.state.variantIdentity = variantIdentity
+      this.state.page = page
       this.state.uri = asset.uri
       this.state.informationAvailable = asset.information !== null
       this.state.originalAvailable = this.state.variant === 'original' || asset.originalAvailable
@@ -352,8 +400,23 @@ export class ReaderSession {
 
   reportPresentation(requestId: number, success: boolean): void {
     if (!this.current(requestId) || requestId !== this.state.assetRequestId || this.state.phase !== 'decoding') return
+    if (success) {
+      this.asset?.present()
+      // The candidate has survived one composed frame. Retire the fallback now
+      // so the cell returns to its single stable Image site before another
+      // exact reload; otherwise the conditional candidate site is reused and
+      // ArkUI can compose an empty second replacement for the same page.
+      this.releaseRetiredAsset()
+      this.state.retainedUri = ''
+      this.state.retainedAssetRequestId = 0
+    }
     this.state.phase = success ? 'displayed' : 'failed'
     this.state.error = success ? '' : 'reader_decode_failed'
+    if (!success) {
+      this.releaseRetiredAsset()
+      this.state.retainedUri = ''
+      this.state.retainedAssetRequestId = 0
+    }
     this.emit()
   }
 
@@ -363,6 +426,9 @@ export class ReaderSession {
       (this.state.phase !== 'displayed' && this.state.phase !== 'decoding')) return
     this.state.phase = 'failed'
     this.state.error = 'reader_decode_failed'
+    this.releaseRetiredAsset()
+    this.state.retainedUri = ''
+    this.state.retainedAssetRequestId = 0
     this.emit()
   }
 
@@ -396,17 +462,25 @@ export class ReaderSession {
     this.asset = null
   }
 
+  private releaseRetiredAsset(): void {
+    if (this.retiredAsset !== null) this.retiredAsset.release()
+    this.retiredAsset = null
+  }
+
   close(): void {
     if (this.disposed) return
     this.disposed = true
     this.viewportActive = false
     this.cancellation.cancel()
     this.epoch += 1
+    this.releaseRetiredAsset()
     this.releaseAsset()
     this.originalPlan = null
     this.state.phase = 'closed'
     this.state.informationAvailable = false
     this.state.uri = ''
+    this.state.retainedUri = ''
+    this.state.retainedAssetRequestId = 0
     this.state.assetRequestId = 0
     this.emit()
     this.listener = null

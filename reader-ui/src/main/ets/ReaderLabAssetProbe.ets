@@ -97,7 +97,8 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
     if (kind !== 'original' || source === null ||
       (this.informationMode !== 'fail-once' && this.informationMode !== 'delay-once')) return asset
     const information = new ReaderLabInformationSource((): Promise<ReaderImageInformation> => this.readInformation(source))
-    const wrapped = new ReaderAsset(asset.uri, (): void => { asset.release() }, information)
+    const wrapped = new ReaderAsset(asset.uri, (): void => { asset.release() }, information,
+      (): void => { asset.present() })
     wrapped.originalAvailable = asset.originalAvailable
     wrapped.crop = asset.crop
     return wrapped

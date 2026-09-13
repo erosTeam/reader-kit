@@ -101,3 +101,12 @@ test('spread menu copies policy without changing direction, axis, grouping optio
   v.snapshot.policy = calls[0]; chrome.toggleSpreadLayout(); assert.equal(calls[1].spreadLayout, 'joined')
   v.snapshot.policy.layout = 'continuous'; chrome.toggleSpreadLayout(); assert.equal(calls.length, 2)
 })
+
+test('same-page replacement keeps stable slot identity and promotes only a composed candidate', () => {
+  assert.match(src, /\(frame: ReaderPagedFrame\): string => `\$\{frame\.slotId\}:\$\{frame\.part\.fragment\}`/)
+  assert.match(src, /@Local private retainedFrameValue: ReaderPagedFrame \| null = null/)
+  assert.match(src, /private presentedFrame\(\): ReaderPagedFrame \{[\s\S]*this\.retainedFrameValue \?\? this\.frame\(\)/)
+  assert.match(src, /frame: this\.presentedFrame\(\)[\s\S]*?active: this\.retainedFrameValue === null[\s\S]*?\.zIndex\(this\.retainedFrameValue !== null && this\.frame\(\)\.asset\.phase === 'decoding' \? 1 : 0\)/)
+  assert.match(src, /if \(this\.retainedFrameValue !== null\) \{[\s\S]*?frame: this\.frame\(\)[\s\S]*?onPresented: this\.onPresented[\s\S]*?\.zIndex\(this\.frame\(\)\.asset\.phase === 'displayed' \? 1 : 0\)/)
+  assert.match(src, /postFrameCallback\(new ReaderEntryAfterLayout[\s\S]*?this\.onPresented\(this\.slotId, requestId, true, width, height\)/)
+})

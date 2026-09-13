@@ -69,6 +69,71 @@ test('decode failure retry asks the provider to replace a corrupt cached origina
   session.close()
 })
 
+test('displayed force reload retires each fallback after the candidate reaches a composed frame', async () => {
+  const firstReplacement = deferred()
+  const secondReplacement = deferred()
+  const releases = []
+  const presentations = []
+  let attempt = 0
+  const assets = new Assets()
+  assets.load = async (_page, _kind, _cancellation, forceReload) => {
+    attempt++
+    if (forceReload) return attempt === 2 ? firstReplacement.promise : secondReplacement.promise
+    return new ReaderAsset('old', () => releases.push('old'), null, () => presentations.push('old'))
+  }
+  const session = new ReaderSession(new Catalog(), assets)
+  await session.open(key())
+  const old = session.snapshot()
+  session.reportPresentation(old.assetRequestId, true)
+  session.reportPresentation(old.assetRequestId, true)
+  assert.deepEqual(presentations, ['old'])
+  const reload = session.show(0, 'original', true)
+  await new Promise(setImmediate)
+  assert.equal(session.snapshot().phase, 'displayed')
+  assert.equal(session.snapshot().uri, 'old')
+  assert.equal(session.snapshot().assetRequestId, old.assetRequestId)
+  assert.equal(session.snapshot().retainedUri, '')
+  assert.equal(session.snapshot().retainedAssetRequestId, 0)
+  assert.deepEqual(releases, [])
+  firstReplacement.resolve(new ReaderAsset('new-1', () => releases.push('new-1'), null,
+    () => presentations.push('new-1')))
+  await reload
+  const pending = session.snapshot()
+  assert.equal(pending.phase, 'decoding')
+  assert.equal(pending.uri, 'new-1')
+  assert.equal(pending.retainedUri, 'old')
+  assert.equal(pending.retainedAssetRequestId, old.assetRequestId)
+  assert.notEqual(pending.assetRequestId, old.assetRequestId)
+  assert.deepEqual(releases, [])
+  session.reportPresentation(pending.assetRequestId, true)
+  assert.deepEqual(presentations, ['old', 'new-1'])
+  assert.equal(session.snapshot().retainedUri, '')
+  assert.equal(session.snapshot().retainedAssetRequestId, 0)
+  assert.deepEqual(releases, ['old'])
+
+  const secondReload = session.show(0, 'original', true)
+  await new Promise(setImmediate)
+  assert.equal(session.snapshot().uri, 'new-1')
+  assert.equal(session.snapshot().retainedUri, '')
+  secondReplacement.resolve(new ReaderAsset('new-2', () => releases.push('new-2'), null,
+    () => presentations.push('new-2')))
+  await secondReload
+  const secondPending = session.snapshot()
+  assert.equal(secondPending.phase, 'decoding')
+  assert.equal(secondPending.uri, 'new-2')
+  assert.equal(secondPending.retainedUri, 'new-1')
+  assert.equal(secondPending.retainedAssetRequestId, pending.assetRequestId)
+  assert.deepEqual(releases, ['old'])
+  session.reportPresentation(secondPending.assetRequestId, true)
+  assert.deepEqual(presentations, ['old', 'new-1', 'new-2'])
+  assert.equal(session.snapshot().retainedUri, '')
+  assert.equal(session.snapshot().retainedAssetRequestId, 0)
+  assert.deepEqual(releases, ['old', 'new-1'])
+  session.close()
+  assert.deepEqual(releases, ['old', 'new-1', 'new-2'])
+  assert.equal(attempt, 3)
+})
+
 test('file ready is not displayed; only current decode callback can confirm it', async () => {
   const session = new ReaderSession(new Catalog(), new Assets())
   await session.open(key())

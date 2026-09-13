@@ -366,7 +366,6 @@ export struct ReaderPagedViewport {
             entryTransition: this.entryTransition,
             entryMeasurement: this.entryMeasurement,
             entryGeometryReady: this.entryViewportLaidOut && this.entryRatiosReady(),
-            assetRequestId: frame.asset.assetRequestId,
             renderedFragment: frame.part.fragment,
             // Zero leaves the fitted width to the cell's current reactive frame, not this stable-key closure.
             frameWidth: this.equalSlots() ? this.viewportWidth / this.snapshot.frames.length : 0,
@@ -380,7 +379,7 @@ export struct ReaderPagedViewport {
             },
             onRetry: this.onRetry,
           })
-        }, (frame: ReaderPagedFrame): string => `${frame.slotId}:${frame.asset.assetRequestId}:${frame.part.fragment}`)
+        }, (frame: ReaderPagedFrame): string => `${frame.slotId}:${frame.part.fragment}`)
       }
       .direction(Direction.Ltr)
       .width(this.equalSlots() ? this.viewportWidth : this.frameHeight() * this.totalRatio())
@@ -442,11 +441,11 @@ struct ReaderPagedCell {
   @Param entryMeasurement: ReaderEntryMeasurement | null = null
   @Param entryGeometryReady: boolean = false
   @Require @Param slotId: number
-  @Require @Param assetRequestId: number
   @Require @Param renderedFragment: ReaderFragment
   @Require @Param frameWidth: number
   @Require @Param frameHeight: number
   @Require @Param active: boolean
+  @Local private retainedFrameValue: ReaderPagedFrame | null = null
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -455,8 +454,44 @@ struct ReaderPagedCell {
 
   private frame(): ReaderPagedFrame {
     return this.snapshot.frames.find((frame: ReaderPagedFrame) => frame.slotId === this.slotId &&
-      frame.asset.assetRequestId === this.assetRequestId && frame.part.fragment === this.renderedFragment) ??
+      frame.part.fragment === this.renderedFragment) ??
       new ReaderPagedFrame(0, new ReaderDisplayPart(new ReaderUnitKey('', '', ''), null, 0), new ReaderSnapshot())
+  }
+
+  private syncRetainedFrame(): void {
+    const frame = this.frame()
+    const retainedUri = frame.asset.retainedUri
+    const retainedRequest = frame.asset.retainedAssetRequestId
+    if (retainedUri.length === 0 || retainedRequest <= 0 || retainedUri === frame.asset.uri) {
+      this.retainedFrameValue = null
+      return
+    }
+    if (this.retainedFrameValue?.asset.uri === retainedUri &&
+      this.retainedFrameValue.asset.assetRequestId === retainedRequest) return
+    const asset = frame.asset.copy()
+    asset.phase = 'displayed'
+    asset.uri = retainedUri
+    asset.requestId = retainedRequest
+    asset.assetRequestId = retainedRequest
+    asset.retainedUri = ''
+    asset.retainedAssetRequestId = 0
+    const retained = new ReaderPagedFrame(frame.slotId, frame.part, asset, frame.crop)
+    retained.cropPending = frame.cropPending
+    this.retainedFrameValue = retained
+  }
+
+  aboutToAppear(): void { this.syncRetainedFrame() }
+
+  @Monitor('snapshot')
+  onSnapshotChanged(): void { this.syncRetainedFrame() }
+
+  private retainedFrame(): ReaderPagedFrame {
+    return this.retainedFrameValue ??
+      new ReaderPagedFrame(0, new ReaderDisplayPart(new ReaderUnitKey('', '', ''), null, 0), new ReaderSnapshot())
+  }
+
+  private presentedFrame(): ReaderPagedFrame {
+    return this.retainedFrameValue ?? this.frame()
   }
 
   private cellWidth(): number { return this.frameWidth > 0 ? this.frameWidth : this.frameHeight * partRatio(this.frame()) }
@@ -478,21 +513,54 @@ struct ReaderPagedCell {
           onRetry: (): void => { this.onRetry(this.slotId, this.frame().asset.requestId) },
         })
       } else if (this.frame().asset.uri.length > 0 || this.entryContentReady()) {
+        // This first call site exists from initial decode onward. During an exact
+        // replacement it keeps the same presented URI/id/native node in front;
+        // the conditional second site below alone owns the new request.
         ReaderPagedImage({
           imageInterpolation: this.imageInterpolation,
-          frame: this.frame(), selectionId: this.snapshot.selectionId,
+          frame: this.presentedFrame(), selectionId: this.snapshot.selectionId,
           topologyRevision: this.snapshot.topologyRevision, navigationRevision: this.snapshot.navigationRevision,
-          entryTransition: this.entryTransition,
+          entryTransition: this.retainedFrameValue === null ? this.entryTransition : null,
           entryMeasurement: this.entryMeasurement,
           entryPhase: this.entryTransition?.phase ?? 'finished',
           entryLayoutWidth: this.entryGeometryReady ? this.imageHeight() * partRatio(this.frame()) : 0,
           entryLayoutHeight: this.entryGeometryReady ? this.imageHeight() : 0,
-          slotId: this.slotId, assetRequestId: this.assetRequestId,
+          slotId: this.slotId, assetRequestId: this.presentedFrame().asset.assetRequestId,
           renderedFragment: this.renderedFragment,
-          active: this.active && this.snapshot.phase === 'ready',
-          onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
-          onInvalidDecodedMetrics: this.onInvalidDecodedMetrics,
-        }).width(this.imageHeight() * partRatio(this.frame())).height(this.imageHeight())
+          active: this.retainedFrameValue === null && this.active && this.snapshot.phase === 'ready',
+          onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number): void => {
+            if (this.retainedFrameValue === null) this.onPresented(slotId, requestId, success, width, height)
+          },
+          onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {
+            if (this.retainedFrameValue === null) this.onVisible(selectionId, slotId, requestId, fragment)
+          },
+          onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {
+            if (this.retainedFrameValue === null) this.onFailed(selectionId, slotId, requestId, fragment)
+          },
+          onInvalidDecodedMetrics: (slotId: number, requestId: number, assetRequestId: number): void => {
+            if (this.retainedFrameValue === null) this.onInvalidDecodedMetrics(slotId, requestId, assetRequestId)
+          },
+        })
+          .width(this.imageHeight() * partRatio(this.frame())).height(this.imageHeight())
+          .zIndex(this.retainedFrameValue !== null && this.frame().asset.phase === 'decoding' ? 1 : 0)
+        if (this.retainedFrameValue !== null) {
+          ReaderPagedImage({
+            imageInterpolation: this.imageInterpolation,
+            frame: this.frame(), selectionId: this.snapshot.selectionId,
+            topologyRevision: this.snapshot.topologyRevision, navigationRevision: this.snapshot.navigationRevision,
+            entryTransition: this.entryTransition,
+            entryMeasurement: this.entryMeasurement,
+            entryPhase: this.entryTransition?.phase ?? 'finished',
+            entryLayoutWidth: this.entryGeometryReady ? this.imageHeight() * partRatio(this.frame()) : 0,
+            entryLayoutHeight: this.entryGeometryReady ? this.imageHeight() : 0,
+            slotId: this.slotId, assetRequestId: this.frame().asset.assetRequestId,
+            renderedFragment: this.renderedFragment,
+            active: this.active && this.snapshot.phase === 'ready',
+            onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
+            onInvalidDecodedMetrics: this.onInvalidDecodedMetrics,
+          }).width(this.imageHeight() * partRatio(this.frame())).height(this.imageHeight())
+            .zIndex(this.frame().asset.phase === 'displayed' ? 1 : 0)
+        }
       }
       if (this.frame().asset.phase === 'idle' || this.frame().asset.phase === 'asset' || this.frame().asset.phase === 'decoding') {
         LoadingProgress().width(32).height(32)
@@ -537,6 +605,7 @@ export struct ReaderPagedImage {
   private entryLayoutRevision: number = 0
   private decodedWidth: number = 0
   private decodedHeight: number = 0
+  private scheduledPresentationRequestId: number = 0
   private entryMounted: boolean = false
   private measuredEntryId: number = -1
   private measuredEntryRect: ReaderEntryRect | null = null
@@ -737,9 +806,19 @@ export struct ReaderPagedImage {
     this.decodedWidth = width
     this.decodedHeight = height
     this.reportInvalidDecodedMetrics()
-    this.onPresented(this.slotId, this.assetRequestId, true, width, height)
     this.publishEntryTarget()
-    this.reportVisible()
+    const requestId: number = this.assetRequestId
+    if (this.scheduledPresentationRequestId === requestId) return
+    this.scheduledPresentationRequestId = requestId
+    // onComplete means decoded, not that pixels reached a composed frame. Keep
+    // the prior image above this candidate for one frame, then let the session
+    // publish displayed and swap the layers only if this leaf is still current.
+    this.getUIContext().postFrameCallback(new ReaderEntryAfterLayout((): void => {
+      if (!this.entryMounted || !this.decoded || this.assetRequestId !== requestId ||
+        this.frame.asset.assetRequestId !== requestId) return
+      this.onPresented(this.slotId, requestId, true, width, height)
+      this.reportVisible()
+    }))
   }
 
   private failed(): void {
