@@ -254,6 +254,27 @@ test('spread owns two assets but opens host catalog only once; RTL changes visua
   session.close()
 })
 
+test('observed spread coverage reports the decoded terminal original without inventing progress', async () => {
+  const { session, key } = setup({ count: 4 })
+  session.setPolicy(policy({ layout: 'spread' }))
+  await session.open(key); await tick()
+  session.move('next'); await tick()
+  let state = session.snapshot()
+  assert.deepEqual(state.frames.map(frame => frame.part.sourceIndex), [2, 3])
+  assert.equal(state.observedPosition(), null)
+  state.frames.forEach(frame => decode(session, frame))
+  state = session.snapshot()
+  const anchorFrame = state.frames.find(frame => frame.part.sourceIndex === state.anchor.sourceIndexHint)
+  assert.equal(session.reportVisible(state.selectionId, anchorFrame.slotId,
+    anchorFrame.asset.assetRequestId, anchorFrame.part.fragment), true)
+  const observed = session.snapshot().observedPosition()
+  assert.ok(observed)
+  assert.deepEqual(observed.displayedSourceIndexes, [2, 3])
+  assert.equal(observed.anchor.sourceIndexHint, 2)
+  assert.equal(observed.terminalSourceDisplayed, true)
+  session.close()
+})
+
 test('wide halves navigate without downloading again; collapse and RTL restore physical half', async () => {
   const { session, key, calls } = setup({ wide: [0] })
   session.setPolicy(policy({ splitWidePages: true }))
@@ -562,6 +583,37 @@ test('continuous observations require decoded active first-visible original and 
   session.setViewportActive(false)
   assert.equal(observe(current, 0, 0.9), false)
   assert.equal(session.snapshot().observedAnchor.y, 0.75)
+  session.close()
+})
+
+test('continuous observed coverage excludes a decoded prefetch neighbor and includes a visible terminal row', async () => {
+  const { session, key } = setup({ count: 5 })
+  session.setPolicy(policy({ layout: 'continuous' })); session.setNeighborPreload(true)
+  await session.open(key); await tick()
+  let state = session.snapshot()
+  session.setContinuousRange(2, 3, state.topologyRevision, state.navigationRevision)
+  await tick(); state = session.snapshot()
+  state.window.flatMap(item => item.frames).forEach(frame => decode(session, frame))
+  state = session.snapshot()
+  let current = state.window.find(item => item.index === 2).frames[0]
+  assert.equal(session.reportContinuousVisible(state.topologyRevision, state.navigationRevision,
+    state.displayKeys[2], current.slotId, current.asset.assetRequestId, 0.5, 0.2), true)
+  let observed = session.snapshot().observedPosition()
+  assert.ok(observed)
+  assert.deepEqual(observed.displayedSourceIndexes, [2, 3])
+  assert.equal(observed.terminalSourceDisplayed, false)
+
+  state = session.snapshot()
+  session.setContinuousRange(3, 4, state.topologyRevision, state.navigationRevision)
+  await tick(); state = session.snapshot()
+  state.window.flatMap(item => item.frames).forEach(frame => decode(session, frame))
+  state = session.snapshot()
+  current = state.window.find(item => item.index === 3).frames[0]
+  assert.equal(session.reportContinuousVisible(state.topologyRevision, state.navigationRevision,
+    state.displayKeys[3], current.slotId, current.asset.assetRequestId, 0.5, 0.4), true)
+  observed = session.snapshot().observedPosition()
+  assert.deepEqual(observed.displayedSourceIndexes, [3, 4])
+  assert.equal(observed.terminalSourceDisplayed, true)
   session.close()
 })
 

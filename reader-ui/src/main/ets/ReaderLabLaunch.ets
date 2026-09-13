@@ -5,6 +5,8 @@ export class ReaderLabRequest {
   work: string
   unit: string
   pageIndex: number
+  /** True only when the debug Want supplied a finite page override. */
+  pageIndexProvided: boolean = false
   failurePage: number
   delayedMetricsPage: number
   failureLayout: string
@@ -82,6 +84,8 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
     Number.isSafeInteger(delayedIndex) && delayedIndex >= 0 ? delayedIndex : -1,
     failureLayout === 'single' ? 'single' : failureLayout === 'spread' ? 'spread' : 'continuous',
   )
+  request.pageIndexProvided = (typeof page === 'number' && Number.isFinite(page)) ||
+    (typeof page === 'string' && page.trim().length > 0 && Number.isFinite(Number(page)))
   request.readingChrome = want.parameters['readerLabChrome'] === 'true' || want.parameters['readerLabChrome'] === true
   const thumbnailFailure = want.parameters['readerLabFailThumbnailPage']
   const thumbnailIndex = typeof thumbnailFailure === 'string' ? Number(thumbnailFailure) :

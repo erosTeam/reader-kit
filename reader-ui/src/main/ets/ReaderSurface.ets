@@ -1,5 +1,5 @@
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy, ReaderLayout,
-  ReaderReadingAnchor,
+  ReaderReadingAnchor, ReaderObservedPosition,
   ReaderInputPort, ReaderMoveIntent, ReaderImageShareHost, ReaderImageShareTarget,
   ReaderImageShareController, ReaderPagedFrame, ReaderImageInformation,
   ReaderImageSaveHost, ReaderImageSaveController, ReaderImageSaveChoice, ReaderAutoReadController } from '@reader-kit/core'
@@ -42,6 +42,8 @@ export struct ReaderSurface {
   @Event onChapter: (direction: 'previous' | 'next', source: ReaderUnitKey) => void = () => {}
   /** Native-visible original position only. The host decides whether and how to persist it. */
   @Event onObserved: (anchor: ReaderReadingAnchor) => void = () => {}
+  /** Decoded visible coverage for host-owned completion and progress persistence. */
+  @Event onObservedPosition: (position: ReaderObservedPosition) => void = () => {}
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPreview: ReaderEntryPreviewSource | null = null
   @Event onClose: () => void = () => {}
@@ -74,6 +76,7 @@ export struct ReaderSurface {
   private chromeDisposed: boolean = false
   private chromeCloseRequested: boolean = false
   private lastObservedSignature: string = ''
+  private lastObservedPositionSignature: string = ''
 
   private publishObserved(state: ReaderPagedSnapshot): void {
     const anchor = state.observedAnchor
@@ -81,9 +84,17 @@ export struct ReaderSurface {
       state.observedSelectionId !== state.selectionId || state.unit?.key.equals(anchor.unit) !== true) return
     const signature = JSON.stringify([anchor.unit.scope, anchor.unit.work, anchor.unit.unit, anchor.pageKey,
       anchor.sourceIndexHint, anchor.fragment, anchor.x, anchor.y, state.observedSelectionId])
-    if (signature === this.lastObservedSignature) return
-    this.lastObservedSignature = signature
-    this.onObserved(anchor.copy())
+    if (signature !== this.lastObservedSignature) {
+      this.lastObservedSignature = signature
+      this.onObserved(anchor.copy())
+    }
+    const position = state.observedPosition()
+    if (position === null) return
+    const positionSignature = JSON.stringify([signature, position.displayedSourceIndexes,
+      position.terminalSourceDisplayed])
+    if (positionSignature === this.lastObservedPositionSignature) return
+    this.lastObservedPositionSignature = positionSignature
+    this.onObservedPosition(position.copy())
   }
 
   aboutToAppear(): void {
