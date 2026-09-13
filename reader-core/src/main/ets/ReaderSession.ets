@@ -8,6 +8,17 @@ export type ReaderAssetKind = 'original' | 'thumbnail'
 /** Body-image quality is independent from the existing body/thumbnail kind. */
 export type ReaderAssetVariant = 'default' | 'original' | 'enhanced' | 'translated'
 export type ReaderProcessedAssetVariant = 'enhanced' | 'translated'
+
+/** Host policy result for one source page; it carries no service or persistence ownership. */
+export class ReaderVariantPreference {
+  variant: ReaderProcessedAssetVariant | 'default'
+  identity: string
+
+  constructor(variant: ReaderProcessedAssetVariant | 'default' = 'default', identity: string = '') {
+    this.variant = variant
+    this.identity = variant === 'default' ? '' : identity
+  }
+}
 export type ReaderPhase = 'idle' | 'catalog' | 'asset' | 'decoding' | 'displayed' | 'failed' | 'closed'
 
 /** A consumer cancellation fence; adapters must separately declare transport support. */

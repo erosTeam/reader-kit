@@ -2,6 +2,7 @@ export {
   ReaderUnitKey, ReaderUnit, ReaderPage, ReaderThumbnail, ReaderAsset,
   ReaderCatalog, ReaderAssetProvider, ReaderCancellation, ReaderSnapshot,
   ReaderSession, ReaderPhase, ReaderAssetKind, ReaderAssetVariant, ReaderProcessedAssetVariant,
+  ReaderVariantPreference,
   ReaderOriginalAssetPlan, ReaderVariantAssetPlan, ReaderResolvedAssetPlan,
 } from './src/main/ets/ReaderSession'
 export {

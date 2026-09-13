@@ -1,5 +1,5 @@
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy, ReaderLayout,
-  ReaderReadingAnchor, ReaderProcessedAssetVariant,
+  ReaderReadingAnchor, ReaderProcessedAssetVariant, ReaderVariantPreference,
   ReaderInputPort, ReaderMoveIntent, ReaderImageShareHost, ReaderImageShareTarget,
   ReaderImageShareController, ReaderPagedFrame, ReaderImageInformation,
   ReaderImageSaveHost, ReaderImageSaveController, ReaderImageSaveChoice, ReaderAutoReadController } from '@reader-kit/core'
@@ -12,6 +12,7 @@ import { BusinessError } from '@kit.BasicServicesKit'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderEntryPreview, ReaderEntryPreviewSource } from './ReaderEntryPreview'
 import { ReaderTapAction } from './ReaderTapAction'
+import { ReaderHostAction } from './ReaderHostAction'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -39,12 +40,23 @@ export struct ReaderSurface {
   /** Optional host policy. reader-kit only requests exact host-prepared derivatives. */
   @Param preferredVariant: ReaderProcessedAssetVariant | 'default' = 'default'
   @Param preferredVariantIdentity: string = ''
+  /** Optional per-source host policy. Bump revision whenever its result can change. */
+  @Param variantPreferenceResolver: ((sourceIndex: number) => ReaderVariantPreference) | null = null
+  @Param variantPreferenceRevision: number = 0
+  @Event onVariantSelection: (sourceIndex: number, preference: ReaderVariantPreference,
+    result: 'changed' | 'unchanged' | 'unavailable' | 'stale') => void = () => {}
   @Param cropBorders: boolean = false
   @Param cropAvailable: boolean = false
   @Param hostSettingsAvailable: boolean = false
   @Event onHostSettings: () => void = () => {}
   @Param externalOpenAvailable: boolean = false
   @Event onExternalOpen: (source: ReaderUnitKey) => void = () => {}
+  @Param hostActions: ReaderHostAction[] = []
+  @Event onHostAction: (id: string, source: ReaderUnitKey, navigation: number, sourceIndex: number) => void = () => {}
+  /** Passive host feedback; it never changes layout or handles input. */
+  @Param hostStatusVisible: boolean = false
+  @Param hostStatusText: string = ''
+  @Param hostStatusBusy: boolean = false
   @Event onRuntimePolicy: (policy: ReaderDisplayPolicy, intent: ReaderRuntimePolicyIntent) => void = () => {}
   @Event onCropChanged: (enabled: boolean, policy: ReaderDisplayPolicy) => void = () => {}
   @Param chapterNavigationAvailable: boolean = false
@@ -95,26 +107,33 @@ export struct ReaderSurface {
   private syncPreferredVariant(state: ReaderPagedSnapshot): void {
     const unit = state.unit?.key
     const context = JSON.stringify([unit?.scope ?? '', unit?.work ?? '', unit?.unit ?? '', state.navigationRevision,
-      this.preferredVariant, this.preferredVariantIdentity])
+      this.preferredVariant, this.preferredVariantIdentity, this.variantPreferenceRevision])
     if (context !== this.variantAttemptContext) {
       this.variantAttemptContext = context
       this.variantAttempts.clear()
     }
     if (!this.active || this.closing || this.chromeDisposed || state.phase !== 'ready' ||
-      state.kind !== 'original' || unit === undefined ||
-      (this.preferredVariant !== 'default' && this.preferredVariantIdentity.length === 0)) return
+      state.kind !== 'original' || unit === undefined) return
     state.frames.forEach((frame: ReaderPagedFrame): void => {
       if (frame.asset.phase !== 'displayed') return
-      const wantsDefault = this.preferredVariant === 'default'
-      if (wantsDefault && frame.asset.variant !== 'enhanced') return
-      if (!wantsDefault && (frame.asset.variant === 'original' || frame.asset.variant === 'translated' ||
-        (frame.asset.variant === this.preferredVariant && frame.asset.variantIdentity === this.preferredVariantIdentity))) return
+      const preference = this.variantPreferenceResolver?.(frame.part.sourceIndex) ??
+        new ReaderVariantPreference(this.preferredVariant, this.preferredVariantIdentity)
+      if (preference.variant !== 'default' && preference.identity.length === 0) return
+      const wantsDefault = preference.variant === 'default'
+      if (wantsDefault && frame.asset.variant !== 'enhanced' &&
+        !(this.variantPreferenceResolver !== null && frame.asset.variant === 'translated')) return
+      if (!wantsDefault && (frame.asset.variant === 'original' ||
+        (this.variantPreferenceResolver === null && frame.asset.variant === 'translated') ||
+        (frame.asset.variant === preference.variant && frame.asset.variantIdentity === preference.identity))) return
       const attempt = JSON.stringify([frame.part.sourceIndex, frame.slotId, frame.asset.requestId,
-        this.preferredVariant, this.preferredVariantIdentity])
+        preference.variant, preference.identity])
       if (this.variantAttempts.has(attempt)) return
       this.variantAttempts.add(attempt)
       void this.session.selectVariant(frame.slotId, frame.asset.requestId, unit.copy(), state.navigationRevision,
-        this.preferredVariant, this.preferredVariantIdentity)
+        preference.variant, preference.identity).then(result => {
+          this.onVariantSelection(frame.part.sourceIndex,
+            new ReaderVariantPreference(preference.variant, preference.identity), result)
+        })
     })
   }
 
@@ -201,7 +220,7 @@ export struct ReaderSurface {
     this.syncAutoRead()
   }
 
-  @Monitor('preferredVariant', 'preferredVariantIdentity')
+  @Monitor('preferredVariant', 'preferredVariantIdentity', 'variantPreferenceRevision')
   onPreferredVariantChanged(): void {
     this.variantAttemptContext = ''
     this.variantAttempts?.clear()
@@ -561,6 +580,19 @@ export struct ReaderSurface {
             .onClick((): void => { void this.session.retry() })
         }.width('100%').height('100%').justifyContent(FlexAlign.Center).padding(24)
       }
+      if (this.hostStatusVisible && this.hostStatusText.length > 0) {
+        Row({ space: 8 }) {
+          if (this.hostStatusBusy) {
+            LoadingProgress().width(18).height(18).color(Color.White)
+          } else {
+            SymbolGlyph($r('sys.symbol.exclamationmark_triangle')).fontSize(18).fontColor([Color.White])
+          }
+          Text(this.hostStatusText).fontSize(12).fontColor(Color.White).maxLines(2)
+        }.padding({ left: 16, right: 16, top: 8, bottom: 8 })
+          .backgroundColor('#CC000000').borderRadius(20)
+          .position({ x: 16, y: this.topInset + 72 }).hitTestBehavior(HitTestMode.None)
+          .id('rkit-host-status')
+      }
       if (this.chromeVisible) {
         if (this.thumbnailsVisible && this.active && this.state.phase === 'ready') {
           Column() {
@@ -591,6 +623,10 @@ export struct ReaderSurface {
           onHostSettings: (): void => { this.onHostSettings() },
           externalOpenAvailable: this.externalOpenAvailable,
           onExternalOpen: (source: ReaderUnitKey): void => { this.onExternalOpen(source) },
+          hostActions: this.hostActions,
+          onHostAction: (id: string, source: ReaderUnitKey, navigation: number, sourceIndex: number): void => {
+            this.onHostAction(id, source, navigation, sourceIndex)
+          },
           onCrop: (): void => {
             if (this.cropAvailable && this.active && !this.closing && this.state.phase === 'ready') {
               const enabled = !this.state.cropEnabled

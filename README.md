@@ -460,6 +460,22 @@ exact original-point oracle. High magnification, continuous zoom plus crop, moti
 thumbnail transitions and Koma crop remain unaccepted. Detailed reports and actual
 screenshots are in NextN protocols244–254 and its active acceptance ledger.
 
+## Host-owned page actions and processed variants
+
+`ReaderSurface` can render host-supplied `ReaderHostAction` rows in its existing
+overflow menu. Invocations carry the exact unit, navigation revision and canonical
+source index captured when the menu opened; the host still owns the action's
+service, account, cache, persistence and confirmation UI. Optional passive host
+status text is overlay-only and never changes the reading viewport.
+
+Hosts that need different processed-image choices per page may provide a
+`variantPreferenceResolver` plus an explicit revision. Core still accepts only an
+exact `ReaderVariantPreference`, resolves it through `ReaderAssetProvider`, and
+fences late preparation on navigation, background and close. Completion is
+reported back to the host without teaching reader-kit what an app-specific
+translation or enhancement workflow means. The original global preferred-variant
+parameters remain available for simpler hosts.
+
 Run core behavioral tests with `node --test tests/*.test.cjs`.
 They execute the actual platform-free ArkTS core through the DevEco TypeScript
 compiler. Set `READER_KIT_TYPESCRIPT` if that compiler is installed elsewhere.

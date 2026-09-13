@@ -3,6 +3,7 @@ import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPolicy, ReaderUnitK
 import { uiMaterial } from '@kit.ArkUI'
 import { deviceInfo } from '@kit.BasicServicesKit'
 import { SymbolGlyphModifier } from '@kit.ArkUI'
+import { ReaderHostAction } from './ReaderHostAction'
 
 export type ReaderRuntimePolicyIntent = 'layout' | 'direction' | 'spread_layout' |
   'first_page_alone' | 'split_wide_pages'
@@ -38,6 +39,8 @@ export struct ReaderChrome {
   @Event onHostSettings: () => void = () => {}
   @Param externalOpenAvailable: boolean = false
   @Event onExternalOpen: (source: ReaderUnitKey) => void = () => {}
+  @Param hostActions: ReaderHostAction[] = []
+  @Event onHostAction: (id: string, source: ReaderUnitKey, navigation: number, sourceIndex: number) => void = () => {}
   @Event onInformation: (frame: ReaderPagedFrame) => void = () => {}
   @Event onShare: () => void = () => {}
   @Event onThumbnails: () => void = () => {}
@@ -62,11 +65,13 @@ export struct ReaderChrome {
   private seekUnit: ReaderUnitKey | null = null
   private seekNavigation: number = -1
   private moreUnit: ReaderUnitKey | null = null
+  private moreNavigation: number = -1
 
   @Monitor('snapshot', 'active')
   onSnapshotChanged(): void {
     if (this.moreShown && (!this.active || this.moreUnit !== null &&
-      this.snapshot.unit?.key.equals(this.moreUnit) !== true)) this.moreShown = false
+      (this.snapshot.unit?.key.equals(this.moreUnit) !== true ||
+        this.snapshot.navigationRevision !== this.moreNavigation))) this.moreShown = false
     if (this.originalMenuShown && (!this.active || !this.originalTargetsCurrent())) this.originalMenuShown = false
     if (this.saveMenuShown && (!this.active || !this.saveTargetsCurrent())) this.saveMenuShown = false
     if (!this.active || this.snapshot.phase !== 'ready' ||
@@ -252,6 +257,18 @@ export struct ReaderChrome {
       this.snapshot.unit?.key.equals(source)) this.onExternalOpen(source.copy())
   }
 
+  private selectHostAction(action: ReaderHostAction): void {
+    const source = this.moreUnit
+    const navigation = this.moreNavigation
+    const sourceIndex = this.snapshot.anchor?.sourceIndexHint ?? -1
+    this.moreShown = false
+    if (this.active && action.enabled && !action.busy && this.snapshot.phase === 'ready' &&
+      source !== null && this.snapshot.unit?.key.equals(source) &&
+      this.snapshot.navigationRevision === navigation && sourceIndex >= 0) {
+      this.onHostAction(action.id, source.copy(), navigation, sourceIndex)
+    }
+  }
+
   @Builder
   private InformationChoice() {
     Menu() {
@@ -285,6 +302,14 @@ export struct ReaderChrome {
           .enabled(this.active && this.snapshot.phase === 'ready' && this.moreUnit !== null)
           .onClick((): void => { this.selectExternalOpen() })
       }
+      ForEach(this.hostActions, (action: ReaderHostAction) => {
+        MenuItem({ content: action.label,
+          symbolEndIcon: action.checked ? new SymbolGlyphModifier($r('sys.symbol.checkmark')) : undefined })
+          .id(`rkit-host-action-${action.id}`)
+          .enabled(this.active && action.enabled && !action.busy && this.snapshot.phase === 'ready' &&
+            this.moreUnit !== null && this.snapshot.navigationRevision === this.moreNavigation)
+          .onClick((): void => { this.selectHostAction(action) })
+      }, (action: ReaderHostAction): string => action.id)
       if (this.chapterNavigationAvailable) {
         MenuItem({ content: $r('app.string.rkit_previous_unit') }).id('rkit-previous-chapter')
           .enabled(this.active && this.snapshot.phase === 'ready' && !this.chapterNavigationBusy && this.snapshot.canPreviousUnit)
@@ -378,7 +403,8 @@ export struct ReaderChrome {
                 onDisappear: (): void => { this.onMenuVisible(false) },
               })
           }
-          if (this.informationAvailable || this.externalOpenAvailable || this.chapterNavigationAvailable) {
+          if (this.informationAvailable || this.externalOpenAvailable || this.chapterNavigationAvailable ||
+            this.hostActions.length > 0) {
             Button({ type: ButtonType.Circle }) {
               if (this.informationPreparing) {
                 LoadingProgress().width(22).height(22).color(Color.White)
@@ -387,10 +413,15 @@ export struct ReaderChrome {
               }
             }.width(44).height(44).backgroundColor(Color.Transparent)
               .id('rkit-more').accessibilityText($r('app.string.rkit_more'))
-              .enabled(this.active && (this.informationFrames().length > 0 ||
+              .enabled(this.active && (this.informationFrames().length > 0 || this.externalOpenAvailable ||
+                this.hostActions.some((action: ReaderHostAction): boolean => action.enabled && !action.busy) ||
                 this.chapterNavigationAvailable && this.snapshot.phase === 'ready') &&
                 !this.chapterNavigationBusy && !this.informationBusy && !this.shareBusy && !this.saveBusy && !this.snapshot.originalPreparing)
-              .onClick((): void => { this.moreUnit = this.snapshot.unit?.key.copy() ?? null; this.moreShown = true })
+              .onClick((): void => {
+                this.moreUnit = this.snapshot.unit?.key.copy() ?? null
+                this.moreNavigation = this.snapshot.navigationRevision
+                this.moreShown = true
+              })
               .bindMenu(this.moreShown, this.MoreMenu, {
                 placement: Placement.BottomRight,
                 systemMaterial: deviceInfo.apiAvailable('26.0.0') ?

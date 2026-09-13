@@ -54,6 +54,36 @@ test('external open is an explicit stale-guarded host action', () => {
   assert.deepEqual(calls, ['u'])
 })
 
+test('generic host page actions carry only an exact stale-guarded reading target', () => {
+  const Chrome = methods(['selectHostAction'])
+  const key = { value: 'u', copy() { return { value: this.value, copy: this.copy, equals: this.equals } },
+    equals(other) { return other?.value === this.value } }
+  const calls = []
+  const action = { id: 'translate', label: 'Translate', enabled: true, checked: false, busy: false }
+  const chrome = new Chrome()
+  Object.assign(chrome, { active: true, moreShown: true, moreUnit: key, moreNavigation: 7,
+    snapshot: { phase: 'ready', navigationRevision: 7, anchor: { sourceIndexHint: 2 }, unit: { key } },
+    onHostAction: (...values) => calls.push(values) })
+  chrome.selectHostAction(action)
+  assert.deepEqual(calls.map(values => [values[0], values[2], values[3]]), [['translate', 7, 2]])
+  chrome.moreUnit = key; chrome.moreNavigation = 7; chrome.snapshot.navigationRevision = 8
+  chrome.selectHostAction(action)
+  assert.equal(calls.length, 1)
+  chrome.moreUnit = key; chrome.moreNavigation = 8; action.busy = true
+  chrome.selectHostAction(action)
+  assert.equal(calls.length, 1)
+})
+
+test('surface keeps per-source variant policy and completion feedback host-owned', () => {
+  assert.match(surfaceSource, /variantPreferenceResolver\?\.\(frame\.part\.sourceIndex\)/)
+  assert.match(surfaceSource, /this\.variantPreferenceRevision/)
+  assert.match(surfaceSource, /this\.onVariantSelection\(frame\.part\.sourceIndex/)
+  assert.match(surfaceSource, /hostActions: this\.hostActions/)
+  assert.match(chromeSource, /ForEach\(this\.hostActions/)
+  assert.match(surfaceSource, /if \(this\.hostStatusVisible && this\.hostStatusText\.length > 0\)/)
+  assert.match(surfaceSource, /id\('rkit-host-status'\)/)
+})
+
 test('runtime policy intents identify the exact setting changed', () => {
   const Chrome = methods(['setLayout', 'toggleSpreadLayout'])
   const calls = []
