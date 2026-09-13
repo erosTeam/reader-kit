@@ -5,6 +5,8 @@ export class ReaderLabRequest {
   work: string
   unit: string
   pageIndex: number
+  /** True only when the debug Want supplied a finite page override. */
+  pageIndexProvided: boolean = false
   failurePage: number
   delayedMetricsPage: number
   failureLayout: string
@@ -19,6 +21,8 @@ export class ReaderLabRequest {
   cropBorders: boolean = false
   /** Explicit host persistence permission; false for every ordinary Lab request. */
   progressReadWrite: boolean = false
+  /** Explicit host preference persistence permission; independent from reading progress. */
+  preferencesReadWrite: boolean = false
   thumbnailEntry: boolean = false
   entryLayout: string = 'single'
   entryDirection: string = 'ltr'
@@ -26,6 +30,8 @@ export class ReaderLabRequest {
   entryLayoutOverride: string | null = null
   entryDirectionOverride: string | null = null
   entryProbe: string = ''
+  /** Debug-only host handoff probe; never changes ordinary reader requests. */
+  chapterProbe: string = ''
 
   constructor(work: string, unit: string, pageIndex: number, failurePage: number = -1,
     delayedMetricsPage: number = -1, failureLayout: string = 'continuous') {
@@ -81,6 +87,8 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
     Number.isSafeInteger(delayedIndex) && delayedIndex >= 0 ? delayedIndex : -1,
     failureLayout === 'single' ? 'single' : failureLayout === 'spread' ? 'spread' : 'continuous',
   )
+  request.pageIndexProvided = (typeof page === 'number' && Number.isFinite(page)) ||
+    (typeof page === 'string' && page.trim().length > 0 && Number.isFinite(Number(page)))
   request.readingChrome = want.parameters['readerLabChrome'] === 'true' || want.parameters['readerLabChrome'] === true
   const thumbnailFailure = want.parameters['readerLabFailThumbnailPage']
   const thumbnailIndex = typeof thumbnailFailure === 'string' ? Number(thumbnailFailure) :
@@ -96,6 +104,8 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
   request.cropBorders = want.parameters['readerLabCropBorders'] === 'true' || want.parameters['readerLabCropBorders'] === true
   request.progressReadWrite = request.readingChrome &&
     (want.parameters['readerLabProgressReadWrite'] === 'true' || want.parameters['readerLabProgressReadWrite'] === true)
+  request.preferencesReadWrite = request.readingChrome &&
+    (want.parameters['readerLabPreferencesReadWrite'] === 'true' || want.parameters['readerLabPreferencesReadWrite'] === true)
   const shareProbe = want.parameters['readerLabShareProbe']
   request.shareProbe = typeof shareProbe === 'string' &&
     (shareProbe === 'fail-once' || shareProbe === 'delay-once') ? shareProbe : ''
@@ -116,5 +126,8 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
   const entryDirection = want.parameters['readerLabEntryDirection']
   request.entryDirectionOverride = entryDirection === 'ltr' ? 'ltr' : entryDirection === 'rtl' ? 'rtl' : null
   request.entryProbe = request.thumbnailEntry && want.parameters['readerLabEntryProbe'] === 'delay-once' ? 'delay-once' : ''
+  const chapterProbe = want.parameters['readerLabChapterProbe']
+  request.chapterProbe = request.readingChrome && typeof chapterProbe === 'string' &&
+    (chapterProbe === 'prepare-fail-once' || chapterProbe === 'prepare-delay-once') ? chapterProbe : ''
   connectReaderLabLaunch().publish(request)
 }

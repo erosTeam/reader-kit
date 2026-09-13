@@ -5,6 +5,7 @@ import { ReaderFailurePanel } from './ReaderFailurePanel'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
 import { ReaderTapAction } from './ReaderTapAction'
+import { ReaderBoundaryDirection, ReaderBoundarySwipe } from './ReaderBoundarySwipe'
 
 class ReaderContinuousIndexSource implements IDataSource {
   private keys: string[]
@@ -35,6 +36,8 @@ export struct ReaderContinuousSurface {
   @Event onVisible: (topology: number, navigation: number, key: string, slot: number, request: number, x: number, y: number) => void = () => {}
   @Event onFailed: (topology: number, key: string, slot: number, request: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetry: (topology: number, key: string, slot: number, request: number) => void = () => {}
+  @Event onBoundary: (direction: ReaderBoundaryDirection, topologyRevision: number,
+    navigationRevision: number) => void = () => {}
 
   build() {
     Stack() {
@@ -45,6 +48,7 @@ export struct ReaderContinuousSurface {
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
             entryTransition: this.entryTransition,
             onInputLockChange: this.onInputLockChange,
+            onBoundary: this.onBoundary,
             onRange: this.onRange, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onRetry: this.onRetry,
             onTap: this.onTap,
@@ -72,6 +76,8 @@ struct ReaderContinuousList {
   @Event onVisible: (topology: number, navigation: number, key: string, slot: number, request: number, x: number, y: number) => void = () => {}
   @Event onFailed: (topology: number, key: string, slot: number, request: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetry: (topology: number, key: string, slot: number, request: number) => void = () => {}
+  @Event onBoundary: (direction: ReaderBoundaryDirection, topologyRevision: number,
+    navigationRevision: number) => void = () => {}
   private source: ReaderContinuousIndexSource = new ReaderContinuousIndexSource([])
   private scroller: ListScroller = new ListScroller()
   private nativeReady: Map<string, string> = new Map()
@@ -91,6 +97,48 @@ struct ReaderContinuousList {
   @Local private moving: boolean = false
   private lockedIdentity: string = ''
   private cropRegions: Map<number, string> = new Map()
+  private boundarySwipe: ReaderBoundarySwipe = new ReaderBoundarySwipe()
+  private boundaryTopology: number = -1
+  private boundaryNavigation: number = -1
+
+  private handleBoundaryTouch(event: TouchEvent): void {
+    if (!this.active || this.snapshot.phase !== 'ready' || event.touches.length > 1 ||
+      event.changedTouches.length === 0) {
+      this.boundarySwipe.cancel()
+      return
+    }
+    const point = event.changedTouches[0]
+    if (event.type === TouchType.Down) {
+      if (this.pendingPosition || this.positionInFlight || this.moving || this.lockedKey.length > 0) {
+        this.boundarySwipe.cancel()
+        return
+      }
+      let atStart = false
+      let atEnd = false
+      try {
+        atStart = this.first === 0 && this.scroller.currentOffset().yOffset <= 0.5
+        atEnd = this.last + 1 >= this.snapshot.displayCount && this.scroller.isAtEnd()
+      } catch (_) {
+        this.boundarySwipe.cancel()
+        return
+      }
+      this.boundaryTopology = this.snapshot.topologyRevision
+      this.boundaryNavigation = this.snapshot.navigationRevision
+      this.boundarySwipe.begin(point.windowX, point.windowY, atStart, atEnd)
+      return
+    }
+    if (event.type === TouchType.Cancel) {
+      this.boundarySwipe.cancel()
+      return
+    }
+    if (event.type !== TouchType.Up) return
+    const direction = this.boundarySwipe.finish(point.windowX, point.windowY, 'vertical')
+    if (direction !== null && this.active && this.snapshot.phase === 'ready' &&
+      this.createdRevision === this.snapshot.topologyRevision && this.boundaryTopology === this.snapshot.topologyRevision &&
+      this.boundaryNavigation === this.snapshot.navigationRevision) {
+      this.onBoundary(direction, this.boundaryTopology, this.boundaryNavigation)
+    }
+  }
 
   aboutToAppear(): void {
     this.source = new ReaderContinuousIndexSource(this.snapshot.displayKeys)
@@ -142,6 +190,7 @@ struct ReaderContinuousList {
     }
     if (this.lastNavigation !== this.snapshot.navigationRevision) {
       this.lastNavigation = this.snapshot.navigationRevision
+      this.boundarySwipe.cancel()
       this.invalidatePosition()
     }
     if (this.pendingPosition) this.schedulePosition()
@@ -346,6 +395,7 @@ struct ReaderContinuousList {
     .scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
     .enableScrollInteraction(this.active && this.snapshot.phase === 'ready' && !this.pendingPosition && this.lockedKey.length === 0)
     .id('rkit-continuous-list')
+    .onTouch((event: TouchEvent): void => { this.handleBoundaryTouch(event) })
     .onAreaChange((_old: Area, area: Area): void => {
       const width = Math.max(1, Number(area.width))
       if (this.viewWidth !== width || (this.entryTransition?.pending() === true &&

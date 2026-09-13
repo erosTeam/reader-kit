@@ -20,4 +20,6 @@ export { ReaderLabLaunchState, ReaderLabRequest, captureReaderLabWant, connectRe
 export { ReaderPagedViewport } from './src/main/ets/ReaderPagedViewport'
 export { ReaderPagerCommand, ReaderPagerSurface } from './src/main/ets/ReaderPagerSurface'
 export { ReaderContinuousSurface } from './src/main/ets/ReaderContinuousSurface'
+export { ReaderBoundarySwipe, ReaderBoundaryDirection, ReaderBoundaryAxis,
+  ReaderBoundaryReadingDirection } from './src/main/ets/ReaderBoundarySwipe'
 export { ReaderFailurePanel } from './src/main/ets/ReaderFailurePanel'

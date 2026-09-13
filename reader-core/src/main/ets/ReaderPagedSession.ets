@@ -43,6 +43,25 @@ export class ReaderPagedItemSnapshot {
   }
 }
 
+/** Native-visible decoded originals only; persistence policy remains host-owned. */
+export class ReaderObservedPosition {
+  anchor: ReaderReadingAnchor
+  displayedSourceIndexes: number[]
+  pageCount: number
+  terminalSourceDisplayed: boolean
+
+  constructor(anchor: ReaderReadingAnchor, displayedSourceIndexes: number[], pageCount: number) {
+    this.anchor = anchor.copy()
+    this.displayedSourceIndexes = displayedSourceIndexes.slice().sort((left: number, right: number): number => left - right)
+    this.pageCount = pageCount
+    this.terminalSourceDisplayed = pageCount > 0 && this.displayedSourceIndexes.includes(pageCount - 1)
+  }
+
+  copy(): ReaderObservedPosition {
+    return new ReaderObservedPosition(this.anchor, this.displayedSourceIndexes, this.pageCount)
+  }
+}
+
 export class ReaderPagedSnapshot {
   unit: ReaderUnit | null = null
   phase: 'idle' | 'catalog' | 'ready' | 'failed' | 'closed' = 'idle'
@@ -65,6 +84,9 @@ export class ReaderPagedSnapshot {
   displayKeys: string[] = []
   topologyRevision: number = 0
   navigationRevision: number = 0
+  /** Actual native-visible display range. Prefetch neighbors are excluded. */
+  visibleDisplayStart: number = -1
+  visibleDisplayEnd: number = -1
   window: ReaderPagedItemSnapshot[] = []
   /** Geometry metadata may outlive an evicted asset; it is never an image lease. */
   pageMetadata: ReaderPage[] = []
@@ -75,6 +97,28 @@ export class ReaderPagedSnapshot {
   }
   canPreviousUnit: boolean = false
   canNextUnit: boolean = false
+
+  observedPosition(): ReaderObservedPosition | null {
+    const anchor = this.observedAnchor
+    if (this.phase !== 'ready' || this.unit === null || anchor === null ||
+      this.observedSelectionId !== this.selectionId || !this.unit.key.equals(anchor.unit)) return null
+    let frames: ReaderPagedFrame[] = this.frames
+    if (this.policy.layout === 'continuous') {
+      frames = []
+      this.window.forEach((item: ReaderPagedItemSnapshot): void => {
+        if (item.index < this.visibleDisplayStart || item.index > this.visibleDisplayEnd) return
+        item.frames.forEach((frame: ReaderPagedFrame): void => { frames.push(frame) })
+      })
+    }
+    const indexes: number[] = []
+    frames.forEach((frame: ReaderPagedFrame): void => {
+      if (frame.asset.kind !== 'original' || frame.asset.phase !== 'displayed' ||
+        frame.asset.page?.key !== frame.part.pageKey || indexes.includes(frame.part.sourceIndex)) return
+      indexes.push(frame.part.sourceIndex)
+    })
+    if (!indexes.includes(anchor.sourceIndexHint)) return null
+    return new ReaderObservedPosition(anchor, indexes, this.unit.pageCount)
+  }
 
   /** A cached item's render projection, not a second selection or observed anchor. */
   forItem(key: string): ReaderPagedSnapshot {
@@ -92,6 +136,8 @@ export class ReaderPagedSnapshot {
     value.anchor = this.anchor?.copy() ?? null
     value.topologyRevision = this.topologyRevision
     value.navigationRevision = this.navigationRevision
+    value.visibleDisplayStart = this.visibleDisplayStart
+    value.visibleDisplayEnd = this.visibleDisplayEnd
     value.frames = (this.window.find((item: ReaderPagedItemSnapshot) => item.key === key)?.frames ?? [])
       .map((frame: ReaderPagedFrame) => {
         const copy = new ReaderPagedFrame(frame.slotId, frame.part, frame.asset, frame.crop)
@@ -378,6 +424,8 @@ export class ReaderPagedSession {
     value.canNextUnit = this.state.canNextUnit
     value.topologyRevision = this.topologyRevision
     value.navigationRevision = this.navigationRevision
+    value.visibleDisplayStart = this.state.policy.layout === 'continuous' ? this.continuousStart : this.state.displayIndex
+    value.visibleDisplayEnd = this.state.policy.layout === 'continuous' ? this.continuousEnd : this.state.displayIndex
     value.displayKeys = this.displayKeys.slice()
     value.pageMetadata = Array.from(this.pages.values()).map((page: ReaderPage) => page.copy())
     if (this.cropEnabled && this.state.kind === 'original') {

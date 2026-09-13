@@ -1,5 +1,42 @@
 # Reader Kit (experimental)
 
+## Optional host-owned preference output (2026-09-13)
+
+`ReaderSurface.onPolicyChanged` and `onCropChanged` publish only the runtime
+state that the shared session actually adopted. The core and shared UI do not
+know an application's preference schema and never write application storage.
+Policy and crop output are separate from observed reading progress, so hosts
+can grant, map, test and migrate those capabilities independently.
+
+Koma's Debug Lab keeps preference writes disabled for ordinary requests. An
+explicit full-reader `readerLabPreferencesReadWrite=true` request maps the
+shared layout, paging axis, direction, spread layout, cover alignment, wide-page
+split and border crop into Koma's existing preference store while preserving
+all unrelated Koma fields. On device103, ordinary runtime changes left the
+preference file byte-identical; explicit changes persisted vertical paging and
+crop, survived force-stop/relaunch, and were then restored to the complete
+pre-test preference value set. Production reader routing remains unchanged.
+
+## Optional host-owned observed progress (2026-09-13)
+
+`ReaderPagedSnapshot.observedPosition()` reports only decoded original parts that
+the native viewport actually displays. It excludes thumbnail previews and
+continuous-list prefetch neighbors, keeps the stable source anchor, and reports
+whether the terminal source page is among the visible originals. The core and
+UI never choose a persistence format or write application data.
+
+`ReaderSurface.onObservedPosition` is an optional host callback. Koma's Debug
+Lab keeps it disabled by default; an explicit full-reader
+`readerLabProgressReadWrite=true` request maps it into Koma's existing
+`ReaderSessionStore`. A finite `readerLabPage` remains an explicit test
+override, while an omitted page restores the existing chapter position.
+
+On device103, the controlled two-page test chapter reached `2 / 2` with its
+progress file byte-identical in ordinary Lab mode. With explicit read/write
+permission it persisted zero-based page 1 as completed, then a force-stop and
+launch without a page override restored `2 / 2`. This accepts that optional
+Koma path only; production reader routing remains unchanged.
+
 ## Optional host-owned chapter handoff (2026-09-12)
 
 The full reading surface now accepts optional chapter-navigation capability,
@@ -10,8 +47,8 @@ frame, so a failed body image does not trap a chapter-capable reader.
 
 Koma prepares its existing local catalog before opening the target unit. A failed
 preparation does not change the live session; close/background invalidates the
-pending host request. No production chapter hydration, progress or preference
-writes are introduced. The auxiliary rail alone is keyed by scope/work/unit and
+pending host request. No production chapter hydration or preference writes are
+introduced, and ordinary Lab requests remain progress-read-only. The auxiliary rail is keyed by scope/work/unit and
 page count; ordinary same-unit navigation keeps its existing instance.
 
 Device197 observed downloaded 11-page to 19-page switching with the rail open,
@@ -55,8 +92,8 @@ The surface supports explicit previous/next display item, single/physical-half/
 joined-spread rendering, LTR/RTL, original/thumbnail, retry, and host-provided
 adjacent units, plus native horizontal swipe paging, double-tap/pinch zoom and zoomed pan.
 It also has an optional native continuous List with original-local visible-position reporting.
-Continuous images also support per-image zoom with List-scroll arbitration. Settings,
-progress persistence, and complete production toolbar capabilities remain pending.
+Continuous images also support per-image zoom with List-scroll arbitration. Settings
+persistence, production route migration, and complete production toolbar capabilities remain pending.
 Settled continuous zoom now preserves content-relative translation through measured
 width reflow while the List restores its unscaled anchor behind the native frame gate.
 NextN long-original and NextE original/sprite portrait-landscape-portrait endpoints
@@ -475,6 +512,27 @@ fences late preparation on navigation, background and close. Completion is
 reported back to the host without teaching reader-kit what an app-specific
 translation or enhancement workflow means. The original global preferred-variant
 parameters remain available for simpler hosts.
+
+## Optional adjacent-unit boundary intent (D12)
+
+Paged and continuous surfaces can emit the existing host-neutral `onChapter`
+intent after one explicit swipe begins at a real unit boundary. Native `Swiper`
+and `List` retain gesture ownership: the shared layer adds no competing Pan, does
+not use `List.onReachEnd`, and never opens a chapter itself. Direction is mapped
+through horizontal LTR/RTL or vertical paging, then fenced by the captured
+topology and navigation revisions and the current adjacent-unit availability.
+
+Koma197's optional shared-reader lab accepted paged and continuous forward and
+reverse boundaries against two real neighboring chapters. The continuous forward
+case first scrolled the final image to the actual List end and switched only on
+the following upward swipe. Each accepted boundary produced one intent, opened
+the adjacent chapter at its first page, kept the reader chrome intact, and left
+the production library and progress files byte-identical. This is host handoff
+evidence for the optional lab, not production-reader replacement or persistence
+acceptance. A bounded debug-only chapter probe also proves that preparation
+failure and background cancellation retain the source chapter and emit no opened
+target; ordinary requests cannot enable it. The complete platform-free suite now
+has 317 passing tests.
 
 Run core behavioral tests with `node --test tests/*.test.cjs`.
 They execute the actual platform-free ArkTS core through the DevEco TypeScript

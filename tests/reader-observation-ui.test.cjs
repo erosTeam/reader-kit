@@ -33,6 +33,7 @@ function state(anchor, overrides = {}) {
     observedAnchor: anchor,
     selectionId: 3,
     observedSelectionId: 3,
+    observedPosition() { return null },
     ...overrides,
   }
 }
@@ -43,7 +44,9 @@ test('surface publishes only current native-visible original anchors and dedupli
   const events = []
   surface.active = true
   surface.lastObservedSignature = ''
+  surface.lastObservedPositionSignature = ''
   surface.onObserved = anchor => events.push(anchor)
+  surface.onObservedPosition = () => {}
   const key = new core.ReaderUnitKey('scope', 'work', 'unit-a')
   const anchor = new core.ReaderReadingAnchor(key, 'page-2', 1, 0.5, 0.25, 'whole')
 
@@ -68,9 +71,30 @@ test('surface publishes only current native-visible original anchors and dedupli
   assert.equal(events[1].y, 0.75)
 })
 
+test('surface publishes changed decoded coverage even when the reading anchor is unchanged', () => {
+  const Subject = method('publishObserved')
+  const surface = new Subject()
+  const events = []
+  surface.active = true
+  surface.lastObservedSignature = ''
+  surface.lastObservedPositionSignature = ''
+  surface.onObserved = () => {}
+  surface.onObservedPosition = position => events.push(position.displayedSourceIndexes.slice())
+  const key = new core.ReaderUnitKey('scope', 'work', 'unit-a')
+  const anchor = new core.ReaderReadingAnchor(key, 'page-2', 1)
+  const position = indexes => ({ displayedSourceIndexes: indexes, terminalSourceDisplayed: indexes.includes(2),
+    copy() { return this } })
+
+  surface.publishObserved(state(anchor, { observedPosition: () => position([1]) }))
+  surface.publishObserved(state(anchor, { observedPosition: () => position([1]) }))
+  surface.publishObserved(state(anchor, { observedPosition: () => position([1, 2]) }))
+  assert.deepEqual(events, [[1], [1, 2]])
+})
+
 test('surface subscription forwards the observed snapshot after adopting it', () => {
   assert.match(source, /this\.state = state\s+this\.publishObserved\(state\)/)
   assert.match(source, /@Event onObserved: \(anchor: ReaderReadingAnchor\) => void/)
+  assert.match(source, /@Event onObservedPosition: \(position: ReaderObservedPosition\) => void/)
 })
 
 test('selected paged viewport publishes the anchor original after the displayed snapshot is adopted', () => {

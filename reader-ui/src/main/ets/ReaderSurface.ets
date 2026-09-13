@@ -1,5 +1,5 @@
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy, ReaderLayout,
-  ReaderReadingAnchor, ReaderProcessedAssetVariant, ReaderVariantPreference,
+  ReaderReadingAnchor, ReaderObservedPosition, ReaderProcessedAssetVariant, ReaderVariantPreference,
   ReaderInputPort, ReaderMoveIntent, ReaderImageShareHost, ReaderImageShareTarget,
   ReaderImageShareController, ReaderPagedFrame, ReaderImageInformation,
   ReaderImageSaveHost, ReaderImageSaveController, ReaderImageSaveChoice, ReaderAutoReadController } from '@reader-kit/core'
@@ -57,13 +57,17 @@ export struct ReaderSurface {
   @Param hostStatusVisible: boolean = false
   @Param hostStatusText: string = ''
   @Param hostStatusBusy: boolean = false
-  @Event onRuntimePolicy: (policy: ReaderDisplayPolicy, intent: ReaderRuntimePolicyIntent) => void = () => {}
-  @Event onCropChanged: (enabled: boolean, policy: ReaderDisplayPolicy) => void = () => {}
   @Param chapterNavigationAvailable: boolean = false
   @Param chapterNavigationBusy: boolean = false
   @Event onChapter: (direction: 'previous' | 'next', source: ReaderUnitKey) => void = () => {}
   /** Native-visible original position only. The host decides whether and how to persist it. */
   @Event onObserved: (anchor: ReaderReadingAnchor) => void = () => {}
+  /** Decoded visible coverage for host-owned completion and progress persistence. */
+  @Event onObservedPosition: (position: ReaderObservedPosition) => void = () => {}
+  /** Adopted runtime display policy only. The host decides whether and how to persist it. */
+  @Event onPolicyChanged: (policy: ReaderDisplayPolicy, intent: ReaderRuntimePolicyIntent) => void = () => {}
+  /** Adopted runtime border-crop state only. The host owns its preference model. */
+  @Event onCropChanged: (enabled: boolean, policy: ReaderDisplayPolicy) => void = () => {}
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPreview: ReaderEntryPreviewSource | null = null
   @Event onClose: () => void = () => {}
@@ -100,6 +104,7 @@ export struct ReaderSurface {
   private chromeDisposed: boolean = false
   private chromeCloseRequested: boolean = false
   private lastObservedSignature: string = ''
+  private lastObservedPositionSignature: string = ''
   private variantAttemptContext: string = ''
   private variantAttempts: Set<string> = new Set<string>()
   private interactionBusyReported: boolean = false
@@ -151,9 +156,17 @@ export struct ReaderSurface {
       state.observedSelectionId !== state.selectionId || state.unit?.key.equals(anchor.unit) !== true) return
     const signature = JSON.stringify([anchor.unit.scope, anchor.unit.work, anchor.unit.unit, anchor.pageKey,
       anchor.sourceIndexHint, anchor.fragment, anchor.x, anchor.y, state.observedSelectionId])
-    if (signature === this.lastObservedSignature) return
-    this.lastObservedSignature = signature
-    this.onObserved(anchor.copy())
+    if (signature !== this.lastObservedSignature) {
+      this.lastObservedSignature = signature
+      this.onObserved(anchor.copy())
+    }
+    const position = state.observedPosition()
+    if (position === null) return
+    const positionSignature = JSON.stringify([signature, position.displayedSourceIndexes,
+      position.terminalSourceDisplayed])
+    if (positionSignature === this.lastObservedPositionSignature) return
+    this.lastObservedPositionSignature = positionSignature
+    this.onObservedPosition(position.copy())
   }
 
   aboutToAppear(): void {
@@ -251,6 +264,19 @@ export struct ReaderSurface {
     if (!this.autoReadAvailable || !this.active || this.closing || this.chromeCloseRequested) return
     this.syncAutoRead()
     this.autoReadController.setEnabled(!this.autoReadController.isEnabled())
+  }
+
+  private applyPolicy(policy: ReaderDisplayPolicy, intent: ReaderRuntimePolicyIntent): void {
+    if (!this.active || this.closing || this.state.phase !== 'ready') return
+    this.session.setPolicy(policy)
+    this.onPolicyChanged(this.session.snapshot().policy.copy(), intent)
+  }
+
+  private toggleCrop(): void {
+    if (!this.cropAvailable || !this.active || this.closing || this.state.phase !== 'ready') return
+    const policy = this.state.policy.copy()
+    this.session.setCropEnabled(!this.state.cropEnabled)
+    this.onCropChanged(this.session.snapshot().cropEnabled, policy)
   }
 
   private flushSaveFeedback(): void {
@@ -416,6 +442,14 @@ export struct ReaderSurface {
     this.onChapter(direction, source.copy())
   }
 
+  private requestBoundaryChapter(direction: 'previous' | 'next', topology: number, navigation: number): void {
+    const current = this.session.snapshot()
+    const available = direction === 'previous' ? current.canPreviousUnit : current.canNextUnit
+    if (!available || topology !== current.topologyRevision || navigation !== current.navigationRevision ||
+      current.unit === null) return
+    this.requestChapter(direction, current.unit.key)
+  }
+
   private commitChromeVisible(visible: boolean): void {
     this.chromeVisible = visible
     if (!this.chromeVisible) this.previewIndex = -1
@@ -529,6 +563,9 @@ export struct ReaderSurface {
             snapshot: this.state, active: this.active,
             entryTransition: this.entryTransition,
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
+            onBoundary: (direction: 'previous' | 'next', topology: number, navigation: number): void => {
+              this.requestBoundaryChapter(direction, topology, navigation)
+            },
             onTap: (x: number, y: number): ReaderTapAction => this.pageTap(x, y),
             onRange: (start: number, end: number, topology: number, navigation: number): void => {
               this.session.setContinuousRange(start, end, topology, navigation)
@@ -553,6 +590,9 @@ export struct ReaderSurface {
             command: this.pagerCommand,
             entryTransition: this.entryTransition,
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
+            onBoundary: (direction: 'previous' | 'next', topology: number, navigation: number): void => {
+              this.requestBoundaryChapter(direction, topology, navigation)
+            },
             onTap: (x: number, y: number): void => { this.pageTap(x, y) },
             onSelect: (index: number, topology: number, navigation: number): void => {
               this.session.selectDisplay(index, topology, navigation)
@@ -627,14 +667,7 @@ export struct ReaderSurface {
           onHostAction: (id: string, source: ReaderUnitKey, navigation: number, sourceIndex: number): void => {
             this.onHostAction(id, source, navigation, sourceIndex)
           },
-          onCrop: (): void => {
-            if (this.cropAvailable && this.active && !this.closing && this.state.phase === 'ready') {
-              const enabled = !this.state.cropEnabled
-              const policy = this.state.policy.copy()
-              this.session.setCropEnabled(enabled)
-              this.onCropChanged(enabled, policy)
-            }
-          },
+          onCrop: (): void => { this.toggleCrop() },
           originalAvailable: this.session.originalSelectionSupported(),
           onOriginal: (frames: ReaderPagedFrame[], unit: ReaderUnitKey, navigation: number, enabled: boolean): void => {
             void this.selectOriginal(frames, unit, navigation, enabled)
@@ -651,8 +684,7 @@ export struct ReaderSurface {
           },
           onThumbnails: (): void => { this.thumbnailsVisible = !this.thumbnailsVisible },
           onPolicy: (policy: ReaderDisplayPolicy, intent: ReaderRuntimePolicyIntent): void => {
-            this.session.setPolicy(policy)
-            this.onRuntimePolicy(policy.copy(), intent)
+            this.applyPolicy(policy, intent)
           },
           onShiftSpread: (unit: ReaderUnitKey, topology: number, navigation: number): void => {
             this.session.shiftSpread(unit, topology, navigation)

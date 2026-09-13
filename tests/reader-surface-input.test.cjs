@@ -207,6 +207,34 @@ test('the pre-existing active, session, interaction and topology locks still rej
   assert.equal(opening.input.move('next'), false); assert.deepEqual(opening.moves, [])
 })
 
+test('unit boundary intent is accepted only for a current available adjacent unit', () => {
+  const { surface } = scenario()
+  const key = new core.ReaderUnitKey('source', 'work', 'chapter')
+  const events = []
+  surface.chapterNavigationAvailable = true
+  surface.onChapter = (direction, source) => events.push([direction, source.unit])
+  surface.session.snapshot = () => {
+    const state = new core.ReaderPagedSnapshot()
+    state.phase = 'ready'; state.topologyRevision = 7; state.navigationRevision = 10
+    state.unit = new core.ReaderUnit(key, 'Chapter', 3)
+    state.canPreviousUnit = true; state.canNextUnit = true
+    return state
+  }
+  surface.requestBoundaryChapter('next', 7, 10)
+  assert.deepEqual(events, [['next', 'chapter']])
+  surface.requestBoundaryChapter('previous', 6, 10)
+  surface.requestBoundaryChapter('previous', 7, 9)
+  surface.session.snapshot = () => {
+    const state = new core.ReaderPagedSnapshot()
+    state.phase = 'ready'; state.topologyRevision = 7; state.navigationRevision = 10
+    state.unit = new core.ReaderUnit(key, 'Chapter', 3)
+    state.canPreviousUnit = false; state.canNextUnit = true
+    return state
+  }
+  surface.requestBoundaryChapter('previous', 7, 10)
+  assert.deepEqual(events, [['next', 'chapter']])
+})
+
 function chromeScenario() {
   const { surface } = scenario()
   const events = []
