@@ -287,7 +287,7 @@ export struct ReaderChrome {
     Menu() {
       if (this.informationAvailable && this.snapshot.frames.length > 1) {
         MenuItem({ content: $r('app.string.rkit_image_info'), builder: this.InformationChoice })
-          .id('rkit-image-info')
+          .id('rkit-image-info-spread')
           .enabled(this.informationFrames().length > 0)
       } else if (this.informationAvailable) {
         MenuItem({ content: $r('app.string.rkit_image_info') }).id('rkit-image-info')

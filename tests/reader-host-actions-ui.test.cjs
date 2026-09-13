@@ -106,3 +106,8 @@ test('surface publishes host-neutral crop and policy events after applying runti
   assert.match(surfaceSource, /this\.session\.setPolicy\(policy\)\s+this\.onPolicyChanged\(this\.session\.snapshot\(\)\.policy\.copy\(\), intent\)/)
   assert.match(chromeSource, /layout !== 'continuous' && this\.snapshot\.policy\.pagingAxis !== 'vertical'/)
 })
+
+test('single and spread image-information entries keep distinct semantic ids', () => {
+  assert.equal((chromeSource.match(/\.id\('rkit-image-info'\)/g) ?? []).length, 1)
+  assert.match(chromeSource, /\.id\('rkit-image-info-spread'\)/)
+})
