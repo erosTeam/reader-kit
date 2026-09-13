@@ -85,6 +85,31 @@ test('progress persistence requires an explicit full-reader debug request', () =
   assert.equal(api.connectReaderLabLaunch().consume().progressReadWrite, false)
 })
 
+test('preference persistence is independently gated by an explicit full-reader debug request', () => {
+  const direct = new (fixture().ReaderLabRequest)('work', 'unit', 0)
+  assert.equal(direct.preferencesReadWrite, false)
+  for (const input of [undefined, null, false, 'false', 1, 'TRUE']) {
+    const api = fixture()
+    api.captureReaderLabWant({ parameters: { readerLabWork: 'work', readerLabChrome: true,
+      readerLabPreferencesReadWrite: input, readerLabProgressReadWrite: true } }, true)
+    const request = api.connectReaderLabLaunch().consume()
+    assert.equal(request.preferencesReadWrite, false)
+    assert.equal(request.progressReadWrite, true)
+  }
+  for (const input of [true, 'true']) {
+    const api = fixture()
+    api.captureReaderLabWant({ parameters: { readerLabWork: 'work', readerLabChrome: true,
+      readerLabPreferencesReadWrite: input } }, true)
+    const request = api.connectReaderLabLaunch().consume()
+    assert.equal(request.preferencesReadWrite, true)
+    assert.equal(request.progressReadWrite, false)
+  }
+  const api = fixture()
+  api.captureReaderLabWant({ parameters: { readerLabWork: 'work', readerLabChrome: false,
+    readerLabPreferencesReadWrite: true } }, true)
+  assert.equal(api.connectReaderLabLaunch().consume().preferencesReadWrite, false)
+})
+
 test('page override presence distinguishes an explicit debug page from host progress restore', () => {
   const direct = new (fixture().ReaderLabRequest)('work', 'unit', 0)
   assert.equal(direct.pageIndexProvided, false)

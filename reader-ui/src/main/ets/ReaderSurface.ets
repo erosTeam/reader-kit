@@ -44,6 +44,10 @@ export struct ReaderSurface {
   @Event onObserved: (anchor: ReaderReadingAnchor) => void = () => {}
   /** Decoded visible coverage for host-owned completion and progress persistence. */
   @Event onObservedPosition: (position: ReaderObservedPosition) => void = () => {}
+  /** Adopted runtime display policy only. The host decides whether and how to persist it. */
+  @Event onPolicyChanged: (policy: ReaderDisplayPolicy) => void = () => {}
+  /** Adopted runtime border-crop state only. The host owns its preference model. */
+  @Event onCropChanged: (enabled: boolean) => void = () => {}
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPreview: ReaderEntryPreviewSource | null = null
   @Event onClose: () => void = () => {}
@@ -176,6 +180,18 @@ export struct ReaderSurface {
     if (!this.autoReadAvailable || !this.active || this.closing || this.chromeCloseRequested) return
     this.syncAutoRead()
     this.autoReadController.setEnabled(!this.autoReadController.isEnabled())
+  }
+
+  private applyPolicy(policy: ReaderDisplayPolicy): void {
+    if (!this.active || this.closing || this.state.phase !== 'ready') return
+    this.session.setPolicy(policy)
+    this.onPolicyChanged(this.session.snapshot().policy.copy())
+  }
+
+  private toggleCrop(): void {
+    if (!this.cropAvailable || !this.active || this.closing || this.state.phase !== 'ready') return
+    this.session.setCropEnabled(!this.state.cropEnabled)
+    this.onCropChanged(this.session.snapshot().cropEnabled)
   }
 
   private flushSaveFeedback(): void {
@@ -521,11 +537,7 @@ export struct ReaderSurface {
           saveAvailable: this.imageSave !== null, saveBusy: this.saveBusy,
           autoReadAvailable: this.autoReadAvailable, autoReadEnabled: this.autoReadEnabled,
           cropAvailable: this.cropAvailable,
-          onCrop: (): void => {
-            if (this.cropAvailable && this.active && !this.closing && this.state.phase === 'ready') {
-              this.session.setCropEnabled(!this.state.cropEnabled)
-            }
-          },
+          onCrop: (): void => { this.toggleCrop() },
           originalAvailable: this.session.originalSelectionSupported(),
           onOriginal: (frames: ReaderPagedFrame[], unit: ReaderUnitKey, navigation: number, enabled: boolean): void => {
             void this.selectOriginal(frames, unit, navigation, enabled)
@@ -539,7 +551,7 @@ export struct ReaderSurface {
           onShare: (): void => { void this.shareImage() },
           onMenuVisible: (visible: boolean): void => { this.menuVisible = visible; this.syncAutoRead() },
           onThumbnails: (): void => { this.thumbnailsVisible = !this.thumbnailsVisible },
-          onPolicy: (policy: ReaderDisplayPolicy): void => { this.session.setPolicy(policy) },
+          onPolicy: (policy: ReaderDisplayPolicy): void => { this.applyPolicy(policy) },
           onShiftSpread: (unit: ReaderUnitKey, topology: number, navigation: number): void => {
             this.session.shiftSpread(unit, topology, navigation)
           },

@@ -20,6 +20,8 @@ export class ReaderLabRequest {
   cropBorders: boolean = false
   /** Explicit host persistence permission; false for every ordinary Lab request. */
   progressReadWrite: boolean = false
+  /** Explicit host preference persistence permission; independent from reading progress. */
+  preferencesReadWrite: boolean = false
   thumbnailEntry: boolean = false
   entryLayout: string = 'single'
   entryDirection: string = 'ltr'
@@ -98,6 +100,8 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
   request.cropBorders = want.parameters['readerLabCropBorders'] === 'true' || want.parameters['readerLabCropBorders'] === true
   request.progressReadWrite = request.readingChrome &&
     (want.parameters['readerLabProgressReadWrite'] === 'true' || want.parameters['readerLabProgressReadWrite'] === true)
+  request.preferencesReadWrite = request.readingChrome &&
+    (want.parameters['readerLabPreferencesReadWrite'] === 'true' || want.parameters['readerLabPreferencesReadWrite'] === true)
   const shareProbe = want.parameters['readerLabShareProbe']
   request.shareProbe = typeof shareProbe === 'string' &&
     (shareProbe === 'fail-once' || shareProbe === 'delay-once') ? shareProbe : ''

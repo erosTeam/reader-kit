@@ -1,5 +1,22 @@
 # Reader Kit (experimental)
 
+## Optional host-owned preference output (2026-09-13)
+
+`ReaderSurface.onPolicyChanged` and `onCropChanged` publish only the runtime
+state that the shared session actually adopted. The core and shared UI do not
+know an application's preference schema and never write application storage.
+Policy and crop output are separate from observed reading progress, so hosts
+can grant, map, test and migrate those capabilities independently.
+
+Koma's Debug Lab keeps preference writes disabled for ordinary requests. An
+explicit full-reader `readerLabPreferencesReadWrite=true` request maps the
+shared layout, paging axis, direction, spread layout, cover alignment, wide-page
+split and border crop into Koma's existing preference store while preserving
+all unrelated Koma fields. On device103, ordinary runtime changes left the
+preference file byte-identical; explicit changes persisted vertical paging and
+crop, survived force-stop/relaunch, and were then restored to the complete
+pre-test preference value set. Production reader routing remains unchanged.
+
 ## Optional host-owned observed progress (2026-09-13)
 
 `ReaderPagedSnapshot.observedPosition()` reports only decoded original parts that
