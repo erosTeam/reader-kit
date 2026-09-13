@@ -110,3 +110,8 @@ test('same-page replacement keeps stable slot identity and promotes only a compo
   assert.match(src, /if \(this\.retainedFrameValue !== null\) \{[\s\S]*?frame: this\.frame\(\)[\s\S]*?onPresented: this\.onPresented[\s\S]*?\.zIndex\(this\.frame\(\)\.asset\.phase === 'displayed' \? 1 : 0\)/)
   assert.match(src, /postFrameCallback\(new ReaderEntryAfterLayout[\s\S]*?this\.onPresented\(this\.slotId, requestId, true, width, height\)/)
 })
+
+test('same-uri replacement still owns a separate candidate image site', () => {
+  assert.match(src, /if \(retainedUri\.length === 0 \|\| retainedRequest <= 0\)/)
+  assert.doesNotMatch(src, /retainedUri === frame\.asset\.uri/)
+})

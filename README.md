@@ -545,8 +545,18 @@ the production library and progress files byte-identical. This is host handoff
 evidence for the optional lab, not production-reader replacement or persistence
 acceptance. A bounded debug-only chapter probe also proves that preparation
 failure and background cancellation retain the source chapter and emit no opened
-target; ordinary requests cannot enable it. The complete platform-free suite now
-has 317 passing tests.
+target; ordinary requests cannot enable it.
+
+Exact displayed-source replacement is double-buffered even when a host returns
+the same URI. The already presented Image keeps its request identity while a
+separate candidate Image owns the new request and is promoted only after a
+composed frame. This matters for immutable local/download files: ArkUI can reuse
+an Image source without firing a second completion callback when the same native
+node is updated in place. NextN device-103 accepted two consecutive reloads of
+the same downloaded page in two independent runs, with no loading/failure node
+left behind and the host queue/history restored.
+
+The complete platform-free suite now has 358 passing tests.
 
 Run core behavioral tests with `node --test tests/*.test.cjs`.
 They execute the actual platform-free ArkTS core through the DevEco TypeScript

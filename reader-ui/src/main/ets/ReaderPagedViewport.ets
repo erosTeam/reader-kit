@@ -462,7 +462,10 @@ struct ReaderPagedCell {
     const frame = this.frame()
     const retainedUri = frame.asset.retainedUri
     const retainedRequest = frame.asset.retainedAssetRequestId
-    if (retainedUri.length === 0 || retainedRequest <= 0 || retainedUri === frame.asset.uri) {
+    // Do not collapse equal URI strings. A force reload is a new presentation
+    // epoch, and ArkUI may not emit onComplete when one Image node keeps the
+    // same file source. The separate candidate site below owns that callback.
+    if (retainedUri.length === 0 || retainedRequest <= 0) {
       this.retainedFrameValue = null
       return
     }
