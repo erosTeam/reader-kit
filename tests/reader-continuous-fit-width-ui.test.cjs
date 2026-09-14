@@ -20,3 +20,8 @@ test('continuous image fills its ratio-sized row while failures remain compact',
   assert.doesNotMatch(zoom, /\.width\('100%'\)\.height\(this\.imageHeight\)/)
   assert.match(continuous, /\.width\('100%'\)\.height\(220\)\.id\(`rkit-continuous-page-/)
 })
+
+test('continuous list applies the same bounded host page gap without changing image ratios', () => {
+  assert.match(continuous, /space: normalizedReaderPageGap\(this\.pageGap\)/)
+  assert.match(continuous, /@Param pageGap: number = 0/)
+})

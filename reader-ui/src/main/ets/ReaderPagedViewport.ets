@@ -5,6 +5,7 @@ import { ReaderTapSequence } from './ReaderTapSequence'
 import { ReaderEntryRect, ReaderEntryTarget, ReaderEntryTransition } from './ReaderEntryTransition'
 import { FrameCallback } from '@kit.ArkUI'
 import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
+import { normalizedReaderPageGap } from './ReaderPageGap'
 
 class ReaderEntryAfterLayout extends FrameCallback {
   private action: () => void
@@ -90,6 +91,7 @@ export class ReaderEntryGeometryGate {
 @ComponentV2
 export struct ReaderPagedViewport {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
+  @Param pageGap: number = 0
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param entryTransition: ReaderEntryTransition | null = null
@@ -123,12 +125,12 @@ export struct ReaderPagedViewport {
   private entryMeasurement: ReaderEntryMeasurement = new ReaderEntryMeasurement()
 
   private identity(): string {
-    return `${this.snapshot.navigationRevision}:${this.snapshot.kind}:${this.snapshot.policy.layout}:${this.snapshot.policy.direction}:` +
+    return `${this.snapshot.navigationRevision}:${this.snapshot.kind}:${this.snapshot.policy.layout}:${this.snapshot.policy.direction}:${this.effectivePageGap()}:` +
       this.snapshot.frames.map((frame: ReaderPagedFrame) =>
         `${frame.slotId}:${frame.asset.assetRequestId}:${frame.part.fragment}`).join('|')
   }
 
-  @Monitor('snapshot', 'active', 'selected')
+  @Monitor('snapshot', 'active', 'selected', 'pageGap')
   onContentChanged(): void {
     const recoveryIdentity = `${this.snapshot.topologyRevision}:${this.snapshot.displayIndex}:${this.snapshot.kind}`
     if (recoveryIdentity !== this.recoveryIdentity) {
@@ -255,8 +257,9 @@ export struct ReaderPagedViewport {
       const heights = this.snapshot.frames.map((frame: ReaderPagedFrame): number => this.containedHeight(frame))
       // The whole equal-slot Row scales, including the gap between narrow images.
       // Preserve the actual asymmetric outer edges rather than summing image widths.
-      const left = -this.viewportWidth / 4 - widths[0] / 2
-      const right = this.viewportWidth / 4 + widths[1] / 2
+      const slotWidth = this.equalSlotWidth()
+      const left = -this.viewportWidth / 2 + (slotWidth - widths[0]) / 2
+      const right = this.viewportWidth / 2 - (slotWidth - widths[1]) / 2
       return new ReaderViewportGeometry(this.viewportWidth, this.viewportHeight,
         right - left, Math.max(...heights), Math.max(1, ...scales), (left + right) / 2)
     }
@@ -344,8 +347,17 @@ export struct ReaderPagedViewport {
       this.snapshot.frames.length === 2
   }
 
+  private effectivePageGap(): number {
+    if (!this.splitLayout()) return 0
+    return Math.min(normalizedReaderPageGap(this.pageGap), Math.max(0, this.viewportWidth - 2))
+  }
+
+  private equalSlotWidth(): number {
+    return Math.max(1, (this.viewportWidth - this.effectivePageGap()) / Math.max(1, this.snapshot.frames.length))
+  }
+
   private containedHeight(frame: ReaderPagedFrame): number {
-    return this.splitLayout() ? Math.min(this.viewportHeight, this.viewportWidth / 2 / partRatio(frame)) : this.frameHeight()
+    return this.splitLayout() ? Math.min(this.viewportHeight, this.equalSlotWidth() / partRatio(frame)) : this.frameHeight()
   }
 
   private equalSlots(): boolean { return this.recovering || this.splitLayout() }
@@ -356,7 +368,7 @@ export struct ReaderPagedViewport {
 
   build() {
     Stack() {
-      Row() {
+      Row({ space: this.effectivePageGap() }) {
         ForEach(this.snapshot.frames, (frame: ReaderPagedFrame) => {
           // Only stable identity comes from the ForEach closure. Cell state is
           // resolved from the current snapshot so same-key updates are not lost.
@@ -368,7 +380,7 @@ export struct ReaderPagedViewport {
             entryGeometryReady: this.entryViewportLaidOut && this.entryRatiosReady(),
             renderedFragment: frame.part.fragment,
             // Zero leaves the fitted width to the cell's current reactive frame, not this stable-key closure.
-            frameWidth: this.equalSlots() ? this.viewportWidth / this.snapshot.frames.length : 0,
+            frameWidth: this.equalSlots() ? this.equalSlotWidth() : 0,
             frameHeight: this.equalSlots() ? this.viewportHeight : this.frameHeight(),
             active: this.selected && this.active && !this.zoomAnimating && this.zoomState.scale === 1,
             onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,

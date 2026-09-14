@@ -22,7 +22,9 @@ function subject(file, names, prelude = '') {
 }
 const src = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderPagedViewport.ets'), 'utf8')
 const ratio = src.slice(src.indexOf('function partRatio('), src.indexOf('/** Entry eligibility'))
-const Viewport = subject('ReaderPagedViewport', ['geometry', 'totalRatio', 'frameHeight', 'splitLayout', 'containedHeight', 'equalSlots'], ratio)
+const Viewport = subject('ReaderPagedViewport', ['geometry', 'totalRatio', 'frameHeight', 'splitLayout',
+  'effectivePageGap', 'equalSlotWidth', 'containedHeight', 'equalSlots'],
+  ratio + '\nfunction normalizedReaderPageGap(value) { return Number.isFinite(value) ? Math.max(0, Math.min(96, value)) : 0 }')
 const Chrome = subject('ReaderChrome', ['toggleSpreadLayout'])
 function frame(i, width, height) {
   const key = new core.ReaderUnitKey('test', 'work', 'unit')
@@ -47,6 +49,17 @@ test('split equal slots contain unequal pages and both actual outer edges remain
   const pan = new core.ReaderViewportTransform(2).pan(g, 10000, 10000)
   near(pan.x, 80); near(pan.y, 400)
   near(new core.ReaderViewportTransform(2).pan(g, -10000, 0).x, -600)
+})
+
+test('split page gap reduces both slots and remains part of zoomable spread geometry', () => {
+  const v = viewport()
+  v.pageGap = 18
+  near(v.effectivePageGap(), 18)
+  near(v.equalSlotWidth(), 591)
+  near(v.containedHeight(v.snapshot.frames[1]), 295.5)
+  const g = v.geometry()
+  near(g.contentWidth, 944.5)
+  near(g.contentCenterX, 127.75)
 })
 
 test('joined retains proportional equal-height fit and terminal singleton uses full single fit', () => {

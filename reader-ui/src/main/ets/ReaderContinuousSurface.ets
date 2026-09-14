@@ -6,6 +6,7 @@ import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
 import { ReaderTapAction } from './ReaderTapAction'
 import { ReaderBoundaryDirection, ReaderBoundarySwipe } from './ReaderBoundarySwipe'
+import { normalizedReaderPageGap } from './ReaderPageGap'
 
 class ReaderContinuousIndexSource implements IDataSource {
   private keys: string[]
@@ -26,6 +27,7 @@ class ReaderContinuousAfterLayout extends FrameCallback {
 @ComponentV2
 export struct ReaderContinuousSurface {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
+  @Param pageGap: number = 0
   @Param entryTransition: ReaderEntryTransition | null = null
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
@@ -45,6 +47,7 @@ export struct ReaderContinuousSurface {
         ForEach([this.snapshot.topologyRevision], (revision: number) => {
           ReaderContinuousList({
             imageInterpolation: this.imageInterpolation,
+            pageGap: this.pageGap,
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
             entryTransition: this.entryTransition,
             onInputLockChange: this.onInputLockChange,
@@ -64,6 +67,7 @@ export struct ReaderContinuousSurface {
 @ComponentV2
 struct ReaderContinuousList {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
+  @Param pageGap: number = 0
   @Param entryTransition: ReaderEntryTransition | null = null
   @Local private entryPosition: ReaderContinuousEntryPosition | null = null
   @Require @Param snapshot: ReaderPagedSnapshot
@@ -353,7 +357,8 @@ struct ReaderContinuousList {
   }
 
   build() {
-    List({ initialIndex: this.snapshot.displayIndex, scroller: this.scroller }) {
+    List({ initialIndex: this.snapshot.displayIndex, scroller: this.scroller,
+      space: normalizedReaderPageGap(this.pageGap) }) {
       LazyForEach(this.source, (key: string) => {
         ListItem() {
           ReaderContinuousCell({

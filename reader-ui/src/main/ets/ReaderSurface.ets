@@ -37,6 +37,8 @@ export struct ReaderSurface {
   @Param autoReadAvailable: boolean = false
   @Param autoReadSeconds: number = 3
   @Param pageTurnAnimation: boolean = false
+  /** Host-owned visual spacing between continuous pages and separated spread slots. */
+  @Param pageGap: number = 0
   /** Host preference for future cache warming; native render neighbors remain fixed and bounded. */
   @Param preloadDepth: number = 0
   /** Optional host policy. reader-kit only requests exact host-prepared derivatives. */
@@ -566,6 +568,7 @@ export struct ReaderSurface {
         if (this.state.policy.layout === 'continuous') {
           ReaderContinuousSurface({
             imageInterpolation: this.imageInterpolation,
+            pageGap: this.pageGap,
             snapshot: this.state, active: this.active,
             entryTransition: this.entryTransition,
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
@@ -592,6 +595,7 @@ export struct ReaderSurface {
         } else {
           ReaderPagerSurface({
             imageInterpolation: this.imageInterpolation,
+            pageGap: this.pageGap,
             snapshot: this.state, active: this.active,
             command: this.pagerCommand,
             entryTransition: this.entryTransition,
