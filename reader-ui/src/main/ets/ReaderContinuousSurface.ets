@@ -9,6 +9,7 @@ import { ReaderTapAction } from './ReaderTapAction'
 import { ReaderBoundaryDirection, ReaderBoundarySwipe } from './ReaderBoundarySwipe'
 import { normalizedReaderPageGap } from './ReaderPageGap'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
+import { readerElementKey } from './ReaderElementKey'
 
 class ReaderContinuousIndexSource implements IDataSource {
   private keys: string[]
@@ -465,7 +466,7 @@ struct ReaderContinuousList {
           })
         }
           .zIndex(this.lockedKey === key ? 1 : 0)
-      }, (key: string): string => key)
+      }, (key: string): string => readerElementKey(key))
     }
     .width('100%').height('100%').cachedCount(1)
     .scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
@@ -547,7 +548,8 @@ struct ReaderContinuousCell {
             actionBusy: this.noticeActionBusy,
             onAction: (): void => { void this.resolveNoticeAction(frame) },
           })
-        }, (frame: ReaderPagedFrame): string => `${frame.slotId}:${frame.asset.assetRequestId}`)
+        }, (frame: ReaderPagedFrame): string =>
+          readerElementKey(`${frame.slotId}:${frame.asset.assetRequestId}`))
       }.width('100%').height(220).id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
     } else if (this.snapshot.frames[0]?.asset.phase === 'failed') {
       Stack() {
@@ -557,7 +559,8 @@ struct ReaderContinuousCell {
             // Failed acquisition can keep assetRequestId=0 across attempts; read the current epoch.
             onRetry: (): void => { this.onRetry(frame.slotId, this.snapshot.frames[0].asset.requestId) },
           })
-        }, (frame: ReaderPagedFrame): string => `${frame.slotId}:${frame.asset.assetRequestId}`)
+        }, (frame: ReaderPagedFrame): string =>
+          readerElementKey(`${frame.slotId}:${frame.asset.assetRequestId}`))
       }.width('100%').height(220).id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
     } else {
       Stack() {
@@ -578,7 +581,8 @@ struct ReaderContinuousCell {
             })
               .onDisAppear((): void => { this.onRetired(frame.slotId, frame.asset.assetRequestId) })
           }
-        }, (frame: ReaderPagedFrame): string => `${frame.slotId}:${frame.asset.assetRequestId}`)
+        }, (frame: ReaderPagedFrame): string =>
+          readerElementKey(`${frame.slotId}:${frame.asset.assetRequestId}`))
         if (this.snapshot.frames.length === 0 || this.snapshot.frames[0].asset.phase === 'idle' ||
           this.snapshot.frames[0].asset.phase === 'asset' || this.snapshot.frames[0].asset.phase === 'decoding') {
           LoadingProgress().width(32).height(32)

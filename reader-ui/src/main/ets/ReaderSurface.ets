@@ -16,6 +16,7 @@ import { ReaderTapZonePreviewRegion } from './ReaderTapZonePreviewRegion'
 import { ReaderHostAction } from './ReaderHostAction'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { ReaderCloseContext } from './ReaderCloseContext'
+import { readerElementKey } from './ReaderElementKey'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -763,7 +764,7 @@ export struct ReaderSurface {
                 this.session.seekSource(index, unit, navigation)
               },
             })
-          }, (identity: string): string => identity)
+          }, (identity: string): string => readerElementKey(identity))
         }.width('100%').height(this.thumbnailRailVisible() ? 156 : 0)
           .padding({ top: this.thumbnailRailVisible() ? 8 : 0, bottom: this.thumbnailRailVisible() ? 8 : 0 })
           .margin({ bottom: this.bottomInset + 112 }).backgroundColor('#CC000000').clip(true)
@@ -862,7 +863,7 @@ export struct ReaderSurface {
           .height(`${(region.bottom - region.top) * 100}%`)
           .backgroundColor(this.tapZonePreviewColor(region.action))
           .id(`rkit-tap-zone-${region.key()}`)
-      }, (region: ReaderTapZonePreviewRegion): string => region.key())
+      }, (region: ReaderTapZonePreviewRegion): string => readerElementKey(region.key()))
     }
       .width('100%').height('100%').hitTestBehavior(HitTestMode.Block)
       .onClick((): void => { this.dismissTapZonePreview() })

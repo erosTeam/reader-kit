@@ -4,6 +4,7 @@ import { uiMaterial } from '@kit.ArkUI'
 import { deviceInfo } from '@kit.BasicServicesKit'
 import { SymbolGlyphModifier } from '@kit.ArkUI'
 import { ReaderHostAction } from './ReaderHostAction'
+import { readerElementKey } from './ReaderElementKey'
 
 export type ReaderRuntimePolicyIntent = 'layout' | 'direction' | 'spread_layout' |
   'first_page_alone' | 'split_wide_pages'
@@ -385,7 +386,7 @@ export struct ReaderChrome {
           .enabled(this.active && action.enabled && !action.busy && this.snapshot.phase === 'ready' &&
             this.moreUnit !== null && this.snapshot.navigationRevision === this.moreNavigation)
           .onClick((): void => { this.selectHostAction(action) })
-      }, (action: ReaderHostAction): string => action.id)
+      }, (action: ReaderHostAction): string => readerElementKey(action.id))
       if (this.chapterNavigationAvailable) {
         MenuItem({ content: $r('app.string.rkit_previous_unit') }).id('rkit-previous-chapter')
           .enabled(this.active && this.snapshot.phase === 'ready' && !this.chapterNavigationBusy && this.snapshot.canPreviousUnit)

@@ -116,7 +116,7 @@ test('spread menu copies policy without changing direction, axis, grouping optio
 })
 
 test('same-page replacement keeps stable slot identity and promotes only a composed candidate', () => {
-  assert.match(src, /\(frame: ReaderPagedFrame\): string => `\$\{frame\.slotId\}:\$\{frame\.part\.fragment\}`/)
+  assert.match(src, /\(frame: ReaderPagedFrame\): string => readerElementKey\(`\$\{frame\.slotId\}:\$\{frame\.part\.fragment\}`\)/)
   assert.match(src, /@Local private retainedFrameValue: ReaderPagedFrame \| null = null/)
   assert.match(src, /private presentedFrame\(\): ReaderPagedFrame \{[\s\S]*this\.retainedFrameValue \?\? this\.frame\(\)/)
   assert.match(src, /frame: this\.presentedFrame\(\)[\s\S]*?active: this\.retainedFrameValue === null[\s\S]*?\.zIndex\(this\.retainedFrameValue !== null && this\.frame\(\)\.asset\.phase === 'decoding' \? 1 : 0\)/)

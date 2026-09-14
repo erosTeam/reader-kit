@@ -3,6 +3,7 @@ import { ReaderPagedViewport } from './ReaderPagedViewport'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderBoundaryDirection, ReaderBoundarySwipe } from './ReaderBoundarySwipe'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
+import { readerElementKey } from './ReaderElementKey'
 
 /** One adjacent host-requested move. The native pager consumes each serial at most once. */
 export class ReaderPagerCommand {
@@ -266,7 +267,7 @@ struct ReaderNativePager {
             this.onFailed(this.createdRevision, key, slotId, requestId, fragment)
           },
         })
-      }, (key: string): string => key)
+      }, (key: string): string => readerElementKey(key))
     }
     .index(this.snapshot.displayIndex)
     .vertical(this.snapshot.policy.pagingAxis === 'vertical')

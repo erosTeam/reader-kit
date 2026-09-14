@@ -1,6 +1,7 @@
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderThumbnailWindow, ReaderThumbnailFrame,
   ReaderPagedFrame, ReaderDisplayPart, ReaderUnitKey, ReaderFragment } from '@reader-kit/core'
 import { ReaderPagedImage } from './ReaderPagedViewport'
+import { readerElementKey } from './ReaderElementKey'
 
 class ThumbnailIndexSource implements IDataSource {
   private count: number
@@ -141,7 +142,7 @@ struct ReaderThumbnailRailTile {
                 this.onPresented(slot, request, false, 0, 0)
               },
             })
-          }, (identity: string): string => identity)
+          }, (identity: string): string => readerElementKey(identity))
         } else {
           LoadingProgress().width(22).height(22).color(Color.White)
         }

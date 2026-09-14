@@ -9,6 +9,7 @@ import { FrameCallback } from '@kit.ArkUI'
 import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { normalizedReaderPageGap } from './ReaderPageGap'
+import { readerElementKey } from './ReaderElementKey'
 
 class ReaderEntryAfterLayout extends FrameCallback {
   private action: () => void
@@ -425,7 +426,7 @@ export struct ReaderPagedViewport {
             },
             onRetry: this.onRetry, onNoticeAction: this.onNoticeAction,
           })
-        }, (frame: ReaderPagedFrame): string => `${frame.slotId}:${frame.part.fragment}`)
+        }, (frame: ReaderPagedFrame): string => readerElementKey(`${frame.slotId}:${frame.part.fragment}`))
       }
       .direction(Direction.Ltr)
       .width(this.equalSlots() ? this.viewportWidth : this.frameHeight() * this.totalRatio())

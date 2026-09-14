@@ -23,6 +23,7 @@ export { ReaderPagedViewport } from './src/main/ets/ReaderPagedViewport'
 export { ReaderPagerCommand, ReaderPagerSurface } from './src/main/ets/ReaderPagerSurface'
 export { ReaderContinuousSurface } from './src/main/ets/ReaderContinuousSurface'
 export { normalizedReaderPageGap } from './src/main/ets/ReaderPageGap'
+export { readerElementKey } from './src/main/ets/ReaderElementKey'
 export { ReaderBoundarySwipe, ReaderBoundaryDirection, ReaderBoundaryAxis,
   ReaderBoundaryReadingDirection } from './src/main/ets/ReaderBoundarySwipe'
 export { ReaderFailurePanel } from './src/main/ets/ReaderFailurePanel'
