@@ -21,6 +21,23 @@ export class ReaderVariantPreference {
 }
 export type ReaderPhase = 'idle' | 'catalog' | 'asset' | 'decoding' | 'displayed' | 'suppressed' | 'failed' | 'closed'
 
+/** Host-classified acquisition failure. Core retains the code; UI may present the optional host text. */
+export class ReaderAssetFailure {
+  code: string
+  title: string
+  hint: string
+
+  constructor(code: string, title: string = '', hint: string = '') {
+    this.code = code.length > 0 ? code : 'reader_asset_failed'
+    this.title = title
+    this.hint = hint
+  }
+
+  copy(): ReaderAssetFailure {
+    return new ReaderAssetFailure(this.code, this.title, this.hint)
+  }
+}
+
 /** Host-authored replacement for content that must not be presented as a readable image. */
 export class ReaderAssetNotice {
   id: string
@@ -145,6 +162,8 @@ export interface ReaderAssetProvider {
   /** D1 exposes existing service limits instead of claiming detached requests were aborted. */
   cancellationMode: 'consumer-only' | 'transport'
   load(page: ReaderPage, kind: ReaderAssetKind, cancellation: ReaderCancellation, forceReload: boolean): Promise<ReaderAsset>
+  /** Classifies a rejected acquisition without moving transport or localization ownership into reader-kit. */
+  failure?(error: Error): ReaderAssetFailure
   /** Resolve only; failure must not replace the currently displayed default image. */
   prepareOriginal?(page: ReaderPage, cancellation: ReaderCancellation): Promise<ReaderOriginalAssetPlan>
   /** Host processing stays outside reader-kit; resolution failure leaves the current body untouched. */
@@ -198,6 +217,7 @@ export class ReaderSnapshot {
   informationAvailable: boolean = false
   notice: ReaderAssetNotice | null = null
   error: string = ''
+  failure: ReaderAssetFailure | null = null
   canPreviousUnit: boolean = false
   canNextUnit: boolean = false
   /** Last UI-observed ORIGINAL, possibly from the previous unit while preparing a new one. */
@@ -222,6 +242,7 @@ export class ReaderSnapshot {
     value.informationAvailable = this.informationAvailable
     value.notice = this.notice === null ? null : this.notice.copy()
     value.error = this.error
+    value.failure = this.failure === null ? null : this.failure.copy()
     value.canPreviousUnit = this.canPreviousUnit
     value.canNextUnit = this.canNextUnit
     value.presentedAnchor = this.presentedAnchor === null ? null : this.presentedAnchor.copy()
@@ -318,6 +339,7 @@ export class ReaderSession {
     this.epoch += 1
     this.state.requestId = this.epoch
     this.state.error = ''
+    this.state.failure = null
     return this.epoch
   }
 
@@ -470,8 +492,9 @@ export class ReaderSession {
         this.state.retainedAssetRequestId = 0
       }
       this.emit()
-    } catch (_error) {
-      this.fail(epoch, 'reader_asset_failed')
+    } catch (error) {
+      const failure = this.assets.failure?.(error as Error) ?? new ReaderAssetFailure('reader_asset_failed')
+      this.fail(epoch, failure.code, failure)
     }
   }
 
@@ -489,6 +512,7 @@ export class ReaderSession {
     }
     this.state.phase = success ? 'displayed' : 'failed'
     this.state.error = success ? '' : 'reader_decode_failed'
+    this.state.failure = null
     if (!success) {
       this.releaseRetiredAsset()
       this.state.retainedUri = ''
@@ -503,6 +527,7 @@ export class ReaderSession {
       (this.state.phase !== 'displayed' && this.state.phase !== 'decoding')) return
     this.state.phase = 'failed'
     this.state.error = 'reader_decode_failed'
+    this.state.failure = null
     this.releaseRetiredAsset()
     this.state.retainedUri = ''
     this.state.retainedAssetRequestId = 0
@@ -527,10 +552,11 @@ export class ReaderSession {
     this.emit()
   }
 
-  private fail(epoch: number, code: string): void {
+  private fail(epoch: number, code: string, failure: ReaderAssetFailure | null = null): void {
     if (!this.current(epoch)) return
     this.state.phase = 'failed'
     this.state.error = code
+    this.state.failure = failure === null ? null : failure.copy()
     this.state.notice = null
     this.emit()
   }

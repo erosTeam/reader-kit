@@ -556,6 +556,7 @@ struct ReaderContinuousCell {
         ForEach(this.snapshot.frames, (frame: ReaderPagedFrame) => {
           ReaderFailurePanel({
             page: frame.part.sourceIndex + 1, compact: true, retryEnabled: this.active,
+            failure: frame.asset.failure,
             // Failed acquisition can keep assetRequestId=0 across attempts; read the current epoch.
             onRetry: (): void => { this.onRetry(frame.slotId, this.snapshot.frames[0].asset.requestId) },
           })

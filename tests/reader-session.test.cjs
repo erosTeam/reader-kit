@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict')
 const test = require('node:test')
-const { ReaderSession, ReaderUnitKey, ReaderUnit, ReaderPage, ReaderAsset, ReaderCancellation } = require('./load-core.cjs')('ReaderSession')
+const { ReaderSession, ReaderUnitKey, ReaderUnit, ReaderPage, ReaderAsset, ReaderAssetFailure, ReaderCancellation } = require('./load-core.cjs')('ReaderSession')
 
 const key = (unit = 'A') => new ReaderUnitKey('test', 'work', unit)
 const deferred = () => {
@@ -66,6 +66,30 @@ test('decode failure retry asks the provider to replace a corrupt cached origina
   assert.equal(session.snapshot().uri, 'recovered')
   session.reportPresentation(session.snapshot().requestId, true)
   assert.equal(session.snapshot().phase, 'displayed')
+  session.close()
+})
+
+test('host asset failure classification survives snapshot copies and clears on retry', async () => {
+  const assets = new Assets()
+  let fail = true
+  assets.failure = error => new ReaderAssetFailure('quota', 'Image quota exhausted', `Host hint: ${error.message}`)
+  assets.load = async page => {
+    if (fail) throw new Error('509')
+    return new ReaderAsset(page.key)
+  }
+  const session = new ReaderSession(new Catalog(), assets)
+  await session.open(key())
+  const failed = session.snapshot()
+  assert.equal(failed.phase, 'failed')
+  assert.equal(failed.error, 'quota')
+  assert.equal(failed.failure.title, 'Image quota exhausted')
+  assert.equal(failed.failure.hint, 'Host hint: 509')
+  failed.failure.title = 'mutated'
+  assert.equal(session.snapshot().failure.title, 'Image quota exhausted')
+  fail = false
+  await session.retry()
+  assert.equal(session.snapshot().failure, null)
+  assert.equal(session.snapshot().error, '')
   session.close()
 })
 

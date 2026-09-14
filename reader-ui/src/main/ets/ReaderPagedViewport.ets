@@ -591,6 +591,7 @@ struct ReaderPagedCell {
       } else if (this.frame().asset.phase === 'failed') {
         ReaderFailurePanel({
           page: this.frame().part.sourceIndex + 1, compact: this.snapshot.frames.length > 1,
+          failure: this.frame().asset.failure,
           retryEnabled: this.active,
           onRetry: (): void => { this.onRetry(this.slotId, this.frame().asset.requestId) },
         })

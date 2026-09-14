@@ -1,7 +1,10 @@
+import { ReaderAssetFailure } from '@reader-kit/core'
+
 /** Shared failure material only. The parent owns layout; the session owns retry. */
 @ComponentV2
 export struct ReaderFailurePanel {
   @Require @Param page: number
+  @Param failure: ReaderAssetFailure | null = null
   @Param compact: boolean = false
   @Param retryEnabled: boolean = true
   @Event onRetry: () => void = () => {}
@@ -11,10 +14,12 @@ export struct ReaderFailurePanel {
       SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
         .fontSize(this.compact ? 28 : 36)
         .fontColor([$r('sys.color.font_primary')])
-      Text($r('app.string.rkit_image_failed'))
+      Text(this.failure !== null && this.failure.title.length > 0
+        ? this.failure.title : $r('app.string.rkit_image_failed'))
         .fontSize(14).fontColor($r('sys.color.font_primary'))
         .fontWeight(FontWeight.Medium).textAlign(TextAlign.Center).maxLines(2)
-      Text($r('app.string.rkit_image_retry_hint'))
+      Text(this.failure !== null && this.failure.hint.length > 0
+        ? this.failure.hint : $r('app.string.rkit_image_retry_hint'))
         .fontSize(12).fontColor($r('sys.color.font_secondary'))
         .textAlign(TextAlign.Center).maxLines(2)
       Text(`P${this.page}`)
