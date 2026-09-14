@@ -116,7 +116,7 @@ test('surface keeps per-source variant policy and completion feedback host-owned
   assert.match(surfaceSource, /variantPreferenceResolver\?\.\(frame\.part\.sourceIndex\)/)
   assert.match(surfaceSource, /this\.variantPreferenceRevision/)
   assert.match(surfaceSource, /this\.onVariantSelection\(frame\.part\.sourceIndex/)
-  assert.match(surfaceSource, /hostActions: this\.hostActions/)
+  assert.match(surfaceSource, /hostActions: this\.hostActions\?\.items\(\) \?\? \[\]/)
   assert.match(surfaceSource, /hostCenterActionAvailable: this\.hostCenterActionAvailable/)
   assert.match(chromeSource, /id\('rkit-host-center-action'\)/)
   assert.ok(chromeSource.indexOf("id('rkit-host-center-action')") >

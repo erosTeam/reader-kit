@@ -25,6 +25,7 @@ import { ReaderPreferenceSink } from './ReaderPreferenceSink'
 import { ReaderActivitySink } from './ReaderActivitySink'
 import { ReaderHostSettings } from './ReaderHostSettings'
 import { ReaderExternalOpen } from './ReaderExternalOpen'
+import { ReaderHostActions } from './ReaderHostActions'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -70,8 +71,7 @@ export struct ReaderSurface {
   @Param cropAvailable: boolean = false
   @Param hostSettings: ReaderHostSettings | null = null
   @Param externalOpen: ReaderExternalOpen | null = null
-  @Param hostActions: ReaderHostAction[] = []
-  @Event onHostAction: (id: string, source: ReaderUnitKey, navigation: number, sourceIndex: number) => void = () => {}
+  @Param hostActions: ReaderHostActions | null = null
   @Param hostCenterActionAvailable: boolean = false
   @Param hostCenterActionLabel: ResourceStr = ''
   @Event onHostCenterAction: (source: ReaderUnitKey, navigation: number) => void = () => {}
@@ -817,9 +817,9 @@ export struct ReaderSurface {
           onHostSettings: (): void => { this.hostSettings?.request() },
           externalOpenAvailable: this.externalOpen !== null,
           onExternalOpen: (source: ReaderUnitKey): void => { this.externalOpen?.request(source) },
-          hostActions: this.hostActions,
+          hostActions: this.hostActions?.items() ?? [],
           onHostAction: (id: string, source: ReaderUnitKey, navigation: number, sourceIndex: number): void => {
-            this.onHostAction(id, source, navigation, sourceIndex)
+            this.hostActions?.request(id, source, navigation, sourceIndex)
           },
           hostCenterActionAvailable: this.hostCenterActionAvailable,
           hostCenterActionLabel: this.hostCenterActionLabel,
