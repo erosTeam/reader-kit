@@ -117,7 +117,7 @@ test('surface keeps per-source variant policy and completion feedback host-owned
   assert.match(surfaceSource, /this\.variantPreferenceRevision/)
   assert.match(surfaceSource, /this\.onVariantSelection\(frame\.part\.sourceIndex/)
   assert.match(surfaceSource, /hostActions: this\.hostActions\?\.items\(\) \?\? \[\]/)
-  assert.match(surfaceSource, /hostCenterActionAvailable: this\.hostCenterActionAvailable/)
+  assert.match(surfaceSource, /hostCenterActionAvailable: this\.centerAction !== null/)
   assert.match(chromeSource, /id\('rkit-host-center-action'\)/)
   assert.ok(chromeSource.indexOf("id('rkit-host-center-action')") >
     chromeSource.indexOf("id('rkit-toggle-thumbnails')"), 'host center action belongs to the bottom controls')

@@ -26,6 +26,7 @@ import { ReaderActivitySink } from './ReaderActivitySink'
 import { ReaderHostSettings } from './ReaderHostSettings'
 import { ReaderExternalOpen } from './ReaderExternalOpen'
 import { ReaderHostActions } from './ReaderHostActions'
+import { ReaderCenterAction } from './ReaderCenterAction'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -72,9 +73,7 @@ export struct ReaderSurface {
   @Param hostSettings: ReaderHostSettings | null = null
   @Param externalOpen: ReaderExternalOpen | null = null
   @Param hostActions: ReaderHostActions | null = null
-  @Param hostCenterActionAvailable: boolean = false
-  @Param hostCenterActionLabel: ResourceStr = ''
-  @Event onHostCenterAction: (source: ReaderUnitKey, navigation: number) => void = () => {}
+  @Param centerAction: ReaderCenterAction | null = null
   /** Passive host feedback; null means absent and it never changes layout or handles input. */
   @Param hostStatus: ReaderHostStatus | null = null
   /** Optional host continuation; chapter catalog, loading and persistence remain outside reader-kit. */
@@ -821,10 +820,10 @@ export struct ReaderSurface {
           onHostAction: (id: string, source: ReaderUnitKey, navigation: number, sourceIndex: number): void => {
             this.hostActions?.request(id, source, navigation, sourceIndex)
           },
-          hostCenterActionAvailable: this.hostCenterActionAvailable,
-          hostCenterActionLabel: this.hostCenterActionLabel,
+          hostCenterActionAvailable: this.centerAction !== null,
+          hostCenterActionLabel: this.centerAction?.label ?? '',
           onHostCenterAction: (source: ReaderUnitKey, navigation: number): void => {
-            this.onHostCenterAction(source, navigation)
+            this.centerAction?.request(source, navigation)
           },
           onCrop: (): void => { this.toggleCrop() },
           originalAvailable: this.session.originalSelectionSupported(),
