@@ -25,6 +25,7 @@ function evaluate(source) {
           Object.assign(this, { serial, topologyRevision, navigationRevision })
         }
       } }
+      if (name === './ReaderCloseContext') return { ReaderCloseContext }
       assert.fail(`unexpected import: ${name}`)
     },
     ObservedV2: value => value, ComponentV2: value => value,
@@ -36,6 +37,7 @@ function evaluate(source) {
   return exports
 }
 const { ReaderEntryTransition } = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderEntryTransition.ets'), 'utf8'))
+const { ReaderCloseContext } = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderCloseContext.ets'), 'utf8'))
 const source = fs.readFileSync(path.join(uiPath, 'ReaderSurface.ets'), 'utf8')
 // Execute actual surface methods, excluding only ArkUI declarative build syntax.
 // The session below records calls; no rendering, hardware delivery or UI acceptance is simulated.

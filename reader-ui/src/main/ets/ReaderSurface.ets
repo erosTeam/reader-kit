@@ -15,6 +15,7 @@ import { ReaderTapAction } from './ReaderTapAction'
 import { ReaderTapZonePreviewRegion } from './ReaderTapZonePreviewRegion'
 import { ReaderHostAction } from './ReaderHostAction'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
+import { ReaderCloseContext } from './ReaderCloseContext'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -82,7 +83,7 @@ export struct ReaderSurface {
   @Event onCropChanged: (enabled: boolean, policy: ReaderDisplayPolicy) => void = () => {}
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPreview: ReaderEntryPreviewSource | null = null
-  @Event onClose: () => void = () => {}
+  @Event onClose: (context: ReaderCloseContext | null) => void = () => {}
   @Event onChromeVisible: (visible: boolean) => void = () => {}
   /** Host-neutral foreground interaction signal for pausable processors. */
   @Event onInteractionBusy: (busy: boolean) => void = () => {}
@@ -469,13 +470,14 @@ export struct ReaderSurface {
   }
 
   private requestClose(): void {
+    const context = ReaderCloseContext.from(this.state)
     this.chromeCloseRequested = true
     this.originalFeedbackEpoch += 1
     this.session.cancelOriginalPreparations()
     this.autoReadController.stop()
     this.saveController.close()
     this.invalidateChromeShow()
-    this.onClose()
+    this.onClose(context)
   }
 
   private thumbnailUnitIdentity(): string {

@@ -1,5 +1,19 @@
 # Reader Kit (experimental)
 
+## Host-owned return transition handoff (2026-09-14)
+
+`ReaderSurface.onClose` receives an optional immutable `ReaderCloseContext`
+captured before reader requests are cancelled. A context exists only when the
+current original frame has actually been presented and observed. It identifies
+the live unit, source part, request generations, displayed source set, and the
+reader component that a host may capture.
+
+This is deliberately not a route or animation implementation. The host must
+restore its system bars first, remeasure the current thumbnail target, reject a
+stale context with `matches`, and then decide whether to animate or close
+normally. Entry-time coordinates are never reused. Failure, loading, stale, or
+unobserved states produce `null`, preserving a safe non-animated close.
+
 ## Bounded host-owned cache preload (2026-09-14)
 
 `ReaderPagedSession.setPreloadDepth` maps a host's existing 0–5 lookahead
