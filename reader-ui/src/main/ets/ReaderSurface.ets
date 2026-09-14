@@ -29,6 +29,7 @@ import { ReaderHostActions } from './ReaderHostActions'
 import { ReaderCenterAction } from './ReaderCenterAction'
 import { ReaderVariantPolicy } from './ReaderVariantPolicy'
 import { ReaderCropPolicy } from './ReaderCropPolicy'
+import { ReaderAutoReadPolicy } from './ReaderAutoReadPolicy'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -53,8 +54,7 @@ export struct ReaderSurface {
   @Param input: ReaderInputPort | null = null
   /** Optional host media operations stay in one narrow capability bundle. */
   @Param mediaActions: ReaderMediaActions | null = null
-  @Param autoReadAvailable: boolean = false
-  @Param autoReadSeconds: number = 3
+  @Param autoReadPolicy: ReaderAutoReadPolicy | null = null
   @Param pageTurnAnimation: boolean = false
   /** Host-owned visual spacing between continuous pages and separated spread slots. */
   @Param pageGap: number = 0
@@ -281,7 +281,7 @@ export struct ReaderSurface {
     this.syncPreferredVariant(this.session.snapshot())
   }
 
-  @Monitor('autoReadAvailable', 'autoReadSeconds', 'shareBusy', 'saveBusy', 'informationBusy', 'previewIndex')
+  @Monitor('autoReadPolicy', 'shareBusy', 'saveBusy', 'informationBusy', 'previewIndex')
   onAutoReadInputsChanged(): void { this.syncAutoRead() }
 
   @Monitor('tapZonePreviewRevision', 'tapZonePreviewRegions')
@@ -302,7 +302,7 @@ export struct ReaderSurface {
   onAutoReadEntryChanged(): void { this.syncAutoRead() }
 
   private syncAutoRead(): void {
-    if (!this.autoReadAvailable || this.closing || this.chromeCloseRequested || this.chromeDisposed) {
+    if (this.autoReadPolicy?.available !== true || this.closing || this.chromeCloseRequested || this.chromeDisposed) {
       this.autoReadController.stop()
       return
     }
@@ -310,11 +310,11 @@ export struct ReaderSurface {
       this.touching || this.menuVisible || this.tapZonePreviewVisible || this.shareBusy || this.saveBusy ||
       this.informationBusy || this.state.originalPreparing ||
       this.previewIndex >= 0 || this.inputTopology !== this.state.topologyRevision || this.inputLocked ||
-      this.entryTransition?.phase === 'layout', this.autoReadSeconds)
+      this.entryTransition?.phase === 'layout', this.autoReadPolicy.seconds)
   }
 
   private toggleAutoRead(): void {
-    if (!this.autoReadAvailable || !this.active || this.closing || this.chromeCloseRequested) return
+    if (this.autoReadPolicy?.available !== true || !this.active || this.closing || this.chromeCloseRequested) return
     this.syncAutoRead()
     this.autoReadController.setEnabled(!this.autoReadController.isEnabled())
   }
@@ -806,7 +806,7 @@ export struct ReaderSurface {
           shareBusy: this.shareBusy,
           saveAvailable: this.mediaActions !== null && this.mediaActions.imageSave !== null,
           saveBusy: this.saveBusy,
-          autoReadAvailable: this.autoReadAvailable, autoReadEnabled: this.autoReadEnabled,
+          autoReadAvailable: this.autoReadPolicy?.available === true, autoReadEnabled: this.autoReadEnabled,
           cropAvailable: this.cropPolicy?.available === true,
           enhancementVisible: this.enhancementVisible(),
           enhancementProcessing: this.enhancementProcessing(),

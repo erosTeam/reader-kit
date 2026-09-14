@@ -28,6 +28,7 @@ function evaluate(source) {
       if (name === './ReaderCloseContext') return { ReaderCloseContext }
       if (name === './ReaderVariantPolicy') return { ReaderVariantPolicy }
       if (name === './ReaderCropPolicy') return { ReaderCropPolicy }
+      if (name === './ReaderAutoReadPolicy') return { ReaderAutoReadPolicy }
       assert.fail(`unexpected import: ${name}`)
     },
     ObservedV2: value => value, ComponentV2: value => value,
@@ -42,6 +43,7 @@ const { ReaderEntryTransition } = evaluate(fs.readFileSync(path.join(uiPath, 'Re
 const { ReaderCloseContext } = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderCloseContext.ets'), 'utf8'))
 const { ReaderVariantPolicy } = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderVariantPolicy.ets'), 'utf8'))
 const { ReaderCropPolicy } = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderCropPolicy.ets'), 'utf8'))
+const { ReaderAutoReadPolicy } = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderAutoReadPolicy.ets'), 'utf8'))
 const source = fs.readFileSync(path.join(uiPath, 'ReaderSurface.ets'), 'utf8')
 // Execute actual surface methods, excluding only ArkUI declarative build syntax.
 // The session below records calls; no rendering, hardware delivery or UI acceptance is simulated.
@@ -306,7 +308,7 @@ function deferred() {
 
 test('optional automatic advance consumes actual session readiness and Surface interaction gates', async () => {
   const surface = new ReaderSurface(), timers = new Map(); let timerId = 0
-  surface.active = true; surface.autoReadAvailable = true; surface.autoReadSeconds = 5
+  surface.active = true; surface.autoReadPolicy = new ReaderAutoReadPolicy(true, 5)
   surface.autoReadController = new core.ReaderAutoReadController(() => surface.externalMove('next'), {
     set(callback, delay) { timers.set(++timerId, {callback, delay}); return timerId },
     clear(id) { timers.delete(id) },
