@@ -721,6 +721,23 @@ export class ReaderPagedSession {
     return true
   }
 
+  /** Run one provider-owned action for an exact visible suppressed asset, then let its slot reload itself. */
+  async resolveNoticeItem(topologyRevision: number, navigationRevision: number, itemKey: string,
+    slotId: number, requestId: number, noticeId: string): Promise<boolean> {
+    if (this.disposed || !this.active || this.state.phase !== 'ready' ||
+      topologyRevision !== this.topologyRevision || navigationRevision !== this.navigationRevision) return false
+    const index = this.displayKeys.indexOf(itemKey)
+    const visible = this.state.policy.layout === 'continuous'
+      ? this.continuousStart >= 0 && index >= this.continuousStart && index <= this.continuousEnd
+      : index === this.state.displayIndex
+    if (!visible) return false
+    const frame = this.framesAt(index).find((candidate: ReaderPagedFrame) => candidate.slotId === slotId &&
+      candidate.asset.requestId === requestId && candidate.asset.assetRequestId === requestId &&
+      candidate.asset.phase === 'suppressed' && candidate.asset.notice?.id === noticeId)
+    const slot = frame === undefined ? undefined : this.slots.find((candidate: ReaderPageSlot) => candidate.id === slotId)
+    return await slot?.session.resolveNotice(requestId, noticeId) ?? false
+  }
+
   /** Force-reload one exact visible source. Processed variants return to the refreshed source first;
    * the surface may then re-apply its current host-owned variant preference.
    */

@@ -1,7 +1,8 @@
-import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPart, ReaderDisplayPolicy, ReaderSnapshot,
+import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPart, ReaderDisplayPolicy, ReaderSnapshot, ReaderAssetNotice,
   ReaderUnitKey, ReaderFragment, readerPolicyRotatesPage } from '@reader-kit/core'
 import { ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/core'
 import { ReaderFailurePanel } from './ReaderFailurePanel'
+import { ReaderAssetNoticePanel } from './ReaderAssetNoticePanel'
 import { ReaderTapSequence } from './ReaderTapSequence'
 import { ReaderEntryRect, ReaderEntryTarget, ReaderEntryTransition } from './ReaderEntryTransition'
 import { FrameCallback } from '@kit.ArkUI'
@@ -115,6 +116,8 @@ export struct ReaderPagedViewport {
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetry: (slotId: number, requestId: number) => void = () => {}
+  @Event onNoticeAction: (slotId: number, requestId: number, noticeId: string) => Promise<boolean> =
+    async (_slotId: number, _requestId: number, _noticeId: string): Promise<boolean> => false
   @Local private viewportWidth: number = 1
   @Local private viewportHeight: number = 1
   @Local private entryViewportLaidOut: boolean = false
@@ -432,7 +435,7 @@ export struct ReaderPagedViewport {
                 ReaderEntryGeometryGate.invalidDecoded(this.entryTransition, this.snapshot, slotId, requestId, assetRequestId)
               }
             },
-            onRetry: this.onRetry,
+            onRetry: this.onRetry, onNoticeAction: this.onNoticeAction,
           })
         }, (frame: ReaderPagedFrame): string => `${frame.slotId}:${frame.part.fragment}`)
       }
@@ -506,6 +509,9 @@ struct ReaderPagedCell {
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onInvalidDecodedMetrics: (slotId: number, requestId: number, assetRequestId: number) => void = () => {}
   @Event onRetry: (slotId: number, requestId: number) => void = () => {}
+  @Event onNoticeAction: (slotId: number, requestId: number, noticeId: string) => Promise<boolean> =
+    async (_slotId: number, _requestId: number, _noticeId: string): Promise<boolean> => false
+  @Local private noticeActionBusy: boolean = false
 
   private frame(): ReaderPagedFrame {
     return this.snapshot.frames.find((frame: ReaderPagedFrame) => frame.slotId === this.slotId &&
@@ -569,9 +575,29 @@ struct ReaderPagedCell {
       !this.rotateClockwise()
   }
 
+  private async resolveNoticeAction(): Promise<void> {
+    const frame = this.frame()
+    const notice = frame.asset.notice
+    if (notice === null || this.noticeActionBusy) return
+    this.noticeActionBusy = true
+    try {
+      await this.onNoticeAction(this.slotId, frame.asset.assetRequestId, notice.id)
+    } finally {
+      this.noticeActionBusy = false
+    }
+  }
+
   build() {
     Stack() {
-      if (this.frame().asset.phase === 'failed') {
+      if (this.frame().asset.phase === 'suppressed' && this.frame().asset.notice !== null) {
+        ReaderAssetNoticePanel({
+          notice: this.frame().asset.notice as ReaderAssetNotice,
+          page: this.frame().part.sourceIndex + 1,
+          compact: this.snapshot.frames.length > 1,
+          actionBusy: this.noticeActionBusy,
+          onAction: (): void => { void this.resolveNoticeAction() },
+        })
+      } else if (this.frame().asset.phase === 'failed') {
         ReaderFailurePanel({
           page: this.frame().part.sourceIndex + 1, compact: this.snapshot.frames.length > 1,
           retryEnabled: this.active,

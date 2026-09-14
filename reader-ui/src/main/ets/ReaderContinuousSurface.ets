@@ -1,7 +1,8 @@
 import { FrameCallback, LengthMetrics } from '@kit.ArkUI'
-import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderFragment, readerPolicyRotatesPage } from '@reader-kit/core'
+import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderFragment, ReaderAssetNotice, readerPolicyRotatesPage } from '@reader-kit/core'
 import { ReaderContinuousZoomImage } from './ReaderContinuousZoomImage'
 import { ReaderFailurePanel } from './ReaderFailurePanel'
+import { ReaderAssetNoticePanel } from './ReaderAssetNoticePanel'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
 import { ReaderTapAction } from './ReaderTapAction'
@@ -41,6 +42,10 @@ export struct ReaderContinuousSurface {
   @Event onVisible: (topology: number, navigation: number, key: string, slot: number, request: number, x: number, y: number) => void = () => {}
   @Event onFailed: (topology: number, key: string, slot: number, request: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetry: (topology: number, key: string, slot: number, request: number) => void = () => {}
+  @Event onNoticeAction: (topology: number, navigation: number, key: string, slot: number,
+    request: number, noticeId: string) => Promise<boolean> =
+    async (_topology: number, _navigation: number, _key: string, _slot: number,
+      _request: number, _noticeId: string): Promise<boolean> => false
   @Event onBoundary: (direction: ReaderBoundaryDirection, topologyRevision: number,
     navigationRevision: number) => void = () => {}
 
@@ -58,7 +63,7 @@ export struct ReaderContinuousSurface {
             onZoomedChange: this.onZoomedChange,
             onBoundary: this.onBoundary,
             onRange: this.onRange, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
-            onRetry: this.onRetry,
+            onRetry: this.onRetry, onNoticeAction: this.onNoticeAction,
             onTap: this.onTap,
           })
         }, (revision: number): string => `${revision}`)
@@ -87,6 +92,10 @@ struct ReaderContinuousList {
   @Event onVisible: (topology: number, navigation: number, key: string, slot: number, request: number, x: number, y: number) => void = () => {}
   @Event onFailed: (topology: number, key: string, slot: number, request: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetry: (topology: number, key: string, slot: number, request: number) => void = () => {}
+  @Event onNoticeAction: (topology: number, navigation: number, key: string, slot: number,
+    request: number, noticeId: string) => Promise<boolean> =
+    async (_topology: number, _navigation: number, _key: string, _slot: number,
+      _request: number, _noticeId: string): Promise<boolean> => false
   @Event onBoundary: (direction: ReaderBoundaryDirection, topologyRevision: number,
     navigationRevision: number) => void = () => {}
   private source: ReaderContinuousIndexSource = new ReaderContinuousIndexSource([])
@@ -434,6 +443,10 @@ struct ReaderContinuousList {
             onRetry: (slot: number, request: number): void => {
               this.onRetry(this.createdRevision, key, slot, request)
             },
+            onNoticeAction: (slot: number, request: number, noticeId: string): Promise<boolean> => {
+              return this.onNoticeAction(this.createdRevision, this.snapshot.navigationRevision,
+                key, slot, request, noticeId)
+            },
             onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
               const current = this.snapshot.forItem(key).frames[0]
               if (current === undefined || current.slotId !== slot || current.asset.assetRequestId !== request) return
@@ -508,9 +521,35 @@ struct ReaderContinuousCell {
   @Event onFailed: (slot: number, request: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetired: (slot: number, request: number) => void = () => {}
   @Event onRetry: (slot: number, request: number) => void = () => {}
+  @Event onNoticeAction: (slot: number, request: number, noticeId: string) => Promise<boolean> =
+    async (_slot: number, _request: number, _noticeId: string): Promise<boolean> => false
+  @Local private noticeActionBusy: boolean = false
+
+  private async resolveNoticeAction(frame: ReaderPagedFrame): Promise<void> {
+    const notice = frame.asset.notice
+    if (notice === null || this.noticeActionBusy) return
+    this.noticeActionBusy = true
+    try {
+      await this.onNoticeAction(frame.slotId, frame.asset.assetRequestId, notice.id)
+    } finally {
+      this.noticeActionBusy = false
+    }
+  }
 
   build() {
-    if (this.snapshot.frames[0]?.asset.phase === 'failed') {
+    if (this.snapshot.frames[0]?.asset.phase === 'suppressed' && this.snapshot.frames[0].asset.notice !== null) {
+      Stack() {
+        ForEach(this.snapshot.frames, (frame: ReaderPagedFrame) => {
+          ReaderAssetNoticePanel({
+            notice: frame.asset.notice as ReaderAssetNotice,
+            page: frame.part.sourceIndex + 1,
+            compact: true,
+            actionBusy: this.noticeActionBusy,
+            onAction: (): void => { void this.resolveNoticeAction(frame) },
+          })
+        }, (frame: ReaderPagedFrame): string => `${frame.slotId}:${frame.asset.assetRequestId}`)
+      }.width('100%').height(220).id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
+    } else if (this.snapshot.frames[0]?.asset.phase === 'failed') {
       Stack() {
         ForEach(this.snapshot.frames, (frame: ReaderPagedFrame) => {
           ReaderFailurePanel({

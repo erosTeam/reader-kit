@@ -49,6 +49,10 @@ export struct ReaderPagerSurface {
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetry: (topologyRevision: number, itemKey: string, slotId: number, requestId: number) => void = () => {}
+  @Event onNoticeAction: (topologyRevision: number, navigationRevision: number, itemKey: string,
+    slotId: number, requestId: number, noticeId: string) => Promise<boolean> =
+    async (_topologyRevision: number, _navigationRevision: number, _itemKey: string,
+      _slotId: number, _requestId: number, _noticeId: string): Promise<boolean> => false
 
   build() {
     Stack() {
@@ -65,7 +69,7 @@ export struct ReaderPagerSurface {
             onZoomedChange: this.onZoomedChange,
             onBoundary: this.onBoundary,
             onSelect: this.onSelect, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
-            onRetry: this.onRetry,
+            onRetry: this.onRetry, onNoticeAction: this.onNoticeAction,
             onTap: this.onTap,
           })
         }, (revision: number): string => `${revision}`)
@@ -97,6 +101,10 @@ struct ReaderNativePager {
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetry: (topologyRevision: number, itemKey: string, slotId: number, requestId: number) => void = () => {}
+  @Event onNoticeAction: (topologyRevision: number, navigationRevision: number, itemKey: string,
+    slotId: number, requestId: number, noticeId: string) => Promise<boolean> =
+    async (_topologyRevision: number, _navigationRevision: number, _itemKey: string,
+      _slotId: number, _requestId: number, _noticeId: string): Promise<boolean> => false
   private source: ReaderPagerIndexSource = new ReaderPagerIndexSource([])
   private controller: SwiperController = new SwiperController()
   @Local private inputLocked: boolean = false
@@ -249,6 +257,10 @@ struct ReaderNativePager {
           onVisible: this.onVisible,
           onRetry: (slotId: number, requestId: number): void => {
             this.onRetry(this.createdRevision, key, slotId, requestId)
+          },
+          onNoticeAction: (slotId: number, requestId: number, noticeId: string): Promise<boolean> => {
+            return this.onNoticeAction(this.createdRevision, this.snapshot.navigationRevision,
+              key, slotId, requestId, noticeId)
           },
           onFailed: (_selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {
             this.onFailed(this.createdRevision, key, slotId, requestId, fragment)

@@ -563,6 +563,11 @@ export struct ReaderSurface {
     void this.session.retryItem(topology, key, slot, request)
   }
 
+  private resolveNotice(topology: number, navigation: number, key: string,
+    slot: number, request: number, noticeId: string): Promise<boolean> {
+    return this.session.resolveNoticeItem(topology, navigation, key, slot, request, noticeId)
+  }
+
   private externalMove(intent: ReaderMoveIntent): boolean {
     if (this.entryTransition?.phase === 'layout' || !this.active || this.state.phase !== 'ready' ||
       this.touching || this.menuVisible || this.shareBusy || this.saveBusy || this.informationBusy ||
@@ -660,6 +665,10 @@ export struct ReaderSurface {
             onRetry: (topology: number, key: string, slot: number, request: number): void => {
               this.retry(topology, key, slot, request)
             },
+            onNoticeAction: (topology: number, navigation: number, key: string, slot: number,
+              request: number, noticeId: string): Promise<boolean> => {
+              return this.resolveNotice(topology, navigation, key, slot, request, noticeId)
+            },
             onFailed: (topology: number, key: string, slot: number, request: number, fragment: ReaderFragment): void => {
               this.session.reportCachedRenderFailure(topology, key, slot, request, fragment)
             },
@@ -691,6 +700,10 @@ export struct ReaderSurface {
             },
             onRetry: (topology: number, key: string, slot: number, request: number): void => {
               this.retry(topology, key, slot, request)
+            },
+            onNoticeAction: (topology: number, navigation: number, key: string, slot: number,
+              request: number, noticeId: string): Promise<boolean> => {
+              return this.resolveNotice(topology, navigation, key, slot, request, noticeId)
             },
             onFailed: (topology: number, key: string, slot: number, request: number, fragment: ReaderFragment): void => {
               this.session.reportCachedRenderFailure(topology, key, slot, request, fragment)

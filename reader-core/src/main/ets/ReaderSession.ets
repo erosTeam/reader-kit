@@ -19,7 +19,28 @@ export class ReaderVariantPreference {
     this.identity = variant === 'default' ? '' : identity
   }
 }
-export type ReaderPhase = 'idle' | 'catalog' | 'asset' | 'decoding' | 'displayed' | 'failed' | 'closed'
+export type ReaderPhase = 'idle' | 'catalog' | 'asset' | 'decoding' | 'displayed' | 'suppressed' | 'failed' | 'closed'
+
+/** Host-authored replacement for content that must not be presented as a readable image. */
+export class ReaderAssetNotice {
+  id: string
+  title: string
+  message: string
+  actionLabel: string
+  previewUri: string
+
+  constructor(id: string, title: string, message: string, actionLabel: string, previewUri: string = '') {
+    this.id = id
+    this.title = title
+    this.message = message
+    this.actionLabel = actionLabel
+    this.previewUri = previewUri
+  }
+
+  copy(): ReaderAssetNotice {
+    return new ReaderAssetNotice(this.id, this.title, this.message, this.actionLabel, this.previewUri)
+  }
+}
 
 /** A consumer cancellation fence; adapters must separately declare transport support. */
 export class ReaderCancellation {
@@ -65,10 +86,13 @@ export class ReaderAsset {
   uri: string
   crop: ReaderImageCropSource | null = null
   originalAvailable: boolean = false
+  notice: ReaderAssetNotice | null = null
   private released: boolean = false
   private releaseResource: () => void
   private presented: boolean = false
   private presentResource: () => void
+  private noticeAction: (() => Promise<boolean>) | null = null
+  private noticeActionRunning: boolean = false
 
   information: ReaderImageInformationSource | null
 
@@ -85,6 +109,22 @@ export class ReaderAsset {
     if (this.released || this.presented) return
     this.presented = true
     this.presentResource()
+  }
+
+  /** The provider owns the action and persistence; the session only stale-guards and reloads on success. */
+  setNotice(notice: ReaderAssetNotice, action: () => Promise<boolean>): void {
+    this.notice = notice.copy()
+    this.noticeAction = action
+  }
+
+  async resolveNotice(): Promise<boolean> {
+    if (this.released || this.notice === null || this.noticeAction === null || this.noticeActionRunning) return false
+    this.noticeActionRunning = true
+    try {
+      return await this.noticeAction()
+    } finally {
+      this.noticeActionRunning = false
+    }
   }
 
   release(): void {
@@ -156,6 +196,7 @@ export class ReaderSnapshot {
   /** Identity of uri/page, retained while a different unit is only being prepared. */
   assetRequestId: number = 0
   informationAvailable: boolean = false
+  notice: ReaderAssetNotice | null = null
   error: string = ''
   canPreviousUnit: boolean = false
   canNextUnit: boolean = false
@@ -179,6 +220,7 @@ export class ReaderSnapshot {
     value.requestId = this.requestId
     value.assetRequestId = this.assetRequestId
     value.informationAvailable = this.informationAvailable
+    value.notice = this.notice === null ? null : this.notice.copy()
     value.error = this.error
     value.canPreviousUnit = this.canPreviousUnit
     value.canNextUnit = this.canNextUnit
@@ -243,6 +285,25 @@ export class ReaderSession {
       // Metadata failure is not an image load failure.
       return null
     }
+  }
+
+  async resolveNotice(requestId: number, noticeId: string): Promise<boolean> {
+    const asset = this.asset
+    const index = this.state.sourceIndex
+    const kind = this.state.kind
+    const plan = this.originalPlan
+    const eligible = (): boolean => this.current(requestId) && this.state.assetRequestId === requestId &&
+      this.asset === asset && this.state.phase === 'suppressed' && this.state.notice?.id === noticeId
+    if (asset === null || !eligible()) return false
+    let resolved: boolean = false
+    try {
+      resolved = await asset.resolveNotice()
+    } catch (_error) {
+      return false
+    }
+    if (!resolved || !eligible()) return false
+    await this.show(index, kind, true, plan)
+    return true
   }
   cancellationMode(): string { return this.assets.cancellationMode }
   setViewportActive(active: boolean): void { this.viewportActive = !this.disposed && active }
@@ -349,6 +410,7 @@ export class ReaderSession {
       this.state.originalAvailable = false
       this.state.page = null
       this.state.informationAvailable = false
+      this.state.notice = null
       this.state.uri = ''
       this.state.retainedUri = ''
       this.state.retainedAssetRequestId = 0
@@ -376,7 +438,7 @@ export class ReaderSession {
         asset.release()
         return
       }
-      if (asset.uri.length === 0) {
+      if (asset.uri.length === 0 && asset.notice === null) {
         asset.release()
         throw new Error('reader_empty_asset')
       }
@@ -398,9 +460,15 @@ export class ReaderSession {
       this.state.page = page
       this.state.uri = asset.uri
       this.state.informationAvailable = asset.information !== null
+      this.state.notice = asset.notice === null ? null : asset.notice.copy()
       this.state.originalAvailable = this.state.variant === 'original' || asset.originalAvailable
       this.state.assetRequestId = epoch
-      this.state.phase = 'decoding'
+      this.state.phase = asset.notice === null ? 'decoding' : 'suppressed'
+      if (asset.notice !== null) {
+        this.releaseRetiredAsset()
+        this.state.retainedUri = ''
+        this.state.retainedAssetRequestId = 0
+      }
       this.emit()
     } catch (_error) {
       this.fail(epoch, 'reader_asset_failed')
@@ -463,6 +531,7 @@ export class ReaderSession {
     if (!this.current(epoch)) return
     this.state.phase = 'failed'
     this.state.error = code
+    this.state.notice = null
     this.emit()
   }
 
@@ -487,6 +556,7 @@ export class ReaderSession {
     this.originalPlan = null
     this.state.phase = 'closed'
     this.state.informationAvailable = false
+    this.state.notice = null
     this.state.uri = ''
     this.state.retainedUri = ''
     this.state.retainedAssetRequestId = 0

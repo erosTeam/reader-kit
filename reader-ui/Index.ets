@@ -25,3 +25,4 @@ export { normalizedReaderPageGap } from './src/main/ets/ReaderPageGap'
 export { ReaderBoundarySwipe, ReaderBoundaryDirection, ReaderBoundaryAxis,
   ReaderBoundaryReadingDirection } from './src/main/ets/ReaderBoundarySwipe'
 export { ReaderFailurePanel } from './src/main/ets/ReaderFailurePanel'
+export { ReaderAssetNoticePanel } from './src/main/ets/ReaderAssetNoticePanel'
