@@ -59,6 +59,16 @@ test('original probe matches kind and source index, then retry and later loads d
   assert.equal(await probe.load(retry, 'original', cancellation, false), backend.asset)
 })
 
+test('optional acquisition failure message rejects once and preserves host classification', async () => {
+  const backend = provider()
+  backend.failure = error => new core.ReaderAssetFailure('quota', 'Quota', error.message)
+  const probe = new ReaderLabAssetProbe(backend, -1, '', 1, '', 'image509')
+  const cancellation = new core.ReaderCancellation()
+  await assert.rejects(probe.load(page(1), 'original', cancellation, false), /image509/)
+  assert.equal(probe.failure(new Error('image509')).code, 'quota')
+  assert.equal(await probe.load(page(1), 'original', cancellation, true), backend.asset)
+})
+
 test('thumbnail and original failures have independent one-shot state in either order', async () => {
   for (const order of [['thumbnail', 'original'], ['original', 'thumbnail']]) {
     const backend = provider()

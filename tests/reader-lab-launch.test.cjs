@@ -56,6 +56,19 @@ test('wide-page rotation override is strict, independent and absent by default',
   }
 })
 
+test('asset failure message accepts only bounded debug strings', () => {
+  const direct = new (fixture().ReaderLabRequest)('work', 'unit', 0)
+  assert.equal(direct.assetFailureMessage, '')
+  const api = fixture()
+  api.captureReaderLabWant({ parameters: { readerLabWork: 'work', readerLabAssetFailureMessage: 'image509' } }, true)
+  assert.equal(api.connectReaderLabLaunch().consume().assetFailureMessage, 'image509')
+  for (const input of [true, 509, 'x'.repeat(65)]) {
+    const candidate = fixture()
+    candidate.captureReaderLabWant({ parameters: { readerLabWork: 'work', readerLabAssetFailureMessage: input } }, true)
+    assert.equal(candidate.connectReaderLabLaunch().consume().assetFailureMessage, '')
+  }
+})
+
 test('entry overrides are independent and preserve explicit single, spread, continuous and ltr', () => {
   const api = fixture()
   for (const layout of ['single', 'spread', 'continuous', undefined]) for (const direction of ['ltr', 'rtl', undefined]) {

@@ -8,6 +8,8 @@ export class ReaderLabRequest {
   /** True only when the debug Want supplied a finite page override. */
   pageIndexProvided: boolean = false
   failurePage: number
+  /** Debug-only provider rejection payload; empty keeps the existing native-decode probe. */
+  assetFailureMessage: string = ''
   delayedMetricsPage: number
   failureLayout: string
   readingChrome: boolean = false
@@ -76,6 +78,7 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
   const failurePage = want.parameters['readerLabFailPage']
   const delayedPage = want.parameters['readerLabDelayMetricsPage']
   const failureLayout = want.parameters['readerLabFailureLayout']
+  const assetFailureMessage = want.parameters['readerLabAssetFailureMessage']
   if (typeof work !== 'string' || work.length === 0) return
   const index = typeof page === 'string' ? Number(page) : (typeof page === 'number' ? page : 0)
   const failureIndex = typeof failurePage === 'string' ? Number(failurePage) :
@@ -91,6 +94,8 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
   )
   request.pageIndexProvided = (typeof page === 'number' && Number.isFinite(page)) ||
     (typeof page === 'string' && page.trim().length > 0 && Number.isFinite(Number(page)))
+  request.assetFailureMessage = typeof assetFailureMessage === 'string' && assetFailureMessage.length <= 64
+    ? assetFailureMessage : ''
   request.readingChrome = want.parameters['readerLabChrome'] === 'true' || want.parameters['readerLabChrome'] === true
   const thumbnailFailure = want.parameters['readerLabFailThumbnailPage']
   const thumbnailIndex = typeof thumbnailFailure === 'string' ? Number(thumbnailFailure) :

@@ -40,19 +40,21 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
   private informationMode: string
   private informationInjected: boolean = false
   private variantInjected: boolean = false
+  private assetFailureMessage: string
 
   failure(error: Error): ReaderAssetFailure {
     return this.provider.failure?.(error) ?? new ReaderAssetFailure('reader_asset_failed')
   }
 
   constructor(provider: ReaderAssetProvider, thumbnailIndex: number, informationMode: string = '',
-    originalFailureIndex: number = -1, originalVariantProbe: string = '') {
+    originalFailureIndex: number = -1, originalVariantProbe: string = '', assetFailureMessage: string = '') {
     this.provider = provider
     this.thumbnailIndex = thumbnailIndex
     this.originalFailureIndex = originalFailureIndex
     this.cancellationMode = provider.cancellationMode
     this.informationSupported = provider.informationSupported === true
     this.informationMode = informationMode
+    this.assetFailureMessage = assetFailureMessage
     if (provider.prepareOriginal !== undefined) {
       this.prepareOriginal = (page: ReaderPage, cancellation: ReaderCancellation): Promise<ReaderOriginalAssetPlan> => {
         cancellation.check()
@@ -93,6 +95,7 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
     if (!this.originalInjected && this.originalFailureIndex >= 0 && kind === 'original' &&
       page.sourceIndex === this.originalFailureIndex) {
       this.originalInjected = true
+      if (this.assetFailureMessage.length > 0) throw new Error(this.assetFailureMessage)
       console.info(`[ReaderLabAssetProbe] native_original_decode_failure source=${page.sourceIndex}`)
       return new ReaderAsset('file:///data/storage/el2/base/cache/rkit-probe-missing-original')
     }
