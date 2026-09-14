@@ -14,6 +14,7 @@ import { ReaderEntryPreview, ReaderEntryPreviewSource } from './ReaderEntryPrevi
 import { ReaderTapAction } from './ReaderTapAction'
 import { ReaderTapZonePreviewRegion } from './ReaderTapZonePreviewRegion'
 import { ReaderHostAction } from './ReaderHostAction'
+import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -91,7 +92,10 @@ export struct ReaderSurface {
   @Local private saveBusy: boolean = false
   @Local private autoReadEnabled: boolean = false
   @Local private pagerCommand: ReaderPagerCommand | null = null
+  @Local private zoomResetCommand: ReaderZoomResetCommand | null = null
+  @Local private zoomed: boolean = false
   private pagerCommandSerial: number = 0
+  private zoomResetSerial: number = 0
   private autoReadController: ReaderAutoReadController = new ReaderAutoReadController((): boolean => {
     return this.externalMove('next')
   })
@@ -118,6 +122,20 @@ export struct ReaderSurface {
   private variantAttempts: Set<string> = new Set<string>()
   private interactionBusyReported: boolean = false
   private tapZonePreviewShownRevision: number = 0
+
+  private reportZoomed(zoomed: boolean, topology: number, navigation: number): void {
+    if (!this.active || this.closing || this.chromeDisposed || topology !== this.state.topologyRevision ||
+      navigation !== this.state.navigationRevision) return
+    this.zoomed = zoomed
+  }
+
+  private resetZoom(source: ReaderUnitKey, navigation: number): void {
+    if (!this.active || this.closing || this.chromeDisposed || !this.zoomed || this.state.phase !== 'ready' ||
+      this.state.unit?.key.equals(source) !== true || this.state.navigationRevision !== navigation) return
+    this.zoomResetSerial += 1
+    this.zoomResetCommand = new ReaderZoomResetCommand(this.zoomResetSerial,
+      this.state.topologyRevision, this.state.navigationRevision)
+  }
 
   private syncPreferredVariant(state: ReaderPagedSnapshot): void {
     const unit = state.unit?.key
@@ -191,6 +209,8 @@ export struct ReaderSurface {
     this.shareController.subscribe((busy: boolean): void => { this.shareBusy = busy; this.syncAutoRead() })
     this.saveController.subscribe((busy: boolean): void => { this.saveBusy = busy; this.syncAutoRead() })
     this.session.subscribe((state: ReaderPagedSnapshot): void => {
+      if (state.topologyRevision !== this.state.topologyRevision || state.navigationRevision !== this.state.navigationRevision ||
+        state.displayIndex !== this.state.displayIndex) this.zoomed = false
       if (state.navigationRevision !== this.state.navigationRevision || state.displayIndex !== this.state.displayIndex ||
         state.unit?.key.equals(this.state.unit?.key ?? this.initialUnit) !== true) this.originalFeedbackEpoch += 1
       if (this.informationBusy && !this.informationPresented && state.navigationRevision !== this.informationNavigation) {
@@ -238,6 +258,7 @@ export struct ReaderSurface {
       if (!this.informationPresented) { this.informationEpoch += 1; this.informationBusy = false }
       this.variantAttemptContext = ''
       this.variantAttempts?.clear()
+      this.zoomed = false
     }
     this.shareController.update(ReaderImageShareTarget.from(this.session.snapshot()), this.active)
     this.saveController.update(this.session.snapshot(), this.active)
@@ -617,8 +638,12 @@ export struct ReaderSurface {
             imageInterpolation: this.imageInterpolation,
             pageGap: this.pageGap,
             snapshot: this.state, active: this.active,
+            zoomResetCommand: this.zoomResetCommand,
             entryTransition: this.entryTransition,
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
+            onZoomedChange: (zoomed: boolean, topology: number, navigation: number): void => {
+              this.reportZoomed(zoomed, topology, navigation)
+            },
             onBoundary: (direction: 'previous' | 'next', topology: number, navigation: number): void => {
               this.requestBoundaryChapter(direction, topology, navigation)
             },
@@ -644,9 +669,13 @@ export struct ReaderSurface {
             imageInterpolation: this.imageInterpolation,
             pageGap: this.pageGap,
             snapshot: this.state, active: this.active,
+            zoomResetCommand: this.zoomResetCommand,
             command: this.pagerCommand,
             entryTransition: this.entryTransition,
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
+            onZoomedChange: (zoomed: boolean, topology: number, navigation: number): void => {
+              this.reportZoomed(zoomed, topology, navigation)
+            },
             onBoundary: (direction: 'previous' | 'next', topology: number, navigation: number): void => {
               this.requestBoundaryChapter(direction, topology, navigation)
             },
@@ -737,6 +766,8 @@ export struct ReaderSurface {
           informationBusy: this.informationBusy,
           informationPreparing: this.informationBusy && !this.informationPresented,
           informationAvailable: this.session.informationSupported(),
+          zoomResetAvailable: this.zoomed,
+          onResetZoom: (source: ReaderUnitKey, navigation: number): void => { this.resetZoom(source, navigation) },
           onReload: (frame: ReaderPagedFrame, _unit: ReaderUnitKey, topology: number, navigation: number,
             itemKey: string): void => {
             void this.session.reloadItem(topology, navigation, itemKey, frame.slotId, frame.asset.requestId)

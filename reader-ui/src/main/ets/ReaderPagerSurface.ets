@@ -2,6 +2,7 @@ import { ReaderPagedSnapshot, ReaderFragment } from '@reader-kit/core'
 import { ReaderPagedViewport } from './ReaderPagedViewport'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderBoundaryDirection, ReaderBoundarySwipe } from './ReaderBoundarySwipe'
+import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 
 /** One adjacent host-requested move. The native pager consumes each serial at most once. */
 export class ReaderPagerCommand {
@@ -36,8 +37,10 @@ export struct ReaderPagerSurface {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param command: ReaderPagerCommand | null = null
+  @Param zoomResetCommand: ReaderZoomResetCommand | null = null
   @Param entryTransition: ReaderEntryTransition | null = null
   @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
+  @Event onZoomedChange: (zoomed: boolean, topology: number, navigation: number) => void = () => {}
   @Event onTap: (xFraction: number, yFraction: number) => void = () => {}
   @Event onBoundary: (direction: ReaderBoundaryDirection, topologyRevision: number,
     navigationRevision: number) => void = () => {}
@@ -56,8 +59,10 @@ export struct ReaderPagerSurface {
             pageGap: this.pageGap,
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
             command: this.command,
+            zoomResetCommand: this.zoomResetCommand,
             entryTransition: this.entryTransition,
             onInputLockChange: this.onInputLockChange,
+            onZoomedChange: this.onZoomedChange,
             onBoundary: this.onBoundary,
             onSelect: this.onSelect, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onRetry: this.onRetry,
@@ -79,8 +84,10 @@ struct ReaderNativePager {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param command: ReaderPagerCommand | null = null
+  @Param zoomResetCommand: ReaderZoomResetCommand | null = null
   @Param entryTransition: ReaderEntryTransition | null = null
   @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
+  @Event onZoomedChange: (zoomed: boolean, topology: number, navigation: number) => void = () => {}
   @Event onTap: (xFraction: number, yFraction: number) => void = () => {}
   @Event onBoundary: (direction: ReaderBoundaryDirection, topologyRevision: number,
     navigationRevision: number) => void = () => {}
@@ -228,8 +235,14 @@ struct ReaderNativePager {
           entryTransition: key === this.snapshot.displayKeys[this.snapshot.displayIndex] ? this.entryTransition : null,
           selected: key === this.snapshot.displayKeys[this.snapshot.displayIndex],
           active: this.active && !this.moving && key === this.snapshot.displayKeys[this.snapshot.displayIndex],
+          zoomResetCommand: this.zoomResetCommand,
           onInputLockChange: (locked: boolean): void => {
             if (key === this.snapshot.displayKeys[this.snapshot.displayIndex]) this.inputLocked = locked
+          },
+          onZoomedChange: (zoomed: boolean): void => {
+            if (key === this.snapshot.displayKeys[this.snapshot.displayIndex]) {
+              this.onZoomedChange(zoomed, this.createdRevision, this.snapshot.navigationRevision)
+            }
           },
           onPresented: this.onPresented,
           onTap: this.onTap,

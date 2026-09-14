@@ -35,7 +35,7 @@ function fixture(width = 400, height = 2400) {
   return { frame, state, transition }
 }
 const List = evaluate(`export class List { ${methods('ReaderContinuousSurface', 'ReaderContinuousList',
-  ['refreshEntryPosition', 'rotates', 'invalidatePosition', 'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'onImageLock'])} }`, {}, {
+  ['refreshEntryPosition', 'rotates', 'imageIdentity', 'invalidatePosition', 'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'onImageLock'])} }`, {}, {
   ReaderContinuousEntryPosition: Position, clearTimeout() {}, setTimeout: callback => { callback(); return 1 },
   ReaderContinuousAfterLayout: class { constructor(action) { this.action = action } },
   readerPolicyRotatesPage: core.readerPolicyRotatesPage,
@@ -46,7 +46,7 @@ function listFixture() {
   Object.assign(list, { snapshot: f.state, entryTransition: f.transition, entryPosition: null,
     active: true, disposed: false, pendingPosition: false, positionInFlight: false, moving: false,
     positionEpoch: 1, viewWidth: 400, positionTimer: 0, measureTimer: 0,
-    lockedKey: '', lockedIdentity: '', cropRegions: new Map(), lastNavigation: f.state.navigationRevision,
+    lockedKey: '', lockedIdentity: '', zoomedKey: '', zoomedIdentity: '', cropRegions: new Map(), lastNavigation: f.state.navigationRevision,
     imageHeight: () => 2400, rowHeight: () => 2400, scheduleMeasure() {},
     scroller: { scrollToIndex() {} }, getUIContext: () => ({ postFrameCallback: value => frames.push(value.action) }),
   })
@@ -94,7 +94,7 @@ test('initial inactive snapshot waits for onShown rather than cancelling entry; 
 test('only current image zoom lock cancels entry and retires the pending measurement token', () => {
   const f = listFixture(); f.list.refreshEntryPosition(); const token = f.list.entryPosition
   f.list.onImageLock('selected', 'old', true); assert.equal(token.isCurrent(), true)
-  f.list.onImageLock('selected', '6:7:3', true)
+  f.list.onImageLock('selected', '6:7:3:false', true)
   assert.equal(f.transition.phase, 'cancelled'); assert.equal(token.isCurrent(), false)
   f.list.entryPosition = null; f.list.refreshEntryPosition(); assert.equal(f.list.entryPosition, null)
   const locked = listFixture(); locked.list.lockedKey = 'selected'; locked.list.refreshEntryPosition()

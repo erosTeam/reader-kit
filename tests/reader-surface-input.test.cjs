@@ -20,6 +20,11 @@ function evaluate(source) {
           Object.assign(this, { serial, targetIndex, topologyRevision, navigationRevision })
         }
       } }
+      if (name === './ReaderZoomResetCommand') return { ReaderZoomResetCommand: class ReaderZoomResetCommand {
+        constructor(serial, topologyRevision, navigationRevision) {
+          Object.assign(this, { serial, topologyRevision, navigationRevision })
+        }
+      } }
       assert.fail(`unexpected import: ${name}`)
     },
     ObservedV2: value => value, ComponentV2: value => value,

@@ -3,6 +3,7 @@ import { ReaderPagedImage } from './ReaderPagedViewport'
 import { ReaderTapSequence } from './ReaderTapSequence'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
+import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 
 /** Image interaction only. The parent List owns scrolling, stacking and visible-position reporting. */
 @ComponentV2
@@ -16,8 +17,10 @@ export struct ReaderContinuousZoomImage {
   @Param rotateClockwise: boolean = false
   @Require @Param active: boolean
   @Require @Param interactionAllowed: boolean
+  @Param zoomResetCommand: ReaderZoomResetCommand | null = null
   @Event onTap: (windowX: number, windowY: number) => void = () => {}
   @Event onLock: (identity: string, locked: boolean) => void = () => {}
+  @Event onZoomedChange: (identity: string, zoomed: boolean) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onFailed: (slot: number, request: number, fragment: ReaderFragment) => void = () => {}
   @Local private imageTransform: ReaderViewportTransform = new ReaderViewportTransform()
@@ -37,12 +40,17 @@ export struct ReaderContinuousZoomImage {
   private pinchX: number = 0
   private pinchY: number = 0
   private tapSequence: ReaderTapSequence = new ReaderTapSequence()
+  private lastZoomResetSerial: number = 0
 
-  aboutToAppear(): void { this.onContentChanged() }
+  aboutToAppear(): void {
+    this.lastZoomResetSerial = this.zoomResetCommand?.serial ?? 0
+    this.onContentChanged()
+  }
 
   aboutToDisappear(): void {
     this.cancelMotion()
     this.onLock(this.identity, false)
+    this.onZoomedChange(this.identity, false)
   }
 
   @Monitor('frame', 'navigation', 'active', 'interactionAllowed', 'rotateClockwise')
@@ -60,6 +68,7 @@ export struct ReaderContinuousZoomImage {
       this.imageTransform = this.imageTransform.settled(this.geometry())
     }
     this.publishLock()
+    this.publishZoomed()
   }
 
   private geometry(): ReaderViewportGeometry {
@@ -97,6 +106,22 @@ export struct ReaderContinuousZoomImage {
     this.onLock(this.identity, locked)
   }
 
+  private publishZoomed(): void { this.onZoomedChange(this.identity, this.imageTransform.zoomed()) }
+
+  @Monitor('zoomResetCommand')
+  onZoomResetCommandChanged(): void {
+    const command = this.zoomResetCommand
+    if (command === null || command.serial <= this.lastZoomResetSerial) return
+    this.lastZoomResetSerial = command.serial
+    if (!this.active || command.navigationRevision !== this.navigation) return
+    this.cancelMotion()
+    this.pinchAdjusted = false
+    this.imageTransform = new ReaderViewportTransform()
+    this.publishLock()
+    this.publishZoomed()
+    this.log('menu-reset')
+  }
+
   private cancelMotion(): void {
     if (this.animationTimer !== 0) clearTimeout(this.animationTimer)
     this.animationTimer = 0
@@ -120,6 +145,7 @@ export struct ReaderContinuousZoomImage {
     this.imageTransform = target === 1 ? new ReaderViewportTransform() : this.imageTransform.zoom(geometry, target,
       event.tapLocation?.x ?? this.componentWidth / 2, event.tapLocation?.y ?? this.componentHeight / 2)
     this.publishLock()
+    this.publishZoomed()
     this.animationTimer = setTimeout((): void => {
       this.animationTimer = 0
       this.animating = false
@@ -152,6 +178,7 @@ export struct ReaderContinuousZoomImage {
     this.pinching = false
     this.imageTransform = this.imageTransform.settled(this.geometry())
     this.publishLock()
+    this.publishZoomed()
     this.log('pinch')
   }
 
@@ -212,6 +239,7 @@ export struct ReaderContinuousZoomImage {
       this.imageTransform = changed ? this.imageTransform.reflow(previous, this.geometry()) :
         this.imageTransform.settled(this.geometry())
       this.publishLock()
+      this.publishZoomed()
       if (changed && this.imageTransform.zoomed()) this.log('reflow')
     })
     .gesture(GestureGroup(GestureMode.Parallel,

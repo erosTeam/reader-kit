@@ -7,6 +7,7 @@ import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
 import { ReaderTapAction } from './ReaderTapAction'
 import { ReaderBoundaryDirection, ReaderBoundarySwipe } from './ReaderBoundarySwipe'
 import { normalizedReaderPageGap } from './ReaderPageGap'
+import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 
 class ReaderContinuousIndexSource implements IDataSource {
   private keys: string[]
@@ -31,7 +32,9 @@ export struct ReaderContinuousSurface {
   @Param entryTransition: ReaderEntryTransition | null = null
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
+  @Param zoomResetCommand: ReaderZoomResetCommand | null = null
   @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
+  @Event onZoomedChange: (zoomed: boolean, topology: number, navigation: number) => void = () => {}
   @Event onTap: (xFraction: number, yFraction: number) => ReaderTapAction = () => 'none'
   @Event onRange: (start: number, end: number, topology: number, navigation: number) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
@@ -49,8 +52,10 @@ export struct ReaderContinuousSurface {
             imageInterpolation: this.imageInterpolation,
             pageGap: this.pageGap,
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
+            zoomResetCommand: this.zoomResetCommand,
             entryTransition: this.entryTransition,
             onInputLockChange: this.onInputLockChange,
+            onZoomedChange: this.onZoomedChange,
             onBoundary: this.onBoundary,
             onRange: this.onRange, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onRetry: this.onRetry,
@@ -72,7 +77,9 @@ struct ReaderContinuousList {
   @Local private entryPosition: ReaderContinuousEntryPosition | null = null
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
+  @Param zoomResetCommand: ReaderZoomResetCommand | null = null
   @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
+  @Event onZoomedChange: (zoomed: boolean, topology: number, navigation: number) => void = () => {}
   @Event onTap: (xFraction: number, yFraction: number) => ReaderTapAction = () => 'none'
   @Require @Param createdRevision: number
   @Event onRange: (start: number, end: number, topology: number, navigation: number) => void = () => {}
@@ -100,6 +107,8 @@ struct ReaderContinuousList {
   @Local private lockedKey: string = ''
   @Local private moving: boolean = false
   private lockedIdentity: string = ''
+  private zoomedKey: string = ''
+  private zoomedIdentity: string = ''
   private cropRegions: Map<number, string> = new Map()
   private boundarySwipe: ReaderBoundarySwipe = new ReaderBoundarySwipe()
   private boundaryTopology: number = -1
@@ -187,9 +196,18 @@ struct ReaderContinuousList {
     if (this.lockedKey.length > 0) {
       const frame = this.snapshot.forItem(this.lockedKey).frames[0]
       if (frame === undefined || frame.asset.phase !== 'displayed' ||
-        this.lockedIdentity !== `${this.snapshot.navigationRevision}:${frame.slotId}:${frame.asset.assetRequestId}`) {
+        this.lockedIdentity !== this.imageIdentity(this.lockedKey, frame)) {
         this.lockedKey = ''
         this.lockedIdentity = ''
+      }
+    }
+    if (this.zoomedKey.length > 0) {
+      const frame = this.snapshot.forItem(this.zoomedKey).frames[0]
+      if (frame === undefined || frame.asset.phase !== 'displayed' ||
+        this.zoomedIdentity !== this.imageIdentity(this.zoomedKey, frame)) {
+        this.zoomedKey = ''
+        this.zoomedIdentity = ''
+        this.onZoomedChange(false, this.createdRevision, this.snapshot.navigationRevision)
       }
     }
     if (this.lastNavigation !== this.snapshot.navigationRevision) {
@@ -271,9 +289,14 @@ struct ReaderContinuousList {
     return frame?.asset.phase === 'failed' ? 220 : Math.max(220, this.imageHeight(index))
   }
 
+  private imageIdentity(key: string, frame: ReaderPagedFrame): string {
+    return `${this.snapshot.navigationRevision}:${frame.slotId}:${frame.asset.assetRequestId}:` +
+      `${this.rotates(this.snapshot.displayKeys.indexOf(key))}`
+  }
+
   private onImageLock(key: string, identity: string, locked: boolean): void {
     const frame = this.snapshot.forItem(key).frames[0]
-    if (frame === undefined || identity !== `${this.snapshot.navigationRevision}:${frame.slotId}:${frame.asset.assetRequestId}`) return
+    if (frame === undefined || identity !== this.imageIdentity(key, frame)) return
     if (locked) {
       if (frame.asset.phase !== 'displayed' || (this.lockedKey.length > 0 && this.lockedKey !== key)) return
       this.entryTransition?.cancel()
@@ -283,6 +306,21 @@ struct ReaderContinuousList {
       this.lockedKey = ''
       this.lockedIdentity = ''
       this.scheduleMeasure()
+    }
+  }
+
+  private onImageZoomed(key: string, identity: string, zoomed: boolean): void {
+    const frame = this.snapshot.forItem(key).frames[0]
+    if (frame === undefined || identity !== this.imageIdentity(key, frame)) return
+    if (zoomed) {
+      if (frame.asset.phase !== 'displayed' || (this.zoomedKey.length > 0 && this.zoomedKey !== key)) return
+      this.zoomedKey = key
+      this.zoomedIdentity = identity
+      this.onZoomedChange(true, this.createdRevision, this.snapshot.navigationRevision)
+    } else if (this.zoomedKey === key && this.zoomedIdentity === identity) {
+      this.zoomedKey = ''
+      this.zoomedIdentity = ''
+      this.onZoomedChange(false, this.createdRevision, this.snapshot.navigationRevision)
     }
   }
 
@@ -384,10 +422,12 @@ struct ReaderContinuousList {
             entryTransition: this.entryTransition,
             entryPosition: this.entryPosition?.key === key ? this.entryPosition : null,
             active: this.active,
+            zoomResetCommand: this.zoomResetCommand?.topologyRevision === this.createdRevision ? this.zoomResetCommand : null,
             onTap: (x: number, y: number): void => this.imageTap(key, x, y),
             interactionAllowed: !this.pendingPosition && this.fullyVisible &&
               (this.lockedKey.length === 0 || this.lockedKey === key),
             onLock: (identity: string, locked: boolean): void => { this.onImageLock(key, identity, locked) },
+            onZoomedChange: (identity: string, zoomed: boolean): void => { this.onImageZoomed(key, identity, zoomed) },
             imageHeight: this.imageHeight(this.snapshot.displayKeys.indexOf(key)),
             imageAspectRatio: this.imageAspectRatio(this.snapshot.displayKeys.indexOf(key)),
             rotateClockwise: this.rotates(this.snapshot.displayKeys.indexOf(key)),
@@ -459,9 +499,11 @@ struct ReaderContinuousCell {
   @Require @Param imageAspectRatio: number
   @Param rotateClockwise: boolean = false
   @Require @Param active: boolean
+  @Param zoomResetCommand: ReaderZoomResetCommand | null = null
   @Event onTap: (windowX: number, windowY: number) => void = () => {}
   @Require @Param interactionAllowed: boolean
   @Event onLock: (identity: string, locked: boolean) => void = () => {}
+  @Event onZoomedChange: (identity: string, zoomed: boolean) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onFailed: (slot: number, request: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetired: (slot: number, request: number) => void = () => {}
@@ -487,8 +529,10 @@ struct ReaderContinuousCell {
               frame: this.snapshot.frames[0], navigation: this.snapshot.navigationRevision,
               entryTransition: this.entryTransition, entryPosition: this.entryPosition,
               imageHeight: this.imageHeight, active: this.active, interactionAllowed: this.interactionAllowed,
+              zoomResetCommand: this.zoomResetCommand,
               rotateClockwise: this.rotateClockwise,
               onLock: this.onLock,
+              onZoomedChange: this.onZoomedChange,
               onTap: this.onTap,
               onPresented: this.onPresented,
               onFailed: this.onFailed,

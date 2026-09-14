@@ -33,6 +33,8 @@ export struct ReaderChrome {
   @Param informationPreparing: boolean = false
   @Param informationAvailable: boolean = false
   @Param reloadAvailable: boolean = true
+  @Param zoomResetAvailable: boolean = false
+  @Event onResetZoom: (source: ReaderUnitKey, navigation: number) => void = () => {}
   @Event onReload: (frame: ReaderPagedFrame, unit: ReaderUnitKey, topology: number, navigation: number,
     itemKey: string) => void = () => {}
   @Param chapterNavigationAvailable: boolean = false
@@ -281,6 +283,16 @@ export struct ReaderChrome {
       this.snapshot.unit?.key.equals(source)) this.onExternalOpen(source.copy())
   }
 
+  private selectResetZoom(): void {
+    const source = this.moreUnit
+    const navigation = this.moreNavigation
+    this.moreShown = false
+    if (this.active && this.zoomResetAvailable && this.snapshot.phase === 'ready' && source !== null &&
+      this.snapshot.unit?.key.equals(source) && this.snapshot.navigationRevision === navigation) {
+      this.onResetZoom(source.copy(), navigation)
+    }
+  }
+
   private selectHostAction(action: ReaderHostAction): void {
     const source = this.moreUnit
     const navigation = this.moreNavigation
@@ -351,6 +363,10 @@ export struct ReaderChrome {
           .enabled(this.active && this.snapshot.phase === 'ready' && this.moreUnit !== null)
           .onClick((): void => { this.selectExternalOpen() })
       }
+      MenuItem({ content: $r('app.string.rkit_reset_zoom') }).id('rkit-reset-zoom')
+        .enabled(this.active && this.zoomResetAvailable && this.snapshot.phase === 'ready' && this.moreUnit !== null &&
+          this.snapshot.navigationRevision === this.moreNavigation)
+        .onClick((): void => { this.selectResetZoom() })
       ForEach(this.hostActions, (action: ReaderHostAction) => {
         MenuItem({ content: action.label,
           symbolEndIcon: action.checked ? new SymbolGlyphModifier($r('sys.symbol.checkmark')) : undefined })
@@ -453,7 +469,7 @@ export struct ReaderChrome {
                 onDisappear: (): void => { this.onMenuVisible(false) },
               })
           }
-          if (this.reloadAvailable || this.informationAvailable || this.externalOpenAvailable || this.chapterNavigationAvailable ||
+          if (this.reloadAvailable || this.informationAvailable || this.externalOpenAvailable || this.zoomResetAvailable || this.chapterNavigationAvailable ||
             this.hostActions.length > 0) {
             Button({ type: ButtonType.Circle }) {
               if (this.informationPreparing) {
@@ -463,7 +479,7 @@ export struct ReaderChrome {
               }
             }.width(44).height(44).backgroundColor(Color.Transparent)
               .id('rkit-more').accessibilityText($r('app.string.rkit_more'))
-              .enabled(this.active && this.snapshot.phase === 'ready' && (this.reloadAvailable ||
+              .enabled(this.active && this.snapshot.phase === 'ready' && (this.reloadAvailable || this.zoomResetAvailable ||
                 this.informationFrames().length > 0 || this.externalOpenAvailable ||
                 this.hostActions.some((action: ReaderHostAction): boolean => action.enabled && !action.busy) ||
                 this.chapterNavigationAvailable && this.snapshot.phase === 'ready') &&

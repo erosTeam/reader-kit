@@ -6,6 +6,7 @@ import { ReaderTapSequence } from './ReaderTapSequence'
 import { ReaderEntryRect, ReaderEntryTarget, ReaderEntryTransition } from './ReaderEntryTransition'
 import { FrameCallback } from '@kit.ArkUI'
 import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
+import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { normalizedReaderPageGap } from './ReaderPageGap'
 
 class ReaderEntryAfterLayout extends FrameCallback {
@@ -106,8 +107,10 @@ export struct ReaderPagedViewport {
   @Require @Param active: boolean
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param selected: boolean = true
+  @Param zoomResetCommand: ReaderZoomResetCommand | null = null
   @Event onTap: (xFraction: number, yFraction: number) => void = () => {}
   @Event onInputLockChange: (locked: boolean) => void = () => {}
+  @Event onZoomedChange: (zoomed: boolean) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -131,6 +134,7 @@ export struct ReaderPagedViewport {
   private pinchAdjusted: boolean = false
   private animationTimer: number = 0
   private visibilityTimer: number = 0
+  private lastZoomResetSerial: number = 0
   private tapSequence: ReaderTapSequence = new ReaderTapSequence()
   private entryMeasurement: ReaderEntryMeasurement = new ReaderEntryMeasurement()
 
@@ -195,7 +199,10 @@ export struct ReaderPagedViewport {
     this.scheduleSelectedVisible()
   }
 
-  aboutToAppear(): void { this.onContentChanged() }
+  aboutToAppear(): void {
+    this.lastZoomResetSerial = this.zoomResetCommand?.serial ?? 0
+    this.onContentChanged()
+  }
   aboutToDisappear(): void {
     this.cancelGesture()
     if (this.visibilityTimer !== 0) clearTimeout(this.visibilityTimer)
@@ -208,6 +215,21 @@ export struct ReaderPagedViewport {
       this.zoomState.x !== 0 || this.zoomState.y !== 0)) this.entryTransition?.cancel()
     this.onInputLockChange(this.selected && this.active &&
       (this.zoomState.zoomed() || this.zoomAnimating || this.pinching))
+    this.onZoomedChange(this.selected && this.active && this.zoomState.zoomed())
+  }
+
+  @Monitor('zoomResetCommand')
+  onZoomResetCommandChanged(): void {
+    const command = this.zoomResetCommand
+    if (command === null || command.serial <= this.lastZoomResetSerial) return
+    this.lastZoomResetSerial = command.serial
+    if (!this.active || !this.selected || command.topologyRevision !== this.snapshot.topologyRevision ||
+      command.navigationRevision !== this.snapshot.navigationRevision) return
+    this.cancelGesture()
+    this.pinchAdjusted = false
+    this.zoomState = new ReaderViewportTransform()
+    this.onZoomedChange(false)
+    this.logTransform('menu-reset')
   }
 
   private gesturesEnabled(): boolean {
