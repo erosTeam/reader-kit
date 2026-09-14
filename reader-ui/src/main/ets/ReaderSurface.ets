@@ -1,5 +1,5 @@
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy, ReaderLayout,
-  ReaderReadingAnchor, ReaderObservedPosition, ReaderProcessedAssetVariant, ReaderVariantPreference,
+  ReaderProcessedAssetVariant, ReaderVariantPreference,
   ReaderInputPort, ReaderMoveIntent, ReaderImageShareTarget,
   ReaderImageShareController, ReaderPagedFrame, ReaderImageInformation,
   ReaderImageSaveController, ReaderImageSaveChoice, ReaderAutoReadController } from '@reader-kit/core'
@@ -20,6 +20,7 @@ import { readerElementKey } from './ReaderElementKey'
 import { ReaderMediaActions } from './ReaderMediaActions'
 import { ReaderChapterNavigation } from './ReaderChapterNavigation'
 import { ReaderHostStatus } from './ReaderHostStatus'
+import { ReaderObservationSink } from './ReaderObservationSink'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -76,10 +77,8 @@ export struct ReaderSurface {
   @Param hostStatus: ReaderHostStatus | null = null
   /** Optional host continuation; chapter catalog, loading and persistence remain outside reader-kit. */
   @Param chapterNavigation: ReaderChapterNavigation | null = null
-  /** Native-visible original position only. The host decides whether and how to persist it. */
-  @Event onObserved: (anchor: ReaderReadingAnchor) => void = () => {}
-  /** Decoded visible coverage for host-owned completion and progress persistence. */
-  @Event onObservedPosition: (position: ReaderObservedPosition) => void = () => {}
+  /** Native-visible progress only; persistence and business reactions remain host-owned. */
+  @Param observation: ReaderObservationSink | null = null
   /** Adopted runtime display policy only. The host decides whether and how to persist it. */
   @Event onPolicyChanged: (policy: ReaderDisplayPolicy, intent: ReaderRuntimePolicyIntent) => void = () => {}
   /** Adopted runtime border-crop state only. The host owns its preference model. */
@@ -194,7 +193,7 @@ export struct ReaderSurface {
       anchor.sourceIndexHint, anchor.fragment, anchor.x, anchor.y, state.observedSelectionId])
     if (signature !== this.lastObservedSignature) {
       this.lastObservedSignature = signature
-      this.onObserved(anchor.copy())
+      this.observation?.observeAnchor(anchor)
     }
     const position = state.observedPosition()
     if (position === null) return
@@ -202,7 +201,7 @@ export struct ReaderSurface {
       position.terminalSourceDisplayed])
     if (positionSignature === this.lastObservedPositionSignature) return
     this.lastObservedPositionSignature = positionSignature
-    this.onObservedPosition(position.copy())
+    this.observation?.observePosition(position)
   }
 
   aboutToAppear(): void {

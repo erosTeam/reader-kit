@@ -45,8 +45,10 @@ test('surface publishes only current native-visible original anchors and dedupli
   surface.active = true
   surface.lastObservedSignature = ''
   surface.lastObservedPositionSignature = ''
-  surface.onObserved = anchor => events.push(anchor)
-  surface.onObservedPosition = () => {}
+  surface.observation = {
+    observeAnchor: anchor => events.push(anchor.copy()),
+    observePosition: () => {},
+  }
   const key = new core.ReaderUnitKey('scope', 'work', 'unit-a')
   const anchor = new core.ReaderReadingAnchor(key, 'page-2', 1, 0.5, 0.25, 'whole')
 
@@ -78,8 +80,10 @@ test('surface publishes changed decoded coverage even when the reading anchor is
   surface.active = true
   surface.lastObservedSignature = ''
   surface.lastObservedPositionSignature = ''
-  surface.onObserved = () => {}
-  surface.onObservedPosition = position => events.push(position.displayedSourceIndexes.slice())
+  surface.observation = {
+    observeAnchor: () => {},
+    observePosition: position => events.push(position.displayedSourceIndexes.slice()),
+  }
   const key = new core.ReaderUnitKey('scope', 'work', 'unit-a')
   const anchor = new core.ReaderReadingAnchor(key, 'page-2', 1)
   const position = indexes => ({ displayedSourceIndexes: indexes, terminalSourceDisplayed: indexes.includes(2),
@@ -93,8 +97,7 @@ test('surface publishes changed decoded coverage even when the reading anchor is
 
 test('surface subscription forwards the observed snapshot after adopting it', () => {
   assert.match(source, /this\.state = state\s+this\.publishObserved\(state\)/)
-  assert.match(source, /@Event onObserved: \(anchor: ReaderReadingAnchor\) => void/)
-  assert.match(source, /@Event onObservedPosition: \(position: ReaderObservedPosition\) => void/)
+  assert.match(source, /@Param observation: ReaderObservationSink \| null = null/)
 })
 
 test('selected paged viewport publishes the anchor original after the displayed snapshot is adopted', () => {
