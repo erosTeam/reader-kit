@@ -11,14 +11,18 @@ export struct ReaderAssetNoticePanel {
 
   @Builder
   private BackgroundLayer() {
+    Column()
+      .width('100%').height('100%')
+      .linearGradient({
+        direction: GradientDirection.Bottom,
+        colors: [['#454A52', 0.0], ['#292C31', 1.0]],
+      })
     if (this.notice.previewUri.length > 0) {
       Image(this.notice.previewUri)
-        .width('100%').height('100%').objectFit(ImageFit.Contain)
-        .scale({ x: 1.04, y: 1.04 }).blur(48).opacity(0.92).renderGroup(true)
-      Column().width('100%').height('100%').backgroundColor('#66000000')
-    } else {
-      Column().width('100%').height('100%').backgroundColor('#CC303236')
+        .width('100%').height('100%').objectFit(ImageFit.Cover)
+        .scale({ x: 1.03, y: 1.03 }).blur(18).opacity(0.88).renderGroup(true)
     }
+    Column().width('100%').height('100%').backgroundColor('#52000000')
   }
 
   build() {

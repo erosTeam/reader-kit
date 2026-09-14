@@ -11,7 +11,9 @@ const surface = fs.readFileSync(path.join(root, 'ReaderSurface.ets'), 'utf8')
 
 test('suppressed content uses a host-authored preview panel in both reader layouts', () => {
   assert.match(panel, /Image\(this\.notice\.previewUri\)/)
-  assert.match(panel, /\.blur\(48\)/)
+  assert.match(panel, /objectFit\(ImageFit\.Cover\)/)
+  assert.match(panel, /\.blur\(18\)/)
+  assert.match(panel, /linearGradient\(/)
   assert.match(panel, /id\(`rkit-notice-page-\$\{this\.page\}`\)/)
   assert.match(panel, /height\(36\).*minWidth: 104/s)
   assert.match(paged, /asset\.phase === 'suppressed'.*ReaderAssetNoticePanel/s)
