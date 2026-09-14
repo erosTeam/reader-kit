@@ -18,6 +18,7 @@ import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { ReaderCloseContext } from './ReaderCloseContext'
 import { readerElementKey } from './ReaderElementKey'
 import { ReaderMediaActions } from './ReaderMediaActions'
+import { ReaderChapterNavigation } from './ReaderChapterNavigation'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -74,9 +75,8 @@ export struct ReaderSurface {
   @Param hostStatusVisible: boolean = false
   @Param hostStatusText: string = ''
   @Param hostStatusBusy: boolean = false
-  @Param chapterNavigationAvailable: boolean = false
-  @Param chapterNavigationBusy: boolean = false
-  @Event onChapter: (direction: 'previous' | 'next', source: ReaderUnitKey) => void = () => {}
+  /** Optional host continuation; chapter catalog, loading and persistence remain outside reader-kit. */
+  @Param chapterNavigation: ReaderChapterNavigation | null = null
   /** Native-visible original position only. The host decides whether and how to persist it. */
   @Event onObserved: (anchor: ReaderReadingAnchor) => void = () => {}
   /** Decoded visible coverage for host-owned completion and progress persistence. */
@@ -526,12 +526,12 @@ export struct ReaderSurface {
 
   private requestChapter(direction: 'previous' | 'next', source: ReaderUnitKey): void {
     const current = this.session.snapshot()
-    if (!this.chapterNavigationAvailable || this.chapterNavigationBusy || !this.active || this.closing ||
+    if (this.chapterNavigation === null || this.chapterNavigation.busy || !this.active || this.closing ||
       this.chromeDisposed || this.chromeCloseRequested || current.phase !== 'ready' ||
       current.unit?.key.equals(source) !== true) return
     this.previewIndex = -1
     this.autoReadController.stop()
-    this.onChapter(direction, source.copy())
+    this.chapterNavigation.request(direction, source)
   }
 
   private requestBoundaryChapter(direction: 'previous' | 'next', topology: number, navigation: number): void {
@@ -802,8 +802,8 @@ export struct ReaderSurface {
         ReaderChrome({ snapshot: this.state, active: this.active, topInset: this.topInset,
           bottomInset: this.bottomInset, accent: this.accent, onClose: (): void => this.requestClose(),
           thumbnailsVisible: this.thumbnailsVisible,
-          chapterNavigationAvailable: this.chapterNavigationAvailable,
-          chapterNavigationBusy: this.chapterNavigationBusy,
+          chapterNavigationAvailable: this.chapterNavigation !== null,
+          chapterNavigationBusy: this.chapterNavigation?.busy ?? false,
           onChapter: (direction: 'previous' | 'next', source: ReaderUnitKey): void => {
             this.requestChapter(direction, source)
           },

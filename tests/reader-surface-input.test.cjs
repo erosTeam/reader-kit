@@ -250,8 +250,10 @@ test('unit boundary intent is accepted only for a current available adjacent uni
   const { surface } = scenario()
   const key = new core.ReaderUnitKey('source', 'work', 'chapter')
   const events = []
-  surface.chapterNavigationAvailable = true
-  surface.onChapter = (direction, source) => events.push([direction, source.unit])
+  surface.chapterNavigation = {
+    busy: false,
+    request: (direction, source) => events.push([direction, source.unit]),
+  }
   surface.session.snapshot = () => {
     const state = new core.ReaderPagedSnapshot()
     state.phase = 'ready'; state.topologyRevision = 7; state.navigationRevision = 10
@@ -271,6 +273,9 @@ test('unit boundary intent is accepted only for a current available adjacent uni
     return state
   }
   surface.requestBoundaryChapter('previous', 7, 10)
+  assert.deepEqual(events, [['next', 'chapter']])
+  surface.chapterNavigation.busy = true
+  surface.requestBoundaryChapter('next', 7, 10)
   assert.deepEqual(events, [['next', 'chapter']])
 })
 
