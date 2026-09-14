@@ -1,6 +1,6 @@
 export {
   ReaderUnitKey, ReaderUnit, ReaderPage, ReaderThumbnail, ReaderAsset,
-  ReaderCatalog, ReaderAssetProvider, ReaderCancellation, ReaderSnapshot,
+  ReaderCatalog, ReaderAssetProvider, ReaderPreloadHost, ReaderCancellation, ReaderSnapshot,
   ReaderSession, ReaderPhase, ReaderAssetKind, ReaderAssetVariant, ReaderProcessedAssetVariant,
   ReaderVariantPreference,
   ReaderOriginalAssetPlan, ReaderVariantAssetPlan, ReaderResolvedAssetPlan,

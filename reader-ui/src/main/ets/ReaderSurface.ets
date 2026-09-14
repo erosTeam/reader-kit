@@ -37,6 +37,8 @@ export struct ReaderSurface {
   @Param autoReadAvailable: boolean = false
   @Param autoReadSeconds: number = 3
   @Param pageTurnAnimation: boolean = false
+  /** Host preference for future cache warming; native render neighbors remain fixed and bounded. */
+  @Param preloadDepth: number = 0
   /** Optional host policy. reader-kit only requests exact host-prepared derivatives. */
   @Param preferredVariant: ReaderProcessedAssetVariant | 'default' = 'default'
   @Param preferredVariantIdentity: string = ''
@@ -173,6 +175,7 @@ export struct ReaderSurface {
     this.chromeDisposed = false
     this.chromeCloseRequested = false
     this.session.setNeighborPreload(true)
+    this.session.setPreloadDepth(this.preloadDepth)
     this.session.setCropEnabled(this.cropBorders)
     this.session.setViewportActive(this.active)
     this.autoReadController.subscribe((enabled: boolean): void => { this.autoReadEnabled = enabled })
@@ -195,6 +198,9 @@ export struct ReaderSurface {
     this.inputConnection = this.input?.connect((intent: ReaderMoveIntent): boolean => this.externalMove(intent)) ?? 0
     void this.session.open(this.initialUnit, this.initialIndex)
   }
+
+  @Monitor('preloadDepth')
+  onPreloadDepthChanged(): void { this.session.setPreloadDepth(this.preloadDepth) }
 
   aboutToDisappear(): void {
     this.chromeDisposed = true

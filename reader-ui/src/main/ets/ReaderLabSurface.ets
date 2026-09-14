@@ -22,6 +22,7 @@ export struct ReaderLabSurface {
   @Require @Param initialUnit: ReaderUnitKey
   @Require @Param active: boolean
   @Param initialIndex: number = 0
+  @Param preloadDepth: number = 0
   /** Explicit debug Want only; inject one render failure, never a network fault or cache mutation. */
   @Param failurePage: number = -1
   @Param failureLayout: string = 'continuous'
@@ -34,10 +35,14 @@ export struct ReaderLabSurface {
 
   aboutToAppear(): void {
     this.session.setNeighborPreload(true)
+    this.session.setPreloadDepth(this.preloadDepth)
     this.session.setViewportActive(this.active)
     this.session.subscribe((state: ReaderPagedSnapshot): void => { this.state = state })
     void this.session.open(this.initialUnit, this.initialIndex)
   }
+
+  @Monitor('preloadDepth')
+  onPreloadDepthChanged(): void { this.session.setPreloadDepth(this.preloadDepth) }
 
   aboutToDisappear(): void {
     if (this.failureTimer !== 0) clearTimeout(this.failureTimer)

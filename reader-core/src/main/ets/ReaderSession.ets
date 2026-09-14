@@ -112,6 +112,15 @@ export interface ReaderAssetProvider {
     cancellation: ReaderCancellation): Promise<ReaderVariantAssetPlan>
 }
 
+/**
+ * Optional host-owned cache warmer. reader-kit selects bounded future source
+ * pages, while the host keeps transport, cache lifetime and persistence policy.
+ * A successful return is cache readiness only and never presentation evidence.
+ */
+export interface ReaderPreloadHost {
+  preload(page: ReaderPage, cancellation: ReaderCancellation): Promise<void>
+}
+
 /** A host-owned resolved recipe, not a downloaded asset or a persistent reader preference. */
 export interface ReaderOriginalAssetPlan {
   page: ReaderPage

@@ -1,5 +1,20 @@
 # Reader Kit (experimental)
 
+## Bounded host-owned cache preload (2026-09-14)
+
+`ReaderPagedSession.setPreloadDepth` maps a host's existing 0–5 lookahead
+preference to future visual destinations. A spread contributes every source in
+that destination; continuous mode starts after the native visible range. The
+optional `ReaderPreloadHost` owns transport, cache lifetime and persistence.
+Preload completion is never decode, presentation or progress evidence.
+
+Cache warming is deliberately separate from `setNeighborPreload`: the latter
+keeps the native pager/List render window at its existing immediate-neighbor
+limit, while a host can warm additional future bytes without mounting more
+image nodes. Navigation, unit changes, policy changes, range changes, depth
+changes and close cancel retired demand. Hosts without the optional port retain
+their previous behavior.
+
 ## Exact manual source reload (2026-09-13)
 
 The shared More menu can now force-reload a successfully displayed image, not

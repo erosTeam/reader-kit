@@ -6,9 +6,9 @@ const { ReaderUnitKey, ReaderUnit, ReaderPage, ReaderAsset } = load('ReaderSessi
 const { ReaderDisplayPolicy } = load('ReaderDisplayMap')
 const tick = () => new Promise(resolve => setImmediate(resolve))
 
-function setup({ count = 5, wide = [], fail = [], deferred = false } = {}) {
+function setup({ count = 5, wide = [], fail = [], deferred = false, preload = false } = {}) {
   const key = new ReaderUnitKey('source', 'work', 'A')
-  const calls = { open: [], load: [], release: [], pending: [] }
+  const calls = { open: [], load: [], release: [], pending: [], preload: [] }
   const catalog = {
     async open(target) { calls.open.push(target.copy()); return new ReaderUnit(target, target.unit, count) },
     async page(unit, index) {
@@ -32,7 +32,13 @@ function setup({ count = 5, wide = [], fail = [], deferred = false } = {}) {
       return asset
     },
   }
-  const session = new ReaderPagedSession(catalog, assets)
+  const preloadHost = preload ? {
+    async preload(page, cancellation) {
+      cancellation.check()
+      calls.preload.push({ index: page.sourceIndex, cancellation })
+    },
+  } : null
+  const session = new ReaderPagedSession(catalog, assets, preloadHost)
   session.setViewportActive(true)
   return { session, key, calls, catalog }
 }
@@ -532,6 +538,52 @@ test('window projections are detached and disabling preload releases only neighb
   session.setNeighborPreload(false)
   assert.deepEqual(calls.release.sort(), ['original:A-1', 'original:A-3'])
   assert.equal(session.snapshot().frames[0].slotId, state.frames[0].slotId)
+  session.close()
+})
+
+test('cache preload depth warms future destinations without expanding the native render window', async () => {
+  const { session, key, calls } = setup({ count: 10, preload: true })
+  session.setNeighborPreload(true)
+  session.setPreloadDepth(2)
+  await session.open(key, 2); await tick()
+  const state = session.snapshot()
+  assert.deepEqual(state.window.map(item => item.index), [2, 1, 3])
+  assert.deepEqual(calls.preload.map(call => call.index), [3, 4])
+  assert.equal(calls.load.length, 3)
+  session.close()
+})
+
+test('spread preload warms every source in complete future destinations', async () => {
+  const { session, key, calls } = setup({ count: 9, preload: true })
+  session.setPolicy(policy({ layout: 'spread' }))
+  session.setNeighborPreload(true)
+  session.setPreloadDepth(2)
+  await session.open(key); await tick()
+  const state = session.snapshot()
+  assert.deepEqual(state.frames.map(frame => frame.part.sourceIndex), [0, 1])
+  assert.deepEqual(state.window.map(item => item.index), [0, 1])
+  assert.deepEqual(calls.preload.map(call => call.index), [2, 3, 4, 5])
+  assert.equal(calls.load.length, 4)
+  session.close()
+})
+
+test('preload depth is bounded, follows continuous visible end and cancels retired demand', async () => {
+  const { session, key, calls } = setup({ count: 12, preload: true })
+  session.setPolicy(policy({ layout: 'continuous' }))
+  session.setNeighborPreload(true)
+  session.setPreloadDepth(20)
+  await session.open(key, 2); await tick()
+  assert.deepEqual(calls.preload.map(call => call.index), [3, 4, 5, 6, 7])
+  const retired = calls.preload[0].cancellation
+  const state = session.snapshot()
+  assert.equal(session.setContinuousRange(2, 4, state.topologyRevision, state.navigationRevision), true)
+  await tick()
+  assert.equal(retired.isCancelled(), true)
+  assert.deepEqual(calls.preload.slice(5).map(call => call.index), [5, 6, 7, 8, 9])
+  assert.deepEqual(session.snapshot().window.map(item => item.index), [2, 3, 4, 1, 5])
+  session.setPreloadDepth(0)
+  assert.equal(calls.preload.at(-1).cancellation.isCancelled(), true)
+  assert.deepEqual(session.snapshot().window.map(item => item.index), [2, 3, 4, 1, 5])
   session.close()
 })
 

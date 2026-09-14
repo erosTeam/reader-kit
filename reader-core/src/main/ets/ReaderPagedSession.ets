@@ -1,7 +1,7 @@
 import { ReaderUnitKey, ReaderUnit, ReaderPage } from './ReaderContent'
 import {
   ReaderSession, ReaderSnapshot, ReaderCatalog, ReaderAssetProvider, ReaderAssetKind, ReaderAssetVariant,
-  ReaderCancellation, ReaderProcessedAssetVariant, ReaderResolvedAssetPlan, ReaderVariantAssetPlan,
+  ReaderCancellation, ReaderProcessedAssetVariant, ReaderPreloadHost, ReaderResolvedAssetPlan, ReaderVariantAssetPlan,
 } from './ReaderSession'
 import { ReaderDisplayMap, ReaderDisplayPolicy, ReaderDisplayPart, ReaderReadingAnchor, ReaderFragment } from './ReaderDisplayMap'
 import { ReaderThumbnailWindow } from './ReaderThumbnailWindow'
@@ -178,6 +178,7 @@ class ReaderPageSlot {
 export class ReaderPagedSession {
   private readonly catalog: ReaderCatalog
   private readonly assets: ReaderAssetProvider
+  private readonly preloadHost: ReaderPreloadHost | null
   private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
   private map: ReaderDisplayMap | null = null
   private pages: Map<number, ReaderPage> = new Map()
@@ -187,6 +188,10 @@ export class ReaderPagedSession {
   private originalPreparations: Map<number, ReaderCancellation> = new Map()
   private preparationVariants: Map<number, ReaderAssetVariant> = new Map()
   private prefetchNeighbors: boolean = false
+  private preloadDepth: number = 0
+  private preloadEpoch: number = 0
+  private preloadSignature: string = ''
+  private preloadCancellation: ReaderCancellation = new ReaderCancellation()
   private displayKeys: string[] = []
   private topologySignature: string = ''
   private topologyRevision: number = 0
@@ -204,9 +209,10 @@ export class ReaderPagedSession {
   private activityEpoch: number = 0
   private listener: ((snapshot: ReaderPagedSnapshot) => void) | null = null
 
-  constructor(catalog: ReaderCatalog, assets: ReaderAssetProvider) {
+  constructor(catalog: ReaderCatalog, assets: ReaderAssetProvider, preloadHost: ReaderPreloadHost | null = null) {
     this.catalog = catalog
     this.assets = assets
+    this.preloadHost = preloadHost
   }
 
   cancellationMode(): string { return this.assets.cancellationMode }
@@ -484,11 +490,66 @@ export class ReaderPagedSession {
     if (this.state.phase === 'ready') this.reconcile()
   }
 
+  /**
+   * Request up to five future visual destinations from a host-owned cache
+   * warmer. This never expands the native render window or owns cached files.
+   */
+  setPreloadDepth(depth: number): void {
+    if (this.disposed) return
+    const normalized = Number.isFinite(depth) ? Math.max(0, Math.min(5, Math.round(depth))) : 0
+    if (normalized === this.preloadDepth) return
+    this.preloadDepth = normalized
+    this.schedulePreload()
+  }
+
+  private futurePreloadIndexes(): number[] {
+    if (this.state.phase !== 'ready' || this.map === null || this.state.unit === null ||
+      this.map.count() === 0 || this.preloadDepth <= 0) return []
+    const from = this.state.policy.layout === 'continuous' && this.continuousEnd >= 0
+      ? this.continuousEnd + 1 : this.state.displayIndex + 1
+    const indexes: number[] = []
+    for (let display = from; display < this.map.count() && display < from + this.preloadDepth; display += 1) {
+      const parts = this.map.item(display)?.parts ?? []
+      parts.forEach((part: ReaderDisplayPart): void => {
+        if (!indexes.includes(part.sourceIndex)) indexes.push(part.sourceIndex)
+      })
+    }
+    return indexes
+  }
+
+  private schedulePreload(): void {
+    const unit = this.state.unit
+    const indexes = this.futurePreloadIndexes()
+    const signature = unit === null || this.preloadHost === null || indexes.length === 0
+      ? '' : JSON.stringify([unit.key.scope, unit.key.work, unit.key.unit, this.topologyRevision,
+        this.navigationRevision, this.preloadDepth, indexes])
+    if (signature === this.preloadSignature) return
+    this.preloadSignature = signature
+    this.preloadCancellation.cancel()
+    this.preloadCancellation = new ReaderCancellation()
+    const cancellation = this.preloadCancellation
+    const epoch = ++this.preloadEpoch
+    if (signature.length === 0 || unit === null || this.preloadHost === null) return
+    const target = unit.copy()
+    indexes.forEach((index: number): void => {
+      void this.catalog.page(target.copy(), index, cancellation).then((page: ReaderPage): void => {
+        if (this.disposed || cancellation.isCancelled() || epoch !== this.preloadEpoch ||
+          this.state.unit?.key.equals(target.key) !== true || page.sourceIndex !== index ||
+          !page.unit.equals(target.key)) return
+        void this.preloadHost?.preload(page.copy(), cancellation).catch((): void => {})
+      }).catch((): void => {})
+    })
+  }
+
   private emit(): void { if (this.listener !== null) this.listener(this.snapshot()) }
 
   async open(key: ReaderUnitKey, index: number = 0): Promise<void> {
     if (this.disposed) return
     this.cancelOriginalPreparations()
+    this.preloadSignature = ''
+    this.preloadCancellation.cancel()
+    this.preloadCancellation = new ReaderCancellation()
+    this.preloadEpoch += 1
     this.cancellation.cancel()
     this.cancellation = new ReaderCancellation()
     const cancellation = this.cancellation
@@ -738,6 +799,7 @@ export class ReaderPagedSession {
       slot.session.subscribe((snapshot: ReaderSnapshot): void => { this.slotChanged(slot, snapshot) })
       void slot.session.openPrepared(unit, slot.index, slot.kind, slot.assetPlan)
     })
+    this.schedulePreload()
   }
 
   private slotChanged(slot: ReaderPageSlot, snapshot: ReaderSnapshot): void {
@@ -865,6 +927,9 @@ export class ReaderPagedSession {
     this.disposed = true
     this.active = false
     this.cancellation.cancel()
+    this.preloadCancellation.cancel()
+    this.preloadEpoch += 1
+    this.preloadSignature = ''
     this.epoch += 1
     this.releaseSlots()
     this.state.phase = 'closed'
