@@ -1,6 +1,6 @@
 import { ReaderUnit, ReaderPage } from './ReaderContent'
 import { ReaderSession, ReaderSnapshot, ReaderCatalog, ReaderAssetProvider, ReaderAsset,
-  ReaderAssetKind, ReaderCancellation } from './ReaderSession'
+  ReaderAssetKind, ReaderCancellation, ReaderAssetFailureClassifier } from './ReaderSession'
 
 /** Unsupported previews never fall back to decoding a full original. */
 class ThumbnailAssets implements ReaderAssetProvider {
@@ -46,14 +46,16 @@ class ThumbnailSlot {
 export class ReaderThumbnailWindow {
   private catalog: ReaderCatalog
   private assets: ReaderAssetProvider
+  private failures: ReaderAssetFailureClassifier | null
   private unit: ReaderUnit | null = null
   private slots: ThumbnailSlot[] = []
   private serial: number = 0
   private closed: boolean = false
   private listener: ((frames: ReaderThumbnailFrame[]) => void) | null = null
 
-  constructor(catalog: ReaderCatalog, assets: ReaderAssetProvider) {
-    this.catalog = catalog; this.assets = new ThumbnailAssets(assets)
+  constructor(catalog: ReaderCatalog, assets: ReaderAssetProvider,
+    failures: ReaderAssetFailureClassifier | null = null) {
+    this.catalog = catalog; this.assets = new ThumbnailAssets(assets); this.failures = failures
   }
 
   subscribe(listener: (frames: ReaderThumbnailFrame[]) => void): void {
@@ -84,7 +86,7 @@ export class ReaderThumbnailWindow {
     const added: ThumbnailSlot[] = []
     for (let index = first; index <= last; index++) {
       if (this.slots.some((slot: ThumbnailSlot) => slot.index === index)) continue
-      const slot = new ThumbnailSlot(index, ++this.serial, new ReaderSession(this.catalog, this.assets))
+      const slot = new ThumbnailSlot(index, ++this.serial, new ReaderSession(this.catalog, this.assets, this.failures))
       this.slots.push(slot); added.push(slot)
     }
     this.slots.sort((a: ThumbnailSlot, b: ThumbnailSlot) => a.index - b.index)

@@ -19,7 +19,10 @@ test('paged and continuous failure cells forward their exact asset classificatio
   assert.match(continuous, /ReaderFailurePanel\(\{[\s\S]*?failure: frame\.asset\.failure/)
 })
 
-test('lab provider preserves host classification instead of replacing it', () => {
+test('failure classification is a session port instead of a resource-decorator obligation', () => {
+  const session = read('reader-core/src/main/ets/ReaderSession.ets')
   const probe = read('reader-ui/src/main/ets/ReaderLabAssetProbe.ets')
-  assert.match(probe, /failure\(error: Error\): ReaderAssetFailure[\s\S]*?this\.provider\.failure\?\.\(error\)/)
+  assert.match(session, /interface ReaderAssetFailureClassifier[\s\S]*?classify\(error: Error\): ReaderAssetFailure/)
+  assert.match(session, /this\.failures\?\.classify\(error as Error\)/)
+  assert.doesNotMatch(probe, /failure\(error: Error\)/)
 })

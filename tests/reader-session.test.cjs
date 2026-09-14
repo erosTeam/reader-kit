@@ -72,12 +72,14 @@ test('decode failure retry asks the provider to replace a corrupt cached origina
 test('host asset failure classification survives snapshot copies and clears on retry', async () => {
   const assets = new Assets()
   let fail = true
-  assets.failure = error => new ReaderAssetFailure('quota', 'Image quota exhausted', `Host hint: ${error.message}`)
+  const failures = {
+    classify: error => new ReaderAssetFailure('quota', 'Image quota exhausted', `Host hint: ${error.message}`),
+  }
   assets.load = async page => {
     if (fail) throw new Error('509')
     return new ReaderAsset(page.key)
   }
-  const session = new ReaderSession(new Catalog(), assets)
+  const session = new ReaderSession(new Catalog(), assets, failures)
   await session.open(key())
   const failed = session.snapshot()
   assert.equal(failed.phase, 'failed')

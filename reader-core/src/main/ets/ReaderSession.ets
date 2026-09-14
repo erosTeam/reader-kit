@@ -38,6 +38,11 @@ export class ReaderAssetFailure {
   }
 }
 
+/** Host-owned acquisition semantics and localized copy, independent of resource decorators. */
+export interface ReaderAssetFailureClassifier {
+  classify(error: Error): ReaderAssetFailure
+}
+
 /** Host-authored replacement for content that must not be presented as a readable image. */
 export class ReaderAssetNotice {
   id: string
@@ -162,8 +167,6 @@ export interface ReaderAssetProvider {
   /** D1 exposes existing service limits instead of claiming detached requests were aborted. */
   cancellationMode: 'consumer-only' | 'transport'
   load(page: ReaderPage, kind: ReaderAssetKind, cancellation: ReaderCancellation, forceReload: boolean): Promise<ReaderAsset>
-  /** Classifies a rejected acquisition without moving transport or localization ownership into reader-kit. */
-  failure?(error: Error): ReaderAssetFailure
   /** Resolve only; failure must not replace the currently displayed default image. */
   prepareOriginal?(page: ReaderPage, cancellation: ReaderCancellation): Promise<ReaderOriginalAssetPlan>
   /** Host processing stays outside reader-kit; resolution failure leaves the current body untouched. */
@@ -258,6 +261,7 @@ export class ReaderSnapshot {
 export class ReaderSession {
   private readonly catalog: ReaderCatalog
   private readonly assets: ReaderAssetProvider
+  private readonly failures: ReaderAssetFailureClassifier | null
   private state: ReaderSnapshot = new ReaderSnapshot()
   private listener: ((snapshot: ReaderSnapshot) => void) | null = null
   private cancellation: ReaderCancellation = new ReaderCancellation()
@@ -270,9 +274,11 @@ export class ReaderSession {
   private pendingIndex: number = 0
   private viewportActive: boolean = false
 
-  constructor(catalog: ReaderCatalog, assets: ReaderAssetProvider) {
+  constructor(catalog: ReaderCatalog, assets: ReaderAssetProvider,
+    failures: ReaderAssetFailureClassifier | null = null) {
     this.catalog = catalog
     this.assets = assets
+    this.failures = failures
   }
 
   subscribe(listener: (snapshot: ReaderSnapshot) => void): void {
@@ -493,7 +499,7 @@ export class ReaderSession {
       }
       this.emit()
     } catch (error) {
-      const failure = this.assets.failure?.(error as Error) ?? new ReaderAssetFailure('reader_asset_failed')
+      const failure = this.failures?.classify(error as Error) ?? new ReaderAssetFailure('reader_asset_failed')
       this.fail(epoch, failure.code, failure)
     }
   }

@@ -2,6 +2,7 @@ import { ReaderUnitKey, ReaderUnit, ReaderPage } from './ReaderContent'
 import {
   ReaderSession, ReaderSnapshot, ReaderCatalog, ReaderAssetProvider, ReaderAssetKind, ReaderAssetVariant,
   ReaderCancellation, ReaderProcessedAssetVariant, ReaderPreloadHost, ReaderResolvedAssetPlan, ReaderVariantAssetPlan,
+  ReaderAssetFailureClassifier,
 } from './ReaderSession'
 import { ReaderDisplayMap, ReaderDisplayPolicy, ReaderDisplayPart, ReaderReadingAnchor, ReaderFragment,
   readerPolicyRotatesPage } from './ReaderDisplayMap'
@@ -208,6 +209,7 @@ export class ReaderPagedSession {
   private readonly catalog: ReaderCatalog
   private readonly assets: ReaderAssetProvider
   private readonly preloadHost: ReaderPreloadHost | null
+  private readonly failures: ReaderAssetFailureClassifier | null
   private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
   private map: ReaderDisplayMap | null = null
   private pages: Map<number, ReaderPage> = new Map()
@@ -238,10 +240,12 @@ export class ReaderPagedSession {
   private activityEpoch: number = 0
   private listener: ((snapshot: ReaderPagedSnapshot) => void) | null = null
 
-  constructor(catalog: ReaderCatalog, assets: ReaderAssetProvider, preloadHost: ReaderPreloadHost | null = null) {
+  constructor(catalog: ReaderCatalog, assets: ReaderAssetProvider, preloadHost: ReaderPreloadHost | null = null,
+    failures: ReaderAssetFailureClassifier | null = null) {
     this.catalog = catalog
     this.assets = assets
     this.preloadHost = preloadHost
+    this.failures = failures
   }
 
   cancellationMode(): string { return this.assets.cancellationMode }
@@ -444,7 +448,9 @@ export class ReaderPagedSession {
     return selected() ? information : null
   }
   /** The caller owns and closes the auxiliary preview leases, never reading progress. */
-  createThumbnailWindow(): ReaderThumbnailWindow { return new ReaderThumbnailWindow(this.catalog, this.assets) }
+  createThumbnailWindow(): ReaderThumbnailWindow {
+    return new ReaderThumbnailWindow(this.catalog, this.assets, this.failures)
+  }
   setViewportActive(active: boolean): void {
     if (!active) this.cancelOriginalPreparations()
     if (this.active && !active) this.activityEpoch += 1
@@ -863,7 +869,7 @@ export class ReaderPagedSession {
     parts.forEach((part: ReaderDisplayPart) => {
       if (this.slots.some((slot: ReaderPageSlot) => slot.index === part.sourceIndex)) return
       const slot = new ReaderPageSlot(++this.slotSerial, part.sourceIndex, this.state.kind,
-        new ReaderSession(this.catalog, this.assets),
+        new ReaderSession(this.catalog, this.assets, this.failures),
         this.state.kind === 'original' ? this.assetPlans.get(part.sourceIndex) ?? null : null)
       this.slots.push(slot)
       added.push(slot)

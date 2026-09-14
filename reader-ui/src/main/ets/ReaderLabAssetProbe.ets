@@ -1,5 +1,5 @@
 import { ReaderAsset, ReaderAssetKind, ReaderAssetProvider, ReaderCancellation, ReaderPage,
-  ReaderAssetFailure, ReaderImageInformation, ReaderImageInformationSource, ReaderOriginalAssetPlan,
+  ReaderImageInformation, ReaderImageInformationSource, ReaderOriginalAssetPlan,
   ReaderProcessedAssetVariant, ReaderVariantAssetPlan } from '@reader-kit/core'
 import { ReaderFileInformation } from './ReaderFileInformation'
 
@@ -41,10 +41,6 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
   private informationInjected: boolean = false
   private variantInjected: boolean = false
   private assetFailureMessage: string
-
-  failure(error: Error): ReaderAssetFailure {
-    return this.provider.failure?.(error) ?? new ReaderAssetFailure('reader_asset_failed')
-  }
 
   constructor(provider: ReaderAssetProvider, thumbnailIndex: number, informationMode: string = '',
     originalFailureIndex: number = -1, originalVariantProbe: string = '', assetFailureMessage: string = '') {
