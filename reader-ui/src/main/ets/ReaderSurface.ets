@@ -41,6 +41,8 @@ export struct ReaderSurface {
   @Param input: ReaderInputPort | null = null
   @Param imageShare: ReaderImageShareHost | null = null
   @Param imageSave: ReaderImageSaveHost | null = null
+  /** Host-owned, read-only information lines appended after retained file facts. */
+  @Param informationSupplement: ((frame: ReaderPagedFrame, value: ReaderImageInformation) => string[]) | null = null
   @Param autoReadAvailable: boolean = false
   @Param autoReadSeconds: number = 3
   @Param pageTurnAnimation: boolean = false
@@ -389,7 +391,7 @@ export struct ReaderSurface {
     return this.getUIContext().getHostContext()?.resourceManager.getStringByNameSync(name) ?? ''
   }
 
-  private informationText(value: ReaderImageInformation): string {
+  private informationText(value: ReaderImageInformation, frame: ReaderPagedFrame): string {
     const unknown = this.text('rkit_unknown')
     const format = value.mimeType.startsWith('image/') ? value.mimeType.substring(6).toUpperCase() : unknown
     const bytes = value.bytes > 0 ? (value.bytes < 1024 ? `${value.bytes} B` : value.bytes < 1048576 ?
@@ -409,6 +411,8 @@ export struct ReaderSurface {
       'rkit_info_original_available' : 'rkit_info_original_unavailable'))
     lines.push(`${this.text('rkit_info_dimensions')}${value.width > 0 && value.height > 0 ?
       `${value.width} x ${value.height}` : unknown}`)
+    const supplemental = this.informationSupplement?.(frame, value) ?? []
+    lines.push(...supplemental.filter((line: string): boolean => line.trim().length > 0))
     return lines.join('\n')
   }
 
@@ -457,7 +461,7 @@ export struct ReaderSurface {
       console.info('[ReaderSurface] information_present')
       this.getUIContext().showAlertDialog({
         title: $r('app.string.rkit_info_title', frame.part.sourceIndex + 1),
-        message: this.informationText(value),
+        message: this.informationText(value, frame),
         primaryButton: { value: $r('app.string.rkit_ok'), action: (): void => {} },
         onDidDisappear: (): void => {
           if (epoch === this.informationEpoch) { this.informationPresented = false; this.informationBusy = false }

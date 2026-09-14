@@ -95,6 +95,30 @@ test('null, moving, waiting, revealing and terminal entries retain the existing 
   assert.deepEqual(edge.moves, ['next'])
 })
 
+test('image information appends host-owned lines after retained file facts', () => {
+  const surface = new ReaderSurface()
+  const labels = {
+    rkit_unknown: 'unknown', rkit_info_format: 'Format: ', rkit_info_size: 'Size: ',
+    rkit_info_current: 'Current: ', rkit_info_dimensions: 'Dimensions: ',
+    rkit_info_resampled: 'resampled', rkit_info_original_available: 'Original: available',
+  }
+  surface.text = name => labels[name] ?? name
+  const frame = { part: { sourceIndex: 3 } }
+  surface.informationSupplement = (actual, value) => [
+    `Enhancement: ${value.variant}`,
+    `Source: page-${actual.part.sourceIndex}`,
+    '   ',
+  ]
+  const value = {
+    mimeType: 'image/webp', bytes: 2048, width: 1280, height: 720,
+    variant: 'resampled', originalAvailable: true,
+  }
+  assert.equal(surface.informationText(value, frame), [
+    'Format: WEBP', 'Size: 2.0 KB', 'Current: resampled', 'Original: available',
+    'Dimensions: 1280 x 720', 'Enhancement: resampled', 'Source: page-3',
+  ].join('\n'))
+})
+
 test('enabled page-turn animation emits one adjacent native pager command before session selection', () => {
   const value = scenario()
   value.surface.pageTurnAnimation = true
