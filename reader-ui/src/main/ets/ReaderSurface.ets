@@ -62,6 +62,9 @@ export struct ReaderSurface {
   @Event onExternalOpen: (source: ReaderUnitKey) => void = () => {}
   @Param hostActions: ReaderHostAction[] = []
   @Event onHostAction: (id: string, source: ReaderUnitKey, navigation: number, sourceIndex: number) => void = () => {}
+  @Param hostCenterActionAvailable: boolean = false
+  @Param hostCenterActionLabel: ResourceStr = ''
+  @Event onHostCenterAction: (source: ReaderUnitKey, navigation: number) => void = () => {}
   /** Passive host feedback; it never changes layout or handles input. */
   @Param hostStatusVisible: boolean = false
   @Param hostStatusText: string = ''
@@ -755,6 +758,11 @@ export struct ReaderSurface {
           hostActions: this.hostActions,
           onHostAction: (id: string, source: ReaderUnitKey, navigation: number, sourceIndex: number): void => {
             this.onHostAction(id, source, navigation, sourceIndex)
+          },
+          hostCenterActionAvailable: this.hostCenterActionAvailable,
+          hostCenterActionLabel: this.hostCenterActionLabel,
+          onHostCenterAction: (source: ReaderUnitKey, navigation: number): void => {
+            this.onHostCenterAction(source, navigation)
           },
           onCrop: (): void => { this.toggleCrop() },
           originalAvailable: this.session.originalSelectionSupported(),

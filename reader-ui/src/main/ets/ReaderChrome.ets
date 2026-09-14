@@ -46,6 +46,10 @@ export struct ReaderChrome {
   @Event onExternalOpen: (source: ReaderUnitKey) => void = () => {}
   @Param hostActions: ReaderHostAction[] = []
   @Event onHostAction: (id: string, source: ReaderUnitKey, navigation: number, sourceIndex: number) => void = () => {}
+  /** Optional host-owned center control. reader-kit owns only placement and stale target validation. */
+  @Param hostCenterActionAvailable: boolean = false
+  @Param hostCenterActionLabel: ResourceStr = ''
+  @Event onHostCenterAction: (source: ReaderUnitKey, navigation: number) => void = () => {}
   @Event onInformation: (frame: ReaderPagedFrame) => void = () => {}
   @Event onShare: () => void = () => {}
   @Event onThumbnails: () => void = () => {}
@@ -305,6 +309,13 @@ export struct ReaderChrome {
     }
   }
 
+  private selectHostCenterAction(source: ReaderUnitKey, navigation: number): void {
+    if (this.active && this.hostCenterActionAvailable && this.snapshot.phase === 'ready' &&
+      this.snapshot.unit?.key.equals(source) === true && this.snapshot.navigationRevision === navigation) {
+      this.onHostCenterAction(source.copy(), navigation)
+    }
+  }
+
   @Builder
   private InformationChoice() {
     Menu() {
@@ -438,7 +449,19 @@ export struct ReaderChrome {
           }.width(44).height(44).backgroundColor(Color.Transparent)
             .id('rkit-close').accessibilityText($r('app.string.rkit_close'))
             .onClick((): void => { this.onClose() })
-          Blank()
+          if (this.hostCenterActionAvailable) {
+            Text(this.hostCenterActionLabel).fontSize(13).fontColor(Color.White)
+              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).textAlign(TextAlign.Center)
+              .layoutWeight(1).height(44)
+              .id('rkit-host-center-action')
+              .enabled(this.active && this.snapshot.phase === 'ready' && this.snapshot.unit !== null)
+              .onClick((): void => {
+                const source = this.snapshot.unit?.key
+                if (source !== undefined) this.selectHostCenterAction(source.copy(), this.snapshot.navigationRevision)
+              })
+          } else {
+            Blank()
+          }
           if (this.shareAvailable) {
             Button({ type: ButtonType.Circle }) {
               if (this.shareBusy) {

@@ -74,6 +74,24 @@ test('generic host page actions carry only an exact stale-guarded reading target
   assert.equal(calls.length, 1)
 })
 
+test('host center action preserves the current unit and navigation boundary', () => {
+  const Chrome = methods(['selectHostCenterAction'])
+  const key = { value: 'u', copy() { return { value: this.value, copy: this.copy, equals: this.equals } },
+    equals(other) { return other?.value === this.value } }
+  const calls = []
+  const chrome = new Chrome()
+  Object.assign(chrome, { active: true, hostCenterActionAvailable: true,
+    snapshot: { phase: 'ready', navigationRevision: 7, unit: { key } },
+    onHostCenterAction: (...values) => calls.push(values) })
+  chrome.selectHostCenterAction(key, 7)
+  assert.deepEqual(calls.map(values => [values[0].value, values[1]]), [['u', 7]])
+  chrome.snapshot.navigationRevision = 8
+  chrome.selectHostCenterAction(key, 7)
+  chrome.snapshot.unit = { key: { value: 'other', equals: key.equals } }
+  chrome.selectHostCenterAction(key, 8)
+  assert.equal(calls.length, 1)
+})
+
 test('manual reload emits one exact visible frame and rejects stale menu context', () => {
   const Chrome = methods(['currentReloadFrame', 'selectReload'])
   const key = { value: 'u', copy() { return { value: this.value, copy: this.copy, equals: this.equals } },
@@ -99,6 +117,8 @@ test('surface keeps per-source variant policy and completion feedback host-owned
   assert.match(surfaceSource, /this\.variantPreferenceRevision/)
   assert.match(surfaceSource, /this\.onVariantSelection\(frame\.part\.sourceIndex/)
   assert.match(surfaceSource, /hostActions: this\.hostActions/)
+  assert.match(surfaceSource, /hostCenterActionAvailable: this\.hostCenterActionAvailable/)
+  assert.match(chromeSource, /id\('rkit-host-center-action'\)/)
   assert.match(chromeSource, /ForEach\(this\.hostActions/)
   assert.match(surfaceSource, /if \(this\.hostStatusVisible && this\.hostStatusText\.length > 0\)/)
   assert.match(surfaceSource, /id\('rkit-host-status'\)/)
