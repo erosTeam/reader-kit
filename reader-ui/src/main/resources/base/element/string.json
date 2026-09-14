@@ -139,6 +139,9 @@
     { "name": "rkit_host_settings", "value": "阅读设置" },
     { "name": "rkit_open_external", "value": "在外部浏览器中打开" },
     { "name": "rkit_crop_on", "value": "开启裁边" },
-    { "name": "rkit_crop_off", "value": "关闭裁边" }
+    { "name": "rkit_crop_off", "value": "关闭裁边" },
+    { "name": "rkit_tap_left", "value": "左侧" },
+    { "name": "rkit_tap_right", "value": "右侧" },
+    { "name": "rkit_tap_menu", "value": "菜单" }
   ]
 }

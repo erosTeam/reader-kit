@@ -12,6 +12,7 @@ import { BusinessError } from '@kit.BasicServicesKit'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderEntryPreview, ReaderEntryPreviewSource } from './ReaderEntryPreview'
 import { ReaderTapAction } from './ReaderTapAction'
+import { ReaderTapZonePreviewRegion } from './ReaderTapZonePreviewRegion'
 import { ReaderHostAction } from './ReaderHostAction'
 
 /** Reading composition only. The host owns its route, window and persistence. */
@@ -26,6 +27,9 @@ export struct ReaderSurface {
   @Param closing: boolean = false
   @Param showPageNumber: boolean = true
   @Param tapZoneResolver: ((xFraction: number, yFraction: number, layout: ReaderLayout) => ReaderTapAction) | null = null
+  /** Host-owned normalized geometry; revision explicitly requests one-shot shared presentation. */
+  @Param tapZonePreviewRegions: ReaderTapZonePreviewRegion[] = []
+  @Param tapZonePreviewRevision: number = 0
   @Param beforeShowChrome: ((isCurrent: () => boolean) => Promise<boolean>) | null = null
   @Param initialIndex: number = 0
   @Param topInset: number = 0
@@ -82,6 +86,7 @@ export struct ReaderSurface {
   @Local private chromeVisible: boolean = true
   @Local private thumbnailsVisible: boolean = false
   @Local private previewIndex: number = -1
+  @Local private tapZonePreviewVisible: boolean = false
   @Local private shareBusy: boolean = false
   @Local private saveBusy: boolean = false
   @Local private autoReadEnabled: boolean = false
@@ -112,6 +117,7 @@ export struct ReaderSurface {
   private variantAttemptContext: string = ''
   private variantAttempts: Set<string> = new Set<string>()
   private interactionBusyReported: boolean = false
+  private tapZonePreviewShownRevision: number = 0
 
   private syncPreferredVariant(state: ReaderPagedSnapshot): void {
     const unit = state.unit?.key
@@ -148,7 +154,8 @@ export struct ReaderSurface {
 
   private reportInteractionBusy(): void {
     const busy = this.active && !this.closing && !this.chromeDisposed &&
-      (this.touching || this.menuVisible || this.inputLocked || this.entryTransition?.pending() === true)
+      (this.touching || this.menuVisible || this.tapZonePreviewVisible || this.inputLocked ||
+        this.entryTransition?.pending() === true)
     if (busy === this.interactionBusyReported) return
     this.interactionBusyReported = busy
     this.onInteractionBusy?.(busy)
@@ -227,7 +234,7 @@ export struct ReaderSurface {
       this.originalFeedbackEpoch += 1
       this.invalidateChromeShow()
       this.entryTransition?.cancel()
-      this.previewIndex = -1; this.touching = false
+      this.previewIndex = -1; this.tapZonePreviewVisible = false; this.touching = false
       if (!this.informationPresented) { this.informationEpoch += 1; this.informationBusy = false }
       this.variantAttemptContext = ''
       this.variantAttempts?.clear()
@@ -251,6 +258,17 @@ export struct ReaderSurface {
   @Monitor('autoReadAvailable', 'autoReadSeconds', 'shareBusy', 'saveBusy', 'informationBusy', 'previewIndex')
   onAutoReadInputsChanged(): void { this.syncAutoRead() }
 
+  @Monitor('tapZonePreviewRevision', 'tapZonePreviewRegions')
+  onTapZonePreviewChanged(): void {
+    if (this.tapZonePreviewRevision <= this.tapZonePreviewShownRevision || this.closing ||
+      this.chromeDisposed || this.state.phase !== 'ready' || this.validTapZonePreviewRegions().length === 0) return
+    this.tapZonePreviewShownRevision = this.tapZonePreviewRevision
+    this.tapZonePreviewVisible = true
+    this.commitChromeVisible(false)
+    this.reportInteractionBusy()
+    this.syncAutoRead()
+  }
+
   @Computed
   private get autoReadEntryBlocked(): boolean { return this.entryTransition?.phase === 'layout' }
 
@@ -263,7 +281,8 @@ export struct ReaderSurface {
       return
     }
     this.autoReadController.update(this.state, this.active,
-      this.touching || this.menuVisible || this.shareBusy || this.saveBusy || this.informationBusy || this.state.originalPreparing ||
+      this.touching || this.menuVisible || this.tapZonePreviewVisible || this.shareBusy || this.saveBusy ||
+      this.informationBusy || this.state.originalPreparing ||
       this.previewIndex >= 0 || this.inputTopology !== this.state.topologyRevision || this.inputLocked ||
       this.entryTransition?.phase === 'layout', this.autoReadSeconds)
   }
@@ -493,7 +512,7 @@ export struct ReaderSurface {
   private pageTap(x: number, y: number): ReaderTapAction {
     if (!this.active || this.closing || this.chromeDisposed || this.chromeCloseRequested ||
       this.entryTransition?.pending() || this.state.phase !== 'ready' || this.menuVisible ||
-      this.shareBusy || this.saveBusy || this.informationBusy || this.previewIndex >= 0 ||
+      this.shareBusy || this.saveBusy || this.informationBusy || this.tapZonePreviewVisible || this.previewIndex >= 0 ||
       this.inputTopology !== this.state.topologyRevision ||
       !Number.isFinite(x) || !Number.isFinite(y)) return 'none'
     const continuous = this.state.policy.layout === 'continuous'
@@ -523,7 +542,8 @@ export struct ReaderSurface {
   private externalMove(intent: ReaderMoveIntent): boolean {
     if (this.entryTransition?.phase === 'layout' || !this.active || this.state.phase !== 'ready' ||
       this.touching || this.menuVisible || this.shareBusy || this.saveBusy || this.informationBusy ||
-      this.previewIndex >= 0 || this.inputTopology !== this.state.topologyRevision || this.inputLocked) return false
+      this.tapZonePreviewVisible || this.previewIndex >= 0 ||
+      this.inputTopology !== this.state.topologyRevision || this.inputLocked) return false
     return this.requestMove(intent)
   }
 
@@ -552,6 +572,33 @@ export struct ReaderSurface {
     if (topology !== this.state.topologyRevision) return
     this.inputTopology = topology
     this.inputLocked = locked
+    this.reportInteractionBusy()
+    this.syncAutoRead()
+  }
+
+  private validTapZonePreviewRegions(): ReaderTapZonePreviewRegion[] {
+    return this.tapZonePreviewRegions.filter((region: ReaderTapZonePreviewRegion): boolean => region.valid())
+  }
+
+  private tapZonePreviewColor(action: ReaderTapAction): ResourceColor {
+    if (action === 'previous') return '#CCFF7733'
+    if (action === 'next') return '#CC3FAE58'
+    if (action === 'left') return '#CC7D1128'
+    if (action === 'right') return '#CC5F8F99'
+    return '#CC756872'
+  }
+
+  private tapZonePreviewLabel(action: ReaderTapAction): Resource {
+    if (action === 'previous') return $r('app.string.rkit_previous_page')
+    if (action === 'next') return $r('app.string.rkit_next_page')
+    if (action === 'left') return $r('app.string.rkit_tap_left')
+    if (action === 'right') return $r('app.string.rkit_tap_right')
+    return $r('app.string.rkit_tap_menu')
+  }
+
+  private dismissTapZonePreview(): void {
+    if (!this.tapZonePreviewVisible) return
+    this.tapZonePreviewVisible = false
     this.reportInteractionBusy()
     this.syncAutoRead()
   }
@@ -643,6 +690,9 @@ export struct ReaderSurface {
           .position({ x: 16, y: this.topInset + 72 }).hitTestBehavior(HitTestMode.None)
           .id('rkit-host-status')
       }
+      if (this.tapZonePreviewVisible) {
+        this.TapZonePreview()
+      }
       if (this.chromeVisible) {
         if (this.thumbnailsVisible && this.active && this.state.phase === 'ready') {
           Column() {
@@ -724,5 +774,27 @@ export struct ReaderSurface {
         this.reportInteractionBusy()
         this.syncAutoRead()
       })
+  }
+
+  @Builder
+  private TapZonePreview() {
+    Stack() {
+      ForEach(this.validTapZonePreviewRegions(), (region: ReaderTapZonePreviewRegion) => {
+        Stack({ alignContent: Alignment.Center }) {
+          Text(this.tapZonePreviewLabel(region.action))
+            .fontSize(15).fontWeight(FontWeight.Medium).fontColor(Color.White)
+            .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+            .backgroundColor('#99000000').borderRadius(999)
+        }
+          .position({ x: `${region.left * 100}%`, y: `${region.top * 100}%` })
+          .width(`${(region.right - region.left) * 100}%`)
+          .height(`${(region.bottom - region.top) * 100}%`)
+          .backgroundColor(this.tapZonePreviewColor(region.action))
+          .id(`rkit-tap-zone-${region.key()}`)
+      }, (region: ReaderTapZonePreviewRegion): string => region.key())
+    }
+      .width('100%').height('100%').hitTestBehavior(HitTestMode.Block)
+      .onClick((): void => { this.dismissTapZonePreview() })
+      .id('rkit-tap-zone-preview')
   }
 }

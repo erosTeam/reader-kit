@@ -139,6 +139,9 @@
     { "name": "rkit_host_settings", "value": "閲覧設定" },
     { "name": "rkit_open_external", "value": "外部ブラウザで開く" },
     { "name": "rkit_crop_on", "value": "余白を切り取る" },
-    { "name": "rkit_crop_off", "value": "余白の切り取りを解除" }
+    { "name": "rkit_crop_off", "value": "余白の切り取りを解除" },
+    { "name": "rkit_tap_left", "value": "左側" },
+    { "name": "rkit_tap_right", "value": "右側" },
+    { "name": "rkit_tap_menu", "value": "メニュー" }
   ]
 }
