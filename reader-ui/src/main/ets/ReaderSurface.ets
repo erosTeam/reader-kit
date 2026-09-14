@@ -483,6 +483,17 @@ export struct ReaderSurface {
     return JSON.stringify([unit?.key.scope, unit?.key.work, unit?.key.unit, unit?.pageCount])
   }
 
+  private thumbnailRailVisible(): boolean {
+    return this.chromeVisible && this.thumbnailsVisible && this.active && this.state.phase === 'ready'
+  }
+
+  private toggleThumbnails(): void {
+    const nextVisible = !this.thumbnailsVisible
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.FastOutSlowIn }, (): void => {
+      this.thumbnailsVisible = nextVisible
+    })
+  }
+
   private requestChapter(direction: 'previous' | 'next', source: ReaderUnitKey): void {
     const current = this.session.snapshot()
     if (!this.chapterNavigationAvailable || this.chapterNavigationBusy || !this.active || this.closing ||
@@ -738,20 +749,25 @@ export struct ReaderSurface {
       if (this.tapZonePreviewVisible) {
         this.TapZonePreview()
       }
+      // Keep the current unit's thumbnail window mounted while the strip or chrome is hidden.
+      // Height clipping matches the production readers and preserves already decoded previews
+      // without moving cache ownership into reader-kit.
+      if (this.state.unit !== null) {
+        Column() {
+          ForEach([this.thumbnailUnitIdentity()], (_identity: string) => {
+            ReaderThumbnailRail({ session: this.session, snapshot: this.state, accent: this.accent,
+              previewIndex: this.previewIndex,
+              onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
+                this.session.seekSource(index, unit, navigation)
+              },
+            })
+          }, (identity: string): string => identity)
+        }.width('100%').height(this.thumbnailRailVisible() ? 156 : 0)
+          .padding({ top: this.thumbnailRailVisible() ? 8 : 0, bottom: this.thumbnailRailVisible() ? 8 : 0 })
+          .margin({ bottom: this.bottomInset + 112 }).backgroundColor('#CC000000').clip(true)
+          .hitTestBehavior(this.thumbnailRailVisible() ? HitTestMode.Default : HitTestMode.None)
+      }
       if (this.chromeVisible) {
-        if (this.thumbnailsVisible && this.active && this.state.phase === 'ready') {
-          Column() {
-            ForEach([this.thumbnailUnitIdentity()], (_identity: string) => {
-              ReaderThumbnailRail({ session: this.session, snapshot: this.state, accent: this.accent,
-                previewIndex: this.previewIndex,
-                onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
-                  this.session.seekSource(index, unit, navigation)
-                },
-              })
-            }, (identity: string): string => identity)
-          }.width('100%').height(156).padding({ top: 8, bottom: 8 })
-            .margin({ bottom: this.bottomInset + 112 }).backgroundColor('#CC000000').clip(true)
-        }
         ReaderChrome({ snapshot: this.state, active: this.active, topInset: this.topInset,
           bottomInset: this.bottomInset, accent: this.accent, onClose: (): void => this.requestClose(),
           thumbnailsVisible: this.thumbnailsVisible,
@@ -798,7 +814,7 @@ export struct ReaderSurface {
           onMenuVisible: (visible: boolean): void => {
             this.menuVisible = visible; this.reportInteractionBusy(); this.syncAutoRead()
           },
-          onThumbnails: (): void => { this.thumbnailsVisible = !this.thumbnailsVisible },
+          onThumbnails: (): void => { this.toggleThumbnails() },
           onPolicy: (policy: ReaderDisplayPolicy, intent: ReaderRuntimePolicyIntent): void => {
             this.applyPolicy(policy, intent)
           },

@@ -126,6 +126,16 @@ test('surface keeps per-source variant policy and completion feedback host-owned
   assert.match(surfaceSource, /id\('rkit-host-status'\)/)
 })
 
+test('thumbnail rail stays mounted behind a clipped non-interactive wrapper', () => {
+  const rail = surfaceSource.indexOf('ReaderThumbnailRail({')
+  const chrome = surfaceSource.indexOf('if (this.chromeVisible) {', rail)
+  assert.ok(rail >= 0 && chrome > rail, 'the rail must be outside the chrome visibility branch')
+  assert.match(surfaceSource, /height\(this\.thumbnailRailVisible\(\) \? 156 : 0\)/)
+  assert.match(surfaceSource, /hitTestBehavior\(this\.thumbnailRailVisible\(\) \? HitTestMode\.Default : HitTestMode\.None\)/)
+  assert.match(surfaceSource, /animateTo\(\{ duration: 180, curve: Curve\.FastOutSlowIn \}/)
+  assert.match(surfaceSource, /onThumbnails: \(\): void => \{ this\.toggleThumbnails\(\) \}/)
+})
+
 test('runtime policy intents identify the exact setting changed', () => {
   const Chrome = methods(['setLayout', 'toggleSpreadLayout'])
   const calls = []
