@@ -13,6 +13,7 @@ export struct ReaderContinuousZoomImage {
   @Require @Param frame: ReaderPagedFrame
   @Require @Param navigation: number
   @Require @Param imageHeight: number
+  @Param rotateClockwise: boolean = false
   @Require @Param active: boolean
   @Require @Param interactionAllowed: boolean
   @Event onTap: (windowX: number, windowY: number) => void = () => {}
@@ -44,9 +45,9 @@ export struct ReaderContinuousZoomImage {
     this.onLock(this.identity, false)
   }
 
-  @Monitor('frame', 'navigation', 'active', 'interactionAllowed')
+  @Monitor('frame', 'navigation', 'active', 'interactionAllowed', 'rotateClockwise')
   onContentChanged(): void {
-    const identity = `${this.navigation}:${this.frame.slotId}:${this.frame.asset.assetRequestId}`
+    const identity = `${this.navigation}:${this.frame.slotId}:${this.frame.asset.assetRequestId}:${this.rotateClockwise}`
     if (identity !== this.identity || this.frame.asset.phase !== 'displayed') {
       if (this.identity.length > 0) this.onLock(this.identity, false)
       this.cancelMotion()
@@ -64,7 +65,9 @@ export struct ReaderContinuousZoomImage {
   private geometry(): ReaderViewportGeometry {
     const page = this.frame.asset.page
     const pixels = this.frame.asset.kind === 'original'
-      ? (page?.width ?? 0) * this.frame.crop.region(this.frame.part).width : page?.thumbnail.width ?? 0
+      ? (this.rotateClockwise ? (page?.height ?? 0) * this.frame.crop.region(this.frame.part).height :
+        (page?.width ?? 0) * this.frame.crop.region(this.frame.part).width) :
+      (this.rotateClockwise ? page?.thumbnail.height ?? 0 : page?.thumbnail.width ?? 0)
     return new ReaderViewportGeometry(this.componentWidth, this.componentHeight, this.componentWidth, this.measuredImageHeight,
       pixels > 0 ? pixels / this.componentWidth : 2)
   }
@@ -181,6 +184,7 @@ export struct ReaderContinuousZoomImage {
         imageInterpolation: this.imageInterpolation,
         frame: this.frame, slotId: this.frame.slotId, assetRequestId: this.frame.asset.assetRequestId,
         selectionId: 0, renderedFragment: this.frame.part.fragment, active: false,
+        rotateClockwise: this.rotateClockwise,
         entryTransition: this.entryTransition, continuousEntry: this.entryPosition,
         onPresented: this.onPresented,
         onFailed: (_selection: number, slot: number, request: number, fragment: ReaderFragment): void => {

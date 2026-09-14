@@ -35,9 +35,10 @@ function fixture(width = 400, height = 2400) {
   return { frame, state, transition }
 }
 const List = evaluate(`export class List { ${methods('ReaderContinuousSurface', 'ReaderContinuousList',
-  ['refreshEntryPosition', 'invalidatePosition', 'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'onImageLock'])} }`, {}, {
+  ['refreshEntryPosition', 'rotates', 'invalidatePosition', 'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'onImageLock'])} }`, {}, {
   ReaderContinuousEntryPosition: Position, clearTimeout() {}, setTimeout: callback => { callback(); return 1 },
   ReaderContinuousAfterLayout: class { constructor(action) { this.action = action } },
+  readerPolicyRotatesPage: core.readerPolicyRotatesPage,
   ScrollAlign: { START: 'start' }, LengthMetrics: { vp: x => x },
 }).List
 function listFixture() {

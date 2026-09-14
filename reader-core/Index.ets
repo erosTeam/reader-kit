@@ -9,6 +9,7 @@ export {
   ReaderFragment, ReaderDirection, ReaderLayout, ReaderDisplayPolicy,
   ReaderReadingAnchor, ReaderDisplayPart, ReaderDisplayItem,
   ReaderAnchorMatch, ReaderAnchorResolution, ReaderDisplayMap,
+  readerPageIsWide, readerPolicyRotatesPage,
 } from './src/main/ets/ReaderDisplayMap'
 export { ReaderPagedSession, ReaderPagedSnapshot, ReaderPagedFrame, ReaderPagedItemSnapshot,
   ReaderObservedPosition } from './src/main/ets/ReaderPagedSession'

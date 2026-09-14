@@ -9,7 +9,7 @@ const zoom = fs.readFileSync(path.join(uiRoot, 'ReaderContinuousZoomImage.ets'),
 
 test('continuous original rows derive height from full available width and intrinsic ratio', () => {
   assert.match(continuous, /private imageAspectRatio\(index: number\): number/)
-  assert.match(continuous, /return width > 0 && height > 0 \? width \/ height \/ heightRatio : 0\.75/)
+  assert.match(continuous, /const ratio = width > 0 && height > 0 \? width \/ height \/ heightRatio : 0\.75/)
   assert.match(continuous, /imageAspectRatio: this\.imageAspectRatio\(this\.snapshot\.displayKeys\.indexOf\(key\)\)/)
   assert.match(continuous, /\.width\('100%'\)\.aspectRatio\(this\.imageAspectRatio\)/)
   assert.doesNotMatch(continuous, /ListItem\(\)[\s\S]{0,1800}\.height\(this\.rowHeight/)

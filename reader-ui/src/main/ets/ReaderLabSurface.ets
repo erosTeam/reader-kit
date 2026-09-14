@@ -96,7 +96,10 @@ export struct ReaderLabSurface {
 
   private toggleAlignment(): void {
     const policy = this.state.policy.copy()
-    if (policy.layout === 'single') policy.splitWidePages = !policy.splitWidePages
+    if (policy.layout === 'single') {
+      policy.splitWidePages = !policy.splitWidePages
+      if (policy.splitWidePages) policy.rotateWidePages = false
+    }
     else policy.firstPageAlone = !policy.firstPageAlone
     this.session.setPolicy(policy)
   }

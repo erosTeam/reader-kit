@@ -756,7 +756,8 @@ export class ReaderPagedSession {
         `${part.sourceIndex}:${part.fragment}`).join('+'))
     }
     const pagingAxis = this.state.policy.layout === 'continuous' ? 'horizontal' : this.state.policy.pagingAxis
-    const signature = `${this.state.policy.layout}:${this.state.policy.direction}:${pagingAxis}:` + keys.join('|')
+    const signature = `${this.state.policy.layout}:${this.state.policy.direction}:${pagingAxis}:` +
+      `${this.state.policy.rotateWidePages}:` + keys.join('|')
     if (signature !== this.topologySignature) {
       this.topologySignature = signature
       this.topologyRevision += 1

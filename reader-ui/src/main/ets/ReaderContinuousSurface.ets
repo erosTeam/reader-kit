@@ -1,5 +1,5 @@
 import { FrameCallback, LengthMetrics } from '@kit.ArkUI'
-import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderFragment } from '@reader-kit/core'
+import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderFragment, readerPolicyRotatesPage } from '@reader-kit/core'
 import { ReaderContinuousZoomImage } from './ReaderContinuousZoomImage'
 import { ReaderFailurePanel } from './ReaderFailurePanel'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
@@ -252,7 +252,16 @@ struct ReaderContinuousList {
     const crop = this.snapshot.cropForPage(index)
     const heightRatio = this.snapshot.kind === 'original'
       ? (1 - crop.top - crop.bottom) / (1 - crop.left - crop.right) : 1
-    return width > 0 && height > 0 ? width / height / heightRatio : 0.75
+    const ratio = width > 0 && height > 0 ? width / height / heightRatio : 0.75
+    if (!readerPolicyRotatesPage(this.snapshot.policy, page ?? null)) return ratio
+    const originalRatio = page !== undefined && page.width > 0 && page.height > 0
+      ? page.width / page.height / ((1 - crop.top - crop.bottom) / (1 - crop.left - crop.right)) : 0
+    return originalRatio > 0 ? 1 / originalRatio : 0.75
+  }
+
+  private rotates(index: number): boolean {
+    const page = this.snapshot.pageMetadata.find((value) => value.sourceIndex === index)
+    return readerPolicyRotatesPage(this.snapshot.policy, page ?? null)
   }
 
   private imageHeight(index: number): number { return this.viewWidth / this.imageAspectRatio(index) }
@@ -299,9 +308,15 @@ struct ReaderContinuousList {
       if (this.disposed || !this.active || epoch !== this.positionEpoch || navigation !== this.snapshot.navigationRevision) return
       const index = this.snapshot.displayIndex
       const crop = this.snapshot.cropForPage(index)
+      const sourceX = this.snapshot.anchor?.x ?? 0.5
       const sourceY = this.snapshot.anchor?.y ?? 0
+      const rotated = this.rotates(index)
+      const defaultStart = sourceX === 0.5 && sourceY === 0
+      const sourcePosition = rotated ? (defaultStart ? crop.left : sourceX) : sourceY
+      const start = rotated ? crop.left : crop.top
+      const end = rotated ? crop.right : crop.bottom
       const y = this.snapshot.kind === 'original'
-        ? Math.max(0, Math.min(1, (sourceY - crop.top) / (1 - crop.top - crop.bottom))) : 0
+        ? Math.max(0, Math.min(1, (sourcePosition - start) / (1 - start - end))) : 0
       const width = this.viewWidth
       const height = this.imageHeight(index)
       const rowHeight = this.rowHeight(index)
@@ -351,8 +366,10 @@ struct ReaderContinuousList {
       if (rect.height <= 0 || imageTop >= this.viewHeight || imageTop + imageHeight <= 0) return
       const y = Math.max(0, Math.min(1, -imageTop / imageHeight))
       const region = frame.crop.region(frame.part)
+      const rotated = this.rotates(first)
       this.onVisible(this.createdRevision, navigation, key, frame.slotId, frame.asset.assetRequestId,
-        region.sourceX(0.5), region.sourceY(y))
+        rotated ? region.sourceX(y) : region.sourceX(0.5),
+        rotated ? region.sourceY(0.5) : region.sourceY(y))
     }, 0)
   }
 
@@ -373,6 +390,7 @@ struct ReaderContinuousList {
             onLock: (identity: string, locked: boolean): void => { this.onImageLock(key, identity, locked) },
             imageHeight: this.imageHeight(this.snapshot.displayKeys.indexOf(key)),
             imageAspectRatio: this.imageAspectRatio(this.snapshot.displayKeys.indexOf(key)),
+            rotateClockwise: this.rotates(this.snapshot.displayKeys.indexOf(key)),
             onRetry: (slot: number, request: number): void => {
               this.onRetry(this.createdRevision, key, slot, request)
             },
@@ -439,6 +457,7 @@ struct ReaderContinuousCell {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param imageHeight: number
   @Require @Param imageAspectRatio: number
+  @Param rotateClockwise: boolean = false
   @Require @Param active: boolean
   @Event onTap: (windowX: number, windowY: number) => void = () => {}
   @Require @Param interactionAllowed: boolean
@@ -468,6 +487,7 @@ struct ReaderContinuousCell {
               frame: this.snapshot.frames[0], navigation: this.snapshot.navigationRevision,
               entryTransition: this.entryTransition, entryPosition: this.entryPosition,
               imageHeight: this.imageHeight, active: this.active, interactionAllowed: this.interactionAllowed,
+              rotateClockwise: this.rotateClockwise,
               onLock: this.onLock,
               onTap: this.onTap,
               onPresented: this.onPresented,

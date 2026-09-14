@@ -407,6 +407,7 @@ export struct ReaderChrome {
         .onClick((): void => {
           const policy = this.snapshot.policy.copy()
           policy.splitWidePages = !policy.splitWidePages
+          if (policy.splitWidePages) policy.rotateWidePages = false
           this.onPolicy(policy, 'split_wide_pages')
         })
     }

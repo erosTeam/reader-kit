@@ -14,6 +14,7 @@ export class ReaderDisplayPolicy {
   direction: ReaderDirection = 'ltr'
   firstPageAlone: boolean = false
   splitWidePages: boolean = false
+  rotateWidePages: boolean = false
   widePageRatio: number = 1.2
 
   copy(): ReaderDisplayPolicy {
@@ -24,9 +25,21 @@ export class ReaderDisplayPolicy {
     value.direction = this.direction
     value.firstPageAlone = this.firstPageAlone
     value.splitWidePages = this.splitWidePages
+    value.rotateWidePages = this.rotateWidePages
     value.widePageRatio = this.widePageRatio
     return value
   }
+}
+
+/** Wide-page decisions use original metadata, never independent thumbnail dimensions. */
+export function readerPageIsWide(page: ReaderPage | null, widePageRatio: number): boolean {
+  return page !== null && Number.isFinite(page.width) && Number.isFinite(page.height) &&
+    Number.isFinite(widePageRatio) && widePageRatio > 1 &&
+    page.width > 0 && page.height > 0 && page.width / page.height >= widePageRatio
+}
+
+export function readerPolicyRotatesPage(policy: ReaderDisplayPolicy, page: ReaderPage | null): boolean {
+  return policy.rotateWidePages && !policy.splitWidePages && readerPageIsWide(page, policy.widePageRatio)
 }
 
 function normalized(value: number, fallback: number): number {
@@ -171,9 +184,7 @@ export class ReaderDisplayMap {
   private shouldSplit(index: number): boolean {
     if (this.policy.layout !== 'single' || !this.policy.splitWidePages) return false
     const page = this.metadata.get(index)
-    // Independent/cropped thumbnails are NEVER evidence of original dimensions.
-    return page !== undefined && Number.isFinite(page.width) && Number.isFinite(page.height) &&
-      page.width > 0 && page.height > 0 && page.width / page.height >= this.policy.widePageRatio
+    return readerPageIsWide(page ?? null, this.policy.widePageRatio)
   }
 
   private build(): void {

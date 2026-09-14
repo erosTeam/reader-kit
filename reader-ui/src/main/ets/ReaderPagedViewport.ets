@@ -1,4 +1,5 @@
-import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPart, ReaderSnapshot, ReaderUnitKey, ReaderFragment } from '@reader-kit/core'
+import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPart, ReaderDisplayPolicy, ReaderSnapshot,
+  ReaderUnitKey, ReaderFragment, readerPolicyRotatesPage } from '@reader-kit/core'
 import { ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/core'
 import { ReaderFailurePanel } from './ReaderFailurePanel'
 import { ReaderTapSequence } from './ReaderTapSequence'
@@ -28,13 +29,22 @@ class ReaderEntryMeasurement {
   contentRect: ReaderEntryRect | null = null
 }
 
-function partRatio(frame: ReaderPagedFrame): number {
+function partRatio(frame: ReaderPagedFrame, policy: ReaderDisplayPolicy | null = null): number {
   const page = frame.asset.page
   const width = frame.asset.kind === 'thumbnail' ? page?.thumbnail.width ?? 0 : page?.width ?? 0
   const height = frame.asset.kind === 'thumbnail' ? page?.thumbnail.height ?? 0 : page?.height ?? 0
   const region = frame.crop.region(frame.part)
   const fraction = frame.asset.kind === 'original' ? region.width / region.height : 1
+  if (policy !== null && frame.part.fragment === 'whole' && readerPolicyRotatesPage(policy, page)) {
+    const originalRatio = page !== null && page.width > 0 && page.height > 0
+      ? page.width / page.height * region.width / region.height : 0
+    return originalRatio > 0 ? 1 / originalRatio : 0.75
+  }
   return width > 0 && height > 0 ? width / height * fraction : 0.75
+}
+
+function rotatedFrame(frame: ReaderPagedFrame, policy: ReaderDisplayPolicy): boolean {
+  return frame.part.fragment === 'whole' && readerPolicyRotatesPage(policy, frame.asset.page)
 }
 
 /** Entry eligibility only; ordinary image layout keeps its existing fallback. */
@@ -125,7 +135,8 @@ export struct ReaderPagedViewport {
   private entryMeasurement: ReaderEntryMeasurement = new ReaderEntryMeasurement()
 
   private identity(): string {
-    return `${this.snapshot.navigationRevision}:${this.snapshot.kind}:${this.snapshot.policy.layout}:${this.snapshot.policy.direction}:${this.effectivePageGap()}:` +
+    return `${this.snapshot.navigationRevision}:${this.snapshot.kind}:${this.snapshot.policy.layout}:${this.snapshot.policy.direction}:` +
+      `${this.snapshot.policy.rotateWidePages}:${this.effectivePageGap()}:` +
       this.snapshot.frames.map((frame: ReaderPagedFrame) =>
         `${frame.slotId}:${frame.asset.assetRequestId}:${frame.part.fragment}`).join('|')
   }
@@ -159,6 +170,11 @@ export struct ReaderPagedViewport {
     if (this.selected && this.active && this.entryTransition?.pending() &&
       ReaderEntryGeometryGate.cancel(this.snapshot.frames, this.entryTransition.phase)) {
       // Zero metadata can be refined by the real Image while the initial layout waits.
+      this.entryTransition.cancel()
+    }
+    if (this.selected && this.active && this.entryTransition?.pending() && this.snapshot.frames.some((frame: ReaderPagedFrame) =>
+      this.entryTransition?.matches(frame.part) === true && rotatedFrame(frame, this.snapshot.policy))) {
+      // Preview geometry is unrotated host space. Do not morph it into a rotated leaf.
       this.entryTransition.cancel()
     }
     if (failed) this.recovering = true
@@ -247,13 +263,16 @@ export struct ReaderPagedViewport {
   private geometry(): ReaderViewportGeometry {
     const height = this.frameHeight()
     const scales = this.snapshot.frames.map((frame: ReaderPagedFrame): number => {
+      const rotated = rotatedFrame(frame, this.snapshot.policy)
       const intrinsicHeight = frame.asset.kind === 'original'
-        ? (frame.asset.page?.height ?? 0) * frame.crop.region(frame.part).height :
-        frame.asset.page?.thumbnail.height ?? 0
+        ? (rotated ? (frame.asset.page?.width ?? 0) * frame.crop.region(frame.part).width :
+          (frame.asset.page?.height ?? 0) * frame.crop.region(frame.part).height) :
+        (rotated ? frame.asset.page?.thumbnail.width ?? 0 : frame.asset.page?.thumbnail.height ?? 0)
       return intrinsicHeight > 0 ? intrinsicHeight / this.containedHeight(frame) : 2
     })
     if (this.splitLayout()) {
-      const widths = this.snapshot.frames.map((frame: ReaderPagedFrame): number => this.containedHeight(frame) * partRatio(frame))
+      const widths = this.snapshot.frames.map((frame: ReaderPagedFrame): number =>
+        this.containedHeight(frame) * partRatio(frame, this.snapshot.policy))
       const heights = this.snapshot.frames.map((frame: ReaderPagedFrame): number => this.containedHeight(frame))
       // The whole equal-slot Row scales, including the gap between narrow images.
       // Preserve the actual asymmetric outer edges rather than summing image widths.
@@ -337,7 +356,8 @@ export struct ReaderPagedViewport {
   }
 
   private totalRatio(): number {
-    return Math.max(0.01, this.snapshot.frames.reduce((sum: number, frame: ReaderPagedFrame) => sum + partRatio(frame), 0))
+    return Math.max(0.01, this.snapshot.frames.reduce((sum: number, frame: ReaderPagedFrame) =>
+      sum + partRatio(frame, this.snapshot.policy), 0))
   }
 
   private frameHeight(): number { return Math.min(this.viewportHeight, this.viewportWidth / this.totalRatio()) }
@@ -357,7 +377,8 @@ export struct ReaderPagedViewport {
   }
 
   private containedHeight(frame: ReaderPagedFrame): number {
-    return this.splitLayout() ? Math.min(this.viewportHeight, this.equalSlotWidth() / partRatio(frame)) : this.frameHeight()
+    return this.splitLayout()
+      ? Math.min(this.viewportHeight, this.equalSlotWidth() / partRatio(frame, this.snapshot.policy)) : this.frameHeight()
   }
 
   private equalSlots(): boolean { return this.recovering || this.splitLayout() }
@@ -509,14 +530,21 @@ struct ReaderPagedCell {
     return this.retainedFrameValue ?? this.frame()
   }
 
-  private cellWidth(): number { return this.frameWidth > 0 ? this.frameWidth : this.frameHeight * partRatio(this.frame()) }
-  private imageHeight(): number { return Math.min(this.frameHeight, this.cellWidth() / partRatio(this.frame())) }
+  private cellWidth(): number {
+    return this.frameWidth > 0 ? this.frameWidth : this.frameHeight * partRatio(this.frame(), this.snapshot.policy)
+  }
+  private imageHeight(): number {
+    return Math.min(this.frameHeight, this.cellWidth() / partRatio(this.frame(), this.snapshot.policy))
+  }
+
+  private rotateClockwise(): boolean { return rotatedFrame(this.frame(), this.snapshot.policy) }
 
   private entryContentReady(): boolean {
     const transition = this.entryTransition
     const frame = this.frame()
     return this.active && this.entryGeometryReady && transition !== null && transition.pending() &&
-      transition.matches(frame.part) && frame.asset.kind === 'original' && this.renderedFragment === 'whole'
+      transition.matches(frame.part) && frame.asset.kind === 'original' && this.renderedFragment === 'whole' &&
+      !this.rotateClockwise()
   }
 
   build() {
@@ -538,10 +566,12 @@ struct ReaderPagedCell {
           entryTransition: this.retainedFrameValue === null ? this.entryTransition : null,
           entryMeasurement: this.entryMeasurement,
           entryPhase: this.entryTransition?.phase ?? 'finished',
-          entryLayoutWidth: this.entryGeometryReady ? this.imageHeight() * partRatio(this.frame()) : 0,
+          entryLayoutWidth: this.entryGeometryReady ?
+            this.imageHeight() * partRatio(this.frame(), this.snapshot.policy) : 0,
           entryLayoutHeight: this.entryGeometryReady ? this.imageHeight() : 0,
           slotId: this.slotId, assetRequestId: this.presentedFrame().asset.assetRequestId,
           renderedFragment: this.renderedFragment,
+          rotateClockwise: this.rotateClockwise(),
           active: this.retainedFrameValue === null && this.active && this.snapshot.phase === 'ready',
           onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number): void => {
             if (this.retainedFrameValue === null) this.onPresented(slotId, requestId, success, width, height)
@@ -556,7 +586,7 @@ struct ReaderPagedCell {
             if (this.retainedFrameValue === null) this.onInvalidDecodedMetrics(slotId, requestId, assetRequestId)
           },
         })
-          .width(this.imageHeight() * partRatio(this.frame())).height(this.imageHeight())
+          .width(this.imageHeight() * partRatio(this.frame(), this.snapshot.policy)).height(this.imageHeight())
           .zIndex(this.retainedFrameValue !== null && this.frame().asset.phase === 'decoding' ? 1 : 0)
         if (this.retainedFrameValue !== null) {
           ReaderPagedImage({
@@ -566,14 +596,16 @@ struct ReaderPagedCell {
             entryTransition: this.entryTransition,
             entryMeasurement: this.entryMeasurement,
             entryPhase: this.entryTransition?.phase ?? 'finished',
-            entryLayoutWidth: this.entryGeometryReady ? this.imageHeight() * partRatio(this.frame()) : 0,
+            entryLayoutWidth: this.entryGeometryReady ?
+              this.imageHeight() * partRatio(this.frame(), this.snapshot.policy) : 0,
             entryLayoutHeight: this.entryGeometryReady ? this.imageHeight() : 0,
             slotId: this.slotId, assetRequestId: this.frame().asset.assetRequestId,
             renderedFragment: this.renderedFragment,
+            rotateClockwise: this.rotateClockwise(),
             active: this.active && this.snapshot.phase === 'ready',
             onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onInvalidDecodedMetrics: this.onInvalidDecodedMetrics,
-          }).width(this.imageHeight() * partRatio(this.frame())).height(this.imageHeight())
+          }).width(this.imageHeight() * partRatio(this.frame(), this.snapshot.policy)).height(this.imageHeight())
             .zIndex(this.frame().asset.phase === 'displayed' ? 1 : 0)
         }
       }
@@ -597,6 +629,7 @@ export struct ReaderPagedImage {
   @Require @Param selectionId: number
   @Require @Param renderedFragment: ReaderFragment
   @Require @Param active: boolean
+  @Param rotateClockwise: boolean = false
   @Param thumbnailCover: boolean = false
   @Param topologyRevision: number = 0
   @Param navigationRevision: number = 0
@@ -675,6 +708,7 @@ export struct ReaderPagedImage {
     if (transition === null || !transition.pending() || !this.entryMounted ||
       (position === null ? !this.active : this.continuousEntry !== position || !position.isCurrent()) ||
       !transition.matches(this.frame.part)) return
+    if (this.rotateClockwise) { transition.cancel(); return }
     if (position !== null && this.decoded && ReaderEntryGeometryGate.dimensions(this.decodedWidth, this.decodedHeight) !== 'ready') {
       transition.cancel(); return
     }
@@ -846,9 +880,12 @@ export struct ReaderPagedImage {
     const thumbnail = this.frame.asset.page?.thumbnail
     if (thumbnail === undefined || thumbnail.width <= 0 || thumbnail.height <= 0) return 1
     return this.thumbnailCover && this.frame.asset.kind === 'thumbnail'
-      ? Math.max(this.viewportWidth / thumbnail.width, this.viewportHeight / thumbnail.height)
-      : Math.min(this.viewportWidth / thumbnail.width, this.viewportHeight / thumbnail.height)
+      ? Math.max(this.renderWidth() / thumbnail.width, this.renderHeight() / thumbnail.height)
+      : Math.min(this.renderWidth() / thumbnail.width, this.renderHeight() / thumbnail.height)
   }
+
+  private renderWidth(): number { return this.rotateClockwise ? this.viewportHeight : this.viewportWidth }
+  private renderHeight(): number { return this.rotateClockwise ? this.viewportWidth : this.viewportHeight }
 
   build() {
     Stack() {
@@ -873,30 +910,33 @@ export struct ReaderPagedImage {
         .width(this.frame.asset.page.thumbnail.width * this.spriteScale())
         .height(this.frame.asset.page.thumbnail.height * this.spriteScale())
         .clip(true)
+        .rotate({ angle: this.rotateClockwise ? 90 : 0 })
       } else if (this.frame.asset.uri.length > 0 && this.frame.asset.kind === 'original' &&
         (this.frame.part.fragment !== 'whole' || this.frame.crop.applied())) {
         Stack({ alignContent: Alignment.TopStart }) {
           Image(this.frame.asset.uri)
-            .width(this.viewportWidth / this.frame.crop.region(this.frame.part).width)
-            .height(this.viewportHeight / this.frame.crop.region(this.frame.part).height)
+            .width(this.renderWidth() / this.frame.crop.region(this.frame.part).width)
+            .height(this.renderHeight() / this.frame.crop.region(this.frame.part).height)
             .id(`rkit-cropped-image-${this.frame.part.sourceIndex}-${this.frame.part.fragment}`)
             .interpolation(this.imageInterpolation)
             .objectFit(ImageFit.Fill)
             .position({
-              x: -this.viewportWidth * this.frame.crop.region(this.frame.part).x / this.frame.crop.region(this.frame.part).width,
-              y: -this.viewportHeight * this.frame.crop.region(this.frame.part).y / this.frame.crop.region(this.frame.part).height,
+              x: -this.renderWidth() * this.frame.crop.region(this.frame.part).x / this.frame.crop.region(this.frame.part).width,
+              y: -this.renderHeight() * this.frame.crop.region(this.frame.part).y / this.frame.crop.region(this.frame.part).height,
             })
             .onComplete((event): void => {
               if (event?.loadingStatus === 1) this.completed(event.width, event.height)
             })
             .onError((): void => { this.failed() })
         }
-        .width('100%').height('100%').clip(true)
+        .width(this.renderWidth()).height(this.renderHeight()).clip(true)
+        .rotate({ angle: this.rotateClockwise ? 90 : 0 })
       } else if (this.frame.asset.uri.length > 0) {
         Image(this.frame.asset.uri)
-          .width('100%').height('100%')
+          .width(this.renderWidth()).height(this.renderHeight())
           .interpolation(this.frame.asset.kind === 'original' ? this.imageInterpolation : ImageInterpolation.Low)
           .objectFit(this.thumbnailCover && this.frame.asset.kind === 'thumbnail' ? ImageFit.Cover : ImageFit.Contain)
+          .rotate({ angle: this.rotateClockwise ? 90 : 0 })
           .id(this.entryLeafId())
           .onAreaChange((): void => {
             this.entryLeafLaidOut = true
