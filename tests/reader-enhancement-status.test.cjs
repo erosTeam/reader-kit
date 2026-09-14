@@ -36,8 +36,7 @@ const Surface = methods([
 
 function surface() {
   const value = new Surface()
-  value.preferredVariant = 'enhanced'
-  value.preferredVariantIdentity = 'model:v1'
+  value.variantPolicy = { defaultPreference: () => ({ variant: 'enhanced', identity: 'model:v1' }) }
   value.state = {
     anchor: { sourceIndexHint: 0 },
     frames: [],
@@ -62,9 +61,8 @@ test('enhancement status follows only the current source and requested host vari
   value.state.frames.push({ part: { sourceIndex: 0 }, asset: { variant: 'enhanced' } })
   assert.equal(value.enhancementApplied(), true)
 
-  value.preferredVariant = 'default'
+  value.variantPolicy = { defaultPreference: () => ({ variant: 'default', identity: '' }) }
   assert.equal(value.enhancementVisible(), false)
-  value.preferredVariant = 'enhanced'
-  value.preferredVariantIdentity = ''
+  value.variantPolicy = { defaultPreference: () => ({ variant: 'enhanced', identity: '' }) }
   assert.equal(value.enhancementVisible(), false)
 })

@@ -26,6 +26,7 @@ function evaluate(source) {
         }
       } }
       if (name === './ReaderCloseContext') return { ReaderCloseContext }
+      if (name === './ReaderVariantPolicy') return { ReaderVariantPolicy }
       assert.fail(`unexpected import: ${name}`)
     },
     ObservedV2: value => value, ComponentV2: value => value,
@@ -38,6 +39,7 @@ function evaluate(source) {
 }
 const { ReaderEntryTransition } = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderEntryTransition.ets'), 'utf8'))
 const { ReaderCloseContext } = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderCloseContext.ets'), 'utf8'))
+const { ReaderVariantPolicy } = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderVariantPolicy.ets'), 'utf8'))
 const source = fs.readFileSync(path.join(uiPath, 'ReaderSurface.ets'), 'utf8')
 // Execute actual surface methods, excluding only ArkUI declarative build syntax.
 // The session below records calls; no rendering, hardware delivery or UI acceptance is simulated.
@@ -163,7 +165,7 @@ test('disabled animation and continuous reading retain direct session-owned move
 test('preferred host variant follows exact processing identity and returns to default', async () => {
   const surface = new ReaderSurface()
   surface.active = true; surface.closing = false; surface.chromeDisposed = false
-  surface.preferredVariant = 'enhanced'; surface.preferredVariantIdentity = 'model-a:2000'
+  surface.variantPolicy = new ReaderVariantPolicy(new core.ReaderVariantPreference('enhanced', 'model-a:2000'))
   const key = new core.ReaderUnitKey('source', 'work', 'unit')
   const calls = []
   const session = new core.ReaderPagedSession({
@@ -184,12 +186,13 @@ test('preferred host variant follows exact processing identity and returns to de
   session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true)
   assert.equal(frame.asset.variant, 'enhanced')
   assert.equal(frame.asset.variantIdentity, 'model-a:2000')
-  surface.preferredVariantIdentity = 'model-b:3000'; surface.onPreferredVariantChanged()
+  surface.variantPolicy = new ReaderVariantPolicy(new core.ReaderVariantPreference('enhanced', 'model-b:3000'))
+  surface.onVariantPolicyChanged()
   await new Promise(resolve => setImmediate(resolve))
   frame = session.snapshot().frames[0]
   session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true)
   assert.equal(frame.asset.variantIdentity, 'model-b:3000')
-  surface.preferredVariant = 'default'; surface.preferredVariantIdentity = ''; surface.onPreferredVariantChanged()
+  surface.variantPolicy = new ReaderVariantPolicy(); surface.onVariantPolicyChanged()
   await new Promise(resolve => setImmediate(resolve))
   frame = session.snapshot().frames[0]
   session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true)
@@ -201,7 +204,7 @@ test('preferred host variant follows exact processing identity and returns to de
 test('preferred host variant waits for the original asset instead of consuming its attempt on a thumbnail', () => {
   const surface = new ReaderSurface()
   surface.active = true; surface.closing = false; surface.chromeDisposed = false
-  surface.preferredVariant = 'enhanced'; surface.preferredVariantIdentity = 'model-a:2000'
+  surface.variantPolicy = new ReaderVariantPolicy(new core.ReaderVariantPreference('enhanced', 'model-a:2000'))
   const calls = []
   surface.session = { selectVariant(...args) { calls.push(args); return Promise.resolve('changed') } }
   const state = new core.ReaderPagedSnapshot()

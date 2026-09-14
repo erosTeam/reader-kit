@@ -113,9 +113,9 @@ test('manual reload emits one exact visible frame and rejects stale menu context
 })
 
 test('surface keeps per-source variant policy and completion feedback host-owned', () => {
-  assert.match(surfaceSource, /variantPreferenceResolver\?\.\(frame\.part\.sourceIndex\)/)
-  assert.match(surfaceSource, /this\.variantPreferenceRevision/)
-  assert.match(surfaceSource, /this\.onVariantSelection\(frame\.part\.sourceIndex/)
+  assert.match(surfaceSource, /this\.variantPolicy\?\.preference\(frame\.part\.sourceIndex\)/)
+  assert.match(surfaceSource, /this\.variantPolicy\?\.revision/)
+  assert.match(surfaceSource, /this\.variantPolicy\?\.selectionCompleted\(frame\.part\.sourceIndex/)
   assert.match(surfaceSource, /hostActions: this\.hostActions\?\.items\(\) \?\? \[\]/)
   assert.match(surfaceSource, /hostCenterActionAvailable: this\.centerAction !== null/)
   assert.match(chromeSource, /id\('rkit-host-center-action'\)/)

@@ -1,5 +1,5 @@
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy, ReaderLayout,
-  ReaderProcessedAssetVariant, ReaderVariantPreference,
+  ReaderVariantPreference,
   ReaderInputPort, ReaderMoveIntent, ReaderImageShareTarget,
   ReaderImageShareController, ReaderPagedFrame, ReaderImageInformation,
   ReaderImageSaveController, ReaderImageSaveChoice, ReaderAutoReadController } from '@reader-kit/core'
@@ -27,6 +27,7 @@ import { ReaderHostSettings } from './ReaderHostSettings'
 import { ReaderExternalOpen } from './ReaderExternalOpen'
 import { ReaderHostActions } from './ReaderHostActions'
 import { ReaderCenterAction } from './ReaderCenterAction'
+import { ReaderVariantPolicy } from './ReaderVariantPolicy'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -58,14 +59,8 @@ export struct ReaderSurface {
   @Param pageGap: number = 0
   /** Host preference for future cache warming; native render neighbors remain fixed and bounded. */
   @Param preloadDepth: number = 0
-  /** Optional host policy. reader-kit only requests exact host-prepared derivatives. */
-  @Param preferredVariant: ReaderProcessedAssetVariant | 'default' = 'default'
-  @Param preferredVariantIdentity: string = ''
-  /** Optional per-source host policy. Bump revision whenever its result can change. */
-  @Param variantPreferenceResolver: ((sourceIndex: number) => ReaderVariantPreference) | null = null
-  @Param variantPreferenceRevision: number = 0
-  @Event onVariantSelection: (sourceIndex: number, preference: ReaderVariantPreference,
-    result: 'changed' | 'unchanged' | 'unavailable' | 'stale') => void = () => {}
+  /** Optional host policy. Null retains the default, unprocessed asset behavior. */
+  @Param variantPolicy: ReaderVariantPolicy | null = null
   @Param cropBorders: boolean = false
   /** Host-owned crop detector/configuration identity; changes re-read retained assets without navigation. */
   @Param cropSourceRevision: string = ''
@@ -143,8 +138,10 @@ export struct ReaderSurface {
 
   private syncPreferredVariant(state: ReaderPagedSnapshot): void {
     const unit = state.unit?.key
+    const fallback = this.variantPolicy?.defaultPreference() ?? new ReaderVariantPreference()
+    const hasPerSourcePreference = this.variantPolicy?.hasPerSourcePreference() ?? false
     const context = JSON.stringify([unit?.scope ?? '', unit?.work ?? '', unit?.unit ?? '', state.navigationRevision,
-      this.preferredVariant, this.preferredVariantIdentity, this.variantPreferenceRevision])
+      fallback.variant, fallback.identity, hasPerSourcePreference, this.variantPolicy?.revision ?? 0])
     if (context !== this.variantAttemptContext) {
       this.variantAttemptContext = context
       this.variantAttempts.clear()
@@ -153,14 +150,13 @@ export struct ReaderSurface {
       state.kind !== 'original' || unit === undefined) return
     state.frames.forEach((frame: ReaderPagedFrame): void => {
       if (frame.asset.phase !== 'displayed') return
-      const preference = this.variantPreferenceResolver?.(frame.part.sourceIndex) ??
-        new ReaderVariantPreference(this.preferredVariant, this.preferredVariantIdentity)
+      const preference = this.variantPolicy?.preference(frame.part.sourceIndex) ?? fallback
       if (preference.variant !== 'default' && preference.identity.length === 0) return
       const wantsDefault = preference.variant === 'default'
       if (wantsDefault && frame.asset.variant !== 'enhanced' &&
-        !(this.variantPreferenceResolver !== null && frame.asset.variant === 'translated')) return
+        !(hasPerSourcePreference && frame.asset.variant === 'translated')) return
       if (!wantsDefault && (frame.asset.variant === 'original' ||
-        (this.variantPreferenceResolver === null && frame.asset.variant === 'translated') ||
+        (!hasPerSourcePreference && frame.asset.variant === 'translated') ||
         (frame.asset.variant === preference.variant && frame.asset.variantIdentity === preference.identity))) return
       const attempt = JSON.stringify([frame.part.sourceIndex, frame.slotId, frame.asset.requestId,
         preference.variant, preference.identity])
@@ -168,8 +164,7 @@ export struct ReaderSurface {
       this.variantAttempts.add(attempt)
       void this.session.selectVariant(frame.slotId, frame.asset.requestId, unit.copy(), state.navigationRevision,
         preference.variant, preference.identity).then(result => {
-          this.onVariantSelection(frame.part.sourceIndex,
-            new ReaderVariantPreference(preference.variant, preference.identity), result)
+          this.variantPolicy?.selectionCompleted(frame.part.sourceIndex, preference, result)
         })
     })
   }
@@ -276,10 +271,8 @@ export struct ReaderSurface {
     this.syncAutoRead()
   }
 
-  @Monitor('preferredVariant', 'preferredVariantIdentity', 'variantPreferenceRevision')
-  onPreferredVariantChanged(): void {
-    this.variantAttemptContext = ''
-    this.variantAttempts?.clear()
+  @Monitor('variantPolicy')
+  onVariantPolicyChanged(): void {
     this.syncPreferredVariant(this.session.snapshot())
   }
 
@@ -421,7 +414,8 @@ export struct ReaderSurface {
   }
 
   private enhancementVisible(): boolean {
-    return this.preferredVariant === 'enhanced' && this.preferredVariantIdentity.length > 0
+    const preference = this.variantPolicy?.defaultPreference()
+    return preference?.variant === 'enhanced' && preference.identity.length > 0
   }
 
   private enhancementProcessing(): boolean {
