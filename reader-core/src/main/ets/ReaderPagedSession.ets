@@ -531,12 +531,18 @@ export class ReaderPagedSession {
     const epoch = ++this.preloadEpoch
     if (signature.length === 0 || unit === null || this.preloadHost === null) return
     const target = unit.copy()
+    console.info(`[ReaderPreload] unit=${target.key.scope}:${target.key.work}:${target.key.unit} ` +
+      `depth=${this.preloadDepth} sources=${indexes.join(',')}`)
     indexes.forEach((index: number): void => {
       void this.catalog.page(target.copy(), index, cancellation).then((page: ReaderPage): void => {
         if (this.disposed || cancellation.isCancelled() || epoch !== this.preloadEpoch ||
           this.state.unit?.key.equals(target.key) !== true || page.sourceIndex !== index ||
           !page.unit.equals(target.key)) return
-        void this.preloadHost?.preload(page.copy(), cancellation).catch((): void => {})
+        void this.preloadHost?.preload(page.copy(), cancellation).catch((): void => {
+          if (!cancellation.isCancelled() && epoch === this.preloadEpoch) {
+            console.warn(`[ReaderPreload] failed source=${index}`)
+          }
+        })
       }).catch((): void => {})
     })
   }

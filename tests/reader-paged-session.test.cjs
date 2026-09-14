@@ -6,7 +6,7 @@ const { ReaderUnitKey, ReaderUnit, ReaderPage, ReaderAsset } = load('ReaderSessi
 const { ReaderDisplayPolicy } = load('ReaderDisplayMap')
 const tick = () => new Promise(resolve => setImmediate(resolve))
 
-function setup({ count = 5, wide = [], fail = [], deferred = false, preload = false } = {}) {
+function setup({ count = 5, wide = [], fail = [], deferred = false, preload = false, preloadFailure = false } = {}) {
   const key = new ReaderUnitKey('source', 'work', 'A')
   const calls = { open: [], load: [], release: [], pending: [], preload: [] }
   const catalog = {
@@ -32,10 +32,11 @@ function setup({ count = 5, wide = [], fail = [], deferred = false, preload = fa
       return asset
     },
   }
-  const preloadHost = preload ? {
+  const preloadHost = preload || preloadFailure ? {
     async preload(page, cancellation) {
       cancellation.check()
       calls.preload.push({ index: page.sourceIndex, cancellation })
+      if (preloadFailure) throw new Error('cache unavailable')
     },
   } : null
   const session = new ReaderPagedSession(catalog, assets, preloadHost)
@@ -584,6 +585,15 @@ test('preload depth is bounded, follows continuous visible end and cancels retir
   session.setPreloadDepth(0)
   assert.equal(calls.preload.at(-1).cancellation.isCancelled(), true)
   assert.deepEqual(session.snapshot().window.map(item => item.index), [2, 3, 4, 1, 5])
+  session.close()
+})
+
+test('cache preload failure is isolated from visible session readiness', async () => {
+  const { session, key } = setup({ count: 5, preloadFailure: true })
+  session.setPreloadDepth(2)
+  await session.open(key); await tick()
+  assert.equal(session.snapshot().phase, 'ready')
+  assert.equal(session.snapshot().frames[0].part.sourceIndex, 0)
   session.close()
 })
 
