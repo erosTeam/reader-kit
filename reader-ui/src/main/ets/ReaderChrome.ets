@@ -449,19 +449,7 @@ export struct ReaderChrome {
           }.width(44).height(44).backgroundColor(Color.Transparent)
             .id('rkit-close').accessibilityText($r('app.string.rkit_close'))
             .onClick((): void => { this.onClose() })
-          if (this.hostCenterActionAvailable) {
-            Text(this.hostCenterActionLabel).fontSize(13).fontColor(Color.White)
-              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).textAlign(TextAlign.Center)
-              .layoutWeight(1).height(44)
-              .id('rkit-host-center-action')
-              .enabled(this.active && this.snapshot.phase === 'ready' && this.snapshot.unit !== null)
-              .onClick((): void => {
-                const source = this.snapshot.unit?.key
-                if (source !== undefined) this.selectHostCenterAction(source.copy(), this.snapshot.navigationRevision)
-              })
-          } else {
-            Blank()
-          }
+          Blank()
           if (this.shareAvailable) {
             Button({ type: ButtonType.Circle }) {
               if (this.shareBusy) {
@@ -606,7 +594,19 @@ export struct ReaderChrome {
             .enabled(this.active && this.snapshot.phase === 'ready')
             .id('rkit-toggle-thumbnails').accessibilityText($r('app.string.rkit_thumbnail'))
             .onClick(this.onThumbnails)
-          Blank()
+          if (this.hostCenterActionAvailable) {
+            Text(this.hostCenterActionLabel).fontSize(13).fontColor(Color.White)
+              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).textAlign(TextAlign.Center)
+              .layoutWeight(1).height(44)
+              .id('rkit-host-center-action')
+              .enabled(this.active && this.snapshot.phase === 'ready' && this.snapshot.unit !== null)
+              .onClick((): void => {
+                const source = this.snapshot.unit?.key
+                if (source !== undefined) this.selectHostCenterAction(source.copy(), this.snapshot.navigationRevision)
+              })
+          } else {
+            Blank()
+          }
           if (this.snapshot.policy.layout === 'spread') {
             Button({ type: ButtonType.Circle }) {
               SymbolGlyph($r('sys.symbol.transfer')).fontSize(22)
