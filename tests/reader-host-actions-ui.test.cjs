@@ -122,7 +122,7 @@ test('surface keeps per-source variant policy and completion feedback host-owned
   assert.ok(chromeSource.indexOf("id('rkit-host-center-action')") >
     chromeSource.indexOf("id('rkit-toggle-thumbnails')"), 'host center action belongs to the bottom controls')
   assert.match(chromeSource, /ForEach\(this\.hostActions/)
-  assert.match(surfaceSource, /if \(this\.hostStatusVisible && this\.hostStatusText\.length > 0\)/)
+  assert.match(surfaceSource, /if \(this\.hostStatus !== null && this\.hostStatus\.text\.length > 0\)/)
   assert.match(surfaceSource, /id\('rkit-host-status'\)/)
 })
 

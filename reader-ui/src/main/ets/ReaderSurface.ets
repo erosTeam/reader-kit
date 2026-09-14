@@ -19,6 +19,7 @@ import { ReaderCloseContext } from './ReaderCloseContext'
 import { readerElementKey } from './ReaderElementKey'
 import { ReaderMediaActions } from './ReaderMediaActions'
 import { ReaderChapterNavigation } from './ReaderChapterNavigation'
+import { ReaderHostStatus } from './ReaderHostStatus'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -71,10 +72,8 @@ export struct ReaderSurface {
   @Param hostCenterActionAvailable: boolean = false
   @Param hostCenterActionLabel: ResourceStr = ''
   @Event onHostCenterAction: (source: ReaderUnitKey, navigation: number) => void = () => {}
-  /** Passive host feedback; it never changes layout or handles input. */
-  @Param hostStatusVisible: boolean = false
-  @Param hostStatusText: string = ''
-  @Param hostStatusBusy: boolean = false
+  /** Passive host feedback; null means absent and it never changes layout or handles input. */
+  @Param hostStatus: ReaderHostStatus | null = null
   /** Optional host continuation; chapter catalog, loading and persistence remain outside reader-kit. */
   @Param chapterNavigation: ReaderChapterNavigation | null = null
   /** Native-visible original position only. The host decides whether and how to persist it. */
@@ -763,14 +762,14 @@ export struct ReaderSurface {
             .onClick((): void => { void this.session.retry() })
         }.width('100%').height('100%').justifyContent(FlexAlign.Center).padding(24)
       }
-      if (this.hostStatusVisible && this.hostStatusText.length > 0) {
+      if (this.hostStatus !== null && this.hostStatus.text.length > 0) {
         Row({ space: 8 }) {
-          if (this.hostStatusBusy) {
+          if (this.hostStatus.busy) {
             LoadingProgress().width(18).height(18).color(Color.White)
           } else {
             SymbolGlyph($r('sys.symbol.exclamationmark_triangle')).fontSize(18).fontColor([Color.White])
           }
-          Text(this.hostStatusText).fontSize(12).fontColor(Color.White).maxLines(2)
+          Text(this.hostStatus.text).fontSize(12).fontColor(Color.White).maxLines(2)
         }.padding({ left: 16, right: 16, top: 8, bottom: 8 })
           .backgroundColor('#CC000000').borderRadius(20)
           .position({ x: 16, y: this.topInset + 72 }).hitTestBehavior(HitTestMode.None)
