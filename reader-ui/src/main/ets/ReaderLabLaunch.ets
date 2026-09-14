@@ -29,6 +29,8 @@ export class ReaderLabRequest {
   /** Missing debug overrides inherit the host's read-only initial policy. */
   entryLayoutOverride: string | null = null
   entryDirectionOverride: string | null = null
+  /** Debug-only visual probe. Missing values inherit the host's wide-page policy. */
+  rotateWidePagesOverride: boolean | null = null
   entryProbe: string = ''
   /** Debug-only host handoff probe; never changes ordinary reader requests. */
   chapterProbe: string = ''
@@ -125,6 +127,9 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
     entryLayout === 'continuous' ? 'continuous' : null
   const entryDirection = want.parameters['readerLabEntryDirection']
   request.entryDirectionOverride = entryDirection === 'ltr' ? 'ltr' : entryDirection === 'rtl' ? 'rtl' : null
+  const rotateWidePages = want.parameters['readerLabRotateWidePages']
+  request.rotateWidePagesOverride = rotateWidePages === true || rotateWidePages === 'true' ? true :
+    rotateWidePages === false || rotateWidePages === 'false' ? false : null
   request.entryProbe = request.thumbnailEntry && want.parameters['readerLabEntryProbe'] === 'delay-once' ? 'delay-once' : ''
   const chapterProbe = want.parameters['readerLabChapterProbe']
   request.chapterProbe = request.readingChrome && typeof chapterProbe === 'string' &&

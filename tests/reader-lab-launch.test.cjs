@@ -34,9 +34,25 @@ test('absent or invalid entry overrides preserve legacy defaults without forcing
     const request = api.connectReaderLabLaunch().consume()
     assert.equal(request.entryLayoutOverride, null)
     assert.equal(request.entryDirectionOverride, null)
+    assert.equal(request.rotateWidePagesOverride, null)
     assert.equal(request.entryLayout, 'single')
     assert.equal(request.entryDirection, 'ltr')
     assert.equal(request.pageIndex, 2)
+  }
+})
+
+test('wide-page rotation override is strict, independent and absent by default', () => {
+  const direct = new (fixture().ReaderLabRequest)('work', 'unit', 0)
+  assert.equal(direct.rotateWidePagesOverride, null)
+  for (const [input, expected] of [[true, true], ['true', true], [false, false], ['false', false]]) {
+    const api = fixture()
+    api.captureReaderLabWant({ parameters: { readerLabWork: 'work', readerLabRotateWidePages: input } }, true)
+    assert.equal(api.connectReaderLabLaunch().consume().rotateWidePagesOverride, expected)
+  }
+  for (const input of [undefined, null, 0, 1, '', 'TRUE', 'invalid']) {
+    const api = fixture()
+    api.captureReaderLabWant({ parameters: { readerLabWork: 'work', readerLabRotateWidePages: input } }, true)
+    assert.equal(api.connectReaderLabLaunch().consume().rotateWidePagesOverride, null)
   }
 })
 
