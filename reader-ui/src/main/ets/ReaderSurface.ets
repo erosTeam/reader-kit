@@ -59,6 +59,8 @@ export struct ReaderSurface {
   @Event onVariantSelection: (sourceIndex: number, preference: ReaderVariantPreference,
     result: 'changed' | 'unchanged' | 'unavailable' | 'stale') => void = () => {}
   @Param cropBorders: boolean = false
+  /** Host-owned crop detector/configuration identity; changes re-read retained assets without navigation. */
+  @Param cropSourceRevision: string = ''
   @Param cropAvailable: boolean = false
   @Param hostSettingsAvailable: boolean = false
   @Event onHostSettings: () => void = () => {}
@@ -237,6 +239,9 @@ export struct ReaderSurface {
 
   @Monitor('preloadDepth')
   onPreloadDepthChanged(): void { this.session.setPreloadDepth(this.preloadDepth) }
+
+  @Monitor('cropSourceRevision')
+  onCropSourceRevisionChanged(): void { this.session.refreshCrop() }
 
   aboutToDisappear(): void {
     this.chromeDisposed = true

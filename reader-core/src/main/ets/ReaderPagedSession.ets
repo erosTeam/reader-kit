@@ -178,6 +178,7 @@ export class ReaderPagedSnapshot {
 
 class ReaderPageSlot {
   cropRequestId: number = 0
+  cropRevision: number = 0
   crop: ReaderImageCropBounds | null = null
   cropSettled: boolean = false
   id: number
@@ -256,16 +257,34 @@ export class ReaderPagedSession {
     this.emit()
   }
 
+  /** Host-owned crop inputs changed while the retained image asset stayed the same. */
+  refreshCrop(): void {
+    if (this.disposed) return
+    this.cropPages.clear()
+    this.slots.forEach((slot: ReaderPageSlot): void => {
+      slot.cropRevision += 1
+      slot.cropRequestId = 0
+      slot.crop = null
+      slot.cropSettled = false
+    })
+    if (this.cropEnabled) {
+      this.slots.forEach((slot: ReaderPageSlot): void => this.requestCrop(slot, slot.session.snapshot()))
+    }
+    this.emit()
+  }
+
   private requestCrop(slot: ReaderPageSlot, snapshot: ReaderSnapshot): void {
     if (!this.cropEnabled || snapshot.kind !== 'original' || snapshot.assetRequestId === 0 ||
       (snapshot.phase !== 'decoding' && snapshot.phase !== 'displayed') ||
       slot.cropRequestId === snapshot.assetRequestId) return
     const requestId = snapshot.assetRequestId
+    const cropRevision = slot.cropRevision
     slot.cropRequestId = requestId
     slot.crop = null
     slot.cropSettled = false
     void slot.session.imageCrop(requestId).then((crop: ReaderImageCropBounds | null): void => {
-      if (this.disposed || !this.slots.includes(slot) || slot.cropRequestId !== requestId ||
+      if (this.disposed || !this.slots.includes(slot) || slot.cropRevision !== cropRevision ||
+        slot.cropRequestId !== requestId ||
         slot.session.snapshot().assetRequestId !== requestId) return
       slot.crop = crop?.copy() ?? null
       slot.cropSettled = true

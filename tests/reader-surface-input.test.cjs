@@ -119,6 +119,14 @@ test('image information appends host-owned lines after retained file facts', () 
   ].join('\n'))
 })
 
+test('host crop source revision refreshes retained crop without owning host settings', () => {
+  const surface = new ReaderSurface(); let refreshes = 0
+  surface.session = { refreshCrop() { refreshes++ } }
+  surface.onCropSourceRevisionChanged()
+  assert.equal(refreshes, 1)
+  assert.match(source, /@Param cropSourceRevision: string = ''/)
+})
+
 test('enabled page-turn animation emits one adjacent native pager command before session selection', () => {
   const value = scenario()
   value.surface.pageTurnAnimation = true

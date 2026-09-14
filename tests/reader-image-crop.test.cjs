@@ -125,3 +125,30 @@ test('paged crop is opt-in, reversible, asset-scoped and never changes topology'
   assert.equal(session.snapshot().cropForPage(0).top, .2)
   session.close()
 })
+
+test('host crop revision re-reads the retained asset and rejects the older result', async () => {
+  const first = deferred(), second = deferred(); let reads = 0
+  const catalog = { async open() { return new ReaderUnit(key, 'unit', 1) },
+    async page(unit, index) { const p = new ReaderPage(unit.key, `p${index}`, index); p.width = 800; p.height = 1200; return p },
+    adjacent() { return null } }
+  const assets = { cancellationMode: 'consumer-only', async load() {
+    const asset = new ReaderAsset('same-file')
+    asset.crop = { read() { reads++; return reads === 1 ? first.promise : second.promise } }
+    return asset
+  } }
+  const session = new ReaderPagedSession(catalog, assets), tick = () => new Promise(setImmediate)
+  await session.open(key); await tick()
+  session.setCropEnabled(true); await tick()
+  const before = session.snapshot()
+  assert.equal(reads, 1)
+  session.refreshCrop(); await tick()
+  assert.equal(reads, 2)
+  second.resolve(new ReaderImageCropBounds(.3)); await tick()
+  assert.equal(session.snapshot().frames[0].crop.left, .3)
+  first.resolve(new ReaderImageCropBounds(.1)); await tick()
+  const after = session.snapshot()
+  assert.equal(after.frames[0].crop.left, .3)
+  assert.equal(after.topologyRevision, before.topologyRevision)
+  assert.equal(after.navigationRevision, before.navigationRevision)
+  session.close()
+})
