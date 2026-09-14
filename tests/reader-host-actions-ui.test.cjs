@@ -155,8 +155,8 @@ test('runtime policy intents identify the exact setting changed', () => {
 })
 
 test('surface publishes host-neutral crop and policy events after applying runtime state', () => {
-  assert.match(surfaceSource, /this\.session\.setCropEnabled\(!this\.state\.cropEnabled\)\s+this\.onCropChanged\(this\.session\.snapshot\(\)\.cropEnabled, policy\)/)
-  assert.match(surfaceSource, /this\.session\.setPolicy\(policy\)\s+this\.onPolicyChanged\(this\.session\.snapshot\(\)\.policy\.copy\(\), intent\)/)
+  assert.match(surfaceSource, /this\.session\.setCropEnabled\(!this\.state\.cropEnabled\)\s+this\.preferenceSink\?\.cropChanged\(this\.session\.snapshot\(\)\.cropEnabled, policy\)/)
+  assert.match(surfaceSource, /this\.session\.setPolicy\(policy\)\s+this\.preferenceSink\?\.policyChanged\(this\.session\.snapshot\(\)\.policy, intent\)/)
   assert.match(chromeSource, /layout !== 'continuous' && this\.snapshot\.policy\.pagingAxis !== 'vertical'/)
 })
 

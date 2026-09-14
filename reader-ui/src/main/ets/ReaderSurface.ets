@@ -21,6 +21,7 @@ import { ReaderMediaActions } from './ReaderMediaActions'
 import { ReaderChapterNavigation } from './ReaderChapterNavigation'
 import { ReaderHostStatus } from './ReaderHostStatus'
 import { ReaderObservationSink } from './ReaderObservationSink'
+import { ReaderPreferenceSink } from './ReaderPreferenceSink'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -79,10 +80,8 @@ export struct ReaderSurface {
   @Param chapterNavigation: ReaderChapterNavigation | null = null
   /** Native-visible progress only; persistence and business reactions remain host-owned. */
   @Param observation: ReaderObservationSink | null = null
-  /** Adopted runtime display policy only. The host decides whether and how to persist it. */
-  @Event onPolicyChanged: (policy: ReaderDisplayPolicy, intent: ReaderRuntimePolicyIntent) => void = () => {}
-  /** Adopted runtime border-crop state only. The host owns its preference model. */
-  @Event onCropChanged: (enabled: boolean, policy: ReaderDisplayPolicy) => void = () => {}
+  /** Adopted display changes only; the host owns its preference model and persistence. */
+  @Param preferenceSink: ReaderPreferenceSink | null = null
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPreview: ReaderEntryPreviewSource | null = null
   @Event onClose: (context: ReaderCloseContext | null) => void = () => {}
@@ -326,14 +325,14 @@ export struct ReaderSurface {
   private applyPolicy(policy: ReaderDisplayPolicy, intent: ReaderRuntimePolicyIntent): void {
     if (!this.active || this.closing || this.state.phase !== 'ready') return
     this.session.setPolicy(policy)
-    this.onPolicyChanged(this.session.snapshot().policy.copy(), intent)
+    this.preferenceSink?.policyChanged(this.session.snapshot().policy, intent)
   }
 
   private toggleCrop(): void {
     if (!this.cropAvailable || !this.active || this.closing || this.state.phase !== 'ready') return
     const policy = this.state.policy.copy()
     this.session.setCropEnabled(!this.state.cropEnabled)
-    this.onCropChanged(this.session.snapshot().cropEnabled, policy)
+    this.preferenceSink?.cropChanged(this.session.snapshot().cropEnabled, policy)
   }
 
   private flushSaveFeedback(): void {

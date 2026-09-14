@@ -44,7 +44,7 @@ test('surface publishes only the display policy actually adopted by the live ses
     setPolicy(policy) { assert.equal(policy, requested) },
     snapshot() { return { policy: adopted } },
   }
-  surface.onPolicyChanged = (policy, intent) => events.push([policy, intent])
+  surface.preferenceSink = { policyChanged: (policy, intent) => events.push([policy.copy(), intent]) }
   surface.applyPolicy(requested, 'spread_layout')
   assert.equal(events.length, 1)
   assert.notEqual(events[0][0], adopted)
@@ -66,7 +66,7 @@ test('surface reports adopted crop state without owning host persistence', () =>
     setCropEnabled(value) { enabled = value },
     snapshot() { return { cropEnabled: enabled } },
   }
-  surface.onCropChanged = (value, adoptedPolicy) => events.push([value, adoptedPolicy])
+  surface.preferenceSink = { cropChanged: (value, adoptedPolicy) => events.push([value, adoptedPolicy.copy()]) }
   surface.toggleCrop()
   assert.equal(events.length, 1)
   assert.equal(events[0][0], true)
@@ -81,8 +81,7 @@ test('surface reports adopted crop state without owning host persistence', () =>
 })
 
 test('surface chrome routes policy and crop intents through host-output gates', () => {
-  assert.match(source, /@Event onPolicyChanged: \(policy: ReaderDisplayPolicy, intent: ReaderRuntimePolicyIntent\) => void/)
-  assert.match(source, /@Event onCropChanged: \(enabled: boolean, policy: ReaderDisplayPolicy\) => void/)
+  assert.match(source, /@Param preferenceSink: ReaderPreferenceSink \| null = null/)
   assert.match(source, /onCrop: \(\): void => \{ this\.toggleCrop\(\) \}/)
   assert.match(source, /onPolicy: \(policy: ReaderDisplayPolicy, intent: ReaderRuntimePolicyIntent\): void => \{\s+this\.applyPolicy\(policy, intent\)/)
 })
