@@ -766,6 +766,7 @@ export struct ReaderSurface {
           .padding({ top: this.thumbnailRailVisible() ? 8 : 0, bottom: this.thumbnailRailVisible() ? 8 : 0 })
           .margin({ bottom: this.bottomInset + 112 }).backgroundColor('#CC000000').clip(true)
           .hitTestBehavior(this.thumbnailRailVisible() ? HitTestMode.Default : HitTestMode.None)
+          .id('rkit-thumbnail-rail-wrapper')
       }
       if (this.chromeVisible) {
         ReaderChrome({ snapshot: this.state, active: this.active, topInset: this.topInset,
