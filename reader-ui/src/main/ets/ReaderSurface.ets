@@ -1,8 +1,8 @@
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy, ReaderLayout,
   ReaderReadingAnchor, ReaderObservedPosition, ReaderProcessedAssetVariant, ReaderVariantPreference,
-  ReaderInputPort, ReaderMoveIntent, ReaderImageShareHost, ReaderImageShareTarget,
+  ReaderInputPort, ReaderMoveIntent, ReaderImageShareTarget,
   ReaderImageShareController, ReaderPagedFrame, ReaderImageInformation,
-  ReaderImageSaveHost, ReaderImageSaveController, ReaderImageSaveChoice, ReaderAutoReadController } from '@reader-kit/core'
+  ReaderImageSaveController, ReaderImageSaveChoice, ReaderAutoReadController } from '@reader-kit/core'
 import { ReaderPagerCommand, ReaderPagerSurface } from './ReaderPagerSurface'
 import { ReaderContinuousSurface } from './ReaderContinuousSurface'
 import { ReaderChrome, ReaderRuntimePolicyIntent } from './ReaderChrome'
@@ -17,6 +17,7 @@ import { ReaderHostAction } from './ReaderHostAction'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { ReaderCloseContext } from './ReaderCloseContext'
 import { readerElementKey } from './ReaderElementKey'
+import { ReaderMediaActions } from './ReaderMediaActions'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -39,10 +40,8 @@ export struct ReaderSurface {
   @Param bottomInset: number = 0
   @Param accent: ResourceColor = '#D93646'
   @Param input: ReaderInputPort | null = null
-  @Param imageShare: ReaderImageShareHost | null = null
-  @Param imageSave: ReaderImageSaveHost | null = null
-  /** Host-owned, read-only information lines appended after retained file facts. */
-  @Param informationSupplement: ((frame: ReaderPagedFrame, value: ReaderImageInformation) => string[]) | null = null
+  /** Optional host media operations stay in one narrow capability bundle. */
+  @Param mediaActions: ReaderMediaActions | null = null
   @Param autoReadAvailable: boolean = false
   @Param autoReadSeconds: number = 3
   @Param pageTurnAnimation: boolean = false
@@ -346,7 +345,7 @@ export struct ReaderSurface {
   }
 
   private async saveImage(choice: ReaderImageSaveChoice): Promise<void> {
-    const host = this.imageSave
+    const host = this.mediaActions?.imageSave ?? null
     if (host === null || !this.active || this.closing || this.chromeCloseRequested ||
       this.shareBusy || this.informationBusy || this.session.snapshot().originalPreparing || this.previewIndex >= 0) return
     this.saveController.update(this.session.snapshot(), this.active)
@@ -364,7 +363,7 @@ export struct ReaderSurface {
   }
 
   private async shareImage(): Promise<void> {
-    const host = this.imageShare
+    const host = this.mediaActions?.imageShare ?? null
     if (host === null || !this.active || this.previewIndex >= 0 || this.menuVisible || this.informationBusy || this.saveBusy ||
       this.session.snapshot().originalPreparing) return
     this.shareController.update(ReaderImageShareTarget.from(this.session.snapshot()), this.active)
@@ -416,7 +415,7 @@ export struct ReaderSurface {
       'rkit_info_original_available' : 'rkit_info_original_unavailable'))
     lines.push(`${this.text('rkit_info_dimensions')}${value.width > 0 && value.height > 0 ?
       `${value.width} x ${value.height}` : unknown}`)
-    const supplemental = this.informationSupplement?.(frame, value) ?? []
+    const supplemental = this.mediaActions?.informationSupplement?.(frame, value) ?? []
     lines.push(...supplemental.filter((line: string): boolean => line.trim().length > 0))
     return lines.join('\n')
   }
@@ -808,8 +807,10 @@ export struct ReaderSurface {
           onChapter: (direction: 'previous' | 'next', source: ReaderUnitKey): void => {
             this.requestChapter(direction, source)
           },
-          shareAvailable: this.imageShare !== null, shareBusy: this.shareBusy,
-          saveAvailable: this.imageSave !== null, saveBusy: this.saveBusy,
+          shareAvailable: this.mediaActions !== null && this.mediaActions.imageShare !== null,
+          shareBusy: this.shareBusy,
+          saveAvailable: this.mediaActions !== null && this.mediaActions.imageSave !== null,
+          saveBusy: this.saveBusy,
           autoReadAvailable: this.autoReadAvailable, autoReadEnabled: this.autoReadEnabled,
           cropAvailable: this.cropAvailable,
           enhancementVisible: this.enhancementVisible(),

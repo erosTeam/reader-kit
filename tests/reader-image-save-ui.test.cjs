@@ -64,24 +64,25 @@ function surface(session) {
   const s=new Surface(),toasts=[]
   Object.assign(s,{session,state:session.snapshot(),active:true,closing:false,chromeCloseRequested:false,chromeDisposed:false,shareBusy:false,informationBusy:false,saveBusy:false,previewIndex:-1,
     saveFeedback:null,saveController:new core.ReaderImageSaveController(),shareController:new core.ReaderImageShareController(),autoReadController:new core.ReaderAutoReadController(()=>{}),
-    getUIContext:()=>({getPromptAction:()=>({showToast:v=>toasts.push(v.message)})}),invalidateChromeShow(){},input:null,entryTransition:null})
+    getUIContext:()=>({getPromptAction:()=>({showToast:v=>toasts.push(v.message)})}),invalidateChromeShow(){},input:null,entryTransition:null,
+    mediaActions:null})
   s.saveController.subscribe(v=>s.saveBusy=v)
   return {s,toasts}
 }
 test('save/share/info mutual exclusion executes real guards and controller busy',async()=>{
   const session=await realSession(),{s}=surface(session),done=deferred();let calls=0
-  s.imageSave={prepare:async()=>{calls++;return {present:()=>done.promise,release(){}}}}
+  s.mediaActions={imageSave:{prepare:async()=>{calls++;return {present:()=>done.promise,release(){}}}},imageShare:null,informationSupplement:null}
   for(const field of ['shareBusy','informationBusy']){s[field]=true;await s.saveImage('current');s[field]=false}
   assert.equal(calls,0)
   const run=s.saveImage('current');await tick();assert.equal(s.saveBusy,true)
-  s.imageShare={prepare:()=>{throw Error('share must not prepare')}}
+  s.mediaActions={imageSave:s.mediaActions.imageSave,imageShare:{prepare:()=>{throw Error('share must not prepare')}},informationSupplement:null}
   await s.shareImage();await s.showInformation(session.snapshot().frames[0]);await s.saveImage('current');assert.equal(calls,1)
   done.resolve([{sourceIndex:0,status:'saved'}]);await run;session.close()
 })
 test('dialog inactive completion defers feedback until active; disappear suppresses late toast',async()=>{
   for(const disappear of [false,true]) {
     const session=await realSession(),{s,toasts}=surface(session),done=deferred()
-    s.imageSave={prepare:async()=>({present:()=>{s.active=false;return done.promise},release(){}})}
+    s.mediaActions={imageSave:{prepare:async()=>({present:()=>{s.active=false;return done.promise},release(){}})},imageShare:null,informationSupplement:null}
     const run=s.saveImage('current');await tick()
     if(disappear)s.aboutToDisappear()
     done.resolve([{sourceIndex:0,status:'saved'}]);await run;assert.deepEqual(toasts,[])
@@ -93,7 +94,7 @@ test('both close intents cancel deferred prepare before presentation while surfa
   for(const hostClosing of [false,true]) {
     const session=await realSession(),{s,toasts}=surface(session),prepared=deferred();let shown=0,released=0
     s.onClose=()=>{}
-    s.imageSave={prepare:()=>prepared.promise}
+    s.mediaActions={imageSave:{prepare:()=>prepared.promise},imageShare:null,informationSupplement:null}
     const run=s.saveImage('current')
     if(hostClosing){s.closing=true;s.onClosingChanged()}else s.requestClose()
     assert.equal(s.active,true)
@@ -106,7 +107,7 @@ test('both close intents retain already presented resources and suppress complet
   for(const hostClosing of [false,true]) {
     const session=await realSession(),{s,toasts}=surface(session),done=deferred();let released=0
     s.onClose=()=>{}
-    s.imageSave={prepare:async()=>({present:()=>done.promise,release:()=>released++})}
+    s.mediaActions={imageSave:{prepare:async()=>({present:()=>done.promise,release:()=>released++})},imageShare:null,informationSupplement:null}
     const run=s.saveImage('current');await tick()
     if(hostClosing){s.closing=true;s.onClosingChanged()}else s.requestClose()
     assert.equal(released,0)

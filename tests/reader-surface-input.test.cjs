@@ -104,11 +104,11 @@ test('image information appends host-owned lines after retained file facts', () 
   }
   surface.text = name => labels[name] ?? name
   const frame = { part: { sourceIndex: 3 } }
-  surface.informationSupplement = (actual, value) => [
-    `Enhancement: ${value.variant}`,
-    `Source: page-${actual.part.sourceIndex}`,
-    '   ',
-  ]
+  surface.mediaActions = { imageShare: null, imageSave: null, informationSupplement: (actual, value) => [
+      `Enhancement: ${value.variant}`,
+      `Source: page-${actual.part.sourceIndex}`,
+      '   ',
+    ] }
   const value = {
     mimeType: 'image/webp', bytes: 2048, width: 1280, height: 720,
     variant: 'resampled', originalAvailable: true,
