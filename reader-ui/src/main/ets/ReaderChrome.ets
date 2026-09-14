@@ -462,7 +462,8 @@ export struct ReaderChrome {
               }
             }.width(44).height(44).backgroundColor(Color.Transparent)
               .id('rkit-more').accessibilityText($r('app.string.rkit_more'))
-              .enabled(this.active && (this.informationFrames().length > 0 || this.externalOpenAvailable ||
+              .enabled(this.active && this.snapshot.phase === 'ready' && (this.reloadAvailable ||
+                this.informationFrames().length > 0 || this.externalOpenAvailable ||
                 this.hostActions.some((action: ReaderHostAction): boolean => action.enabled && !action.busy) ||
                 this.chapterNavigationAvailable && this.snapshot.phase === 'ready') &&
                 !this.chapterNavigationBusy && !this.informationBusy && !this.shareBusy && !this.saveBusy && !this.snapshot.originalPreparing)

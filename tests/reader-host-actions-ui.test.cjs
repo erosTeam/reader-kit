@@ -138,3 +138,7 @@ test('manual source reload keeps single and spread semantic ids distinct', () =>
   assert.match(chromeSource, /rkit-reload-source-\$\{frame\.part\.sourceIndex\}/)
   assert.match(surfaceSource, /this\.session\.reloadItem\(topology, navigation, itemKey, frame\.slotId, frame\.asset\.requestId\)/)
 })
+
+test('manual reload alone keeps the more menu trigger enabled', () => {
+  assert.match(chromeSource, /\.enabled\(this\.active && this\.snapshot\.phase === 'ready' && \(this\.reloadAvailable \|\|/)
+})
