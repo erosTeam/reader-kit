@@ -22,6 +22,7 @@ import { ReaderChapterNavigation } from './ReaderChapterNavigation'
 import { ReaderHostStatus } from './ReaderHostStatus'
 import { ReaderObservationSink } from './ReaderObservationSink'
 import { ReaderPreferenceSink } from './ReaderPreferenceSink'
+import { ReaderActivitySink } from './ReaderActivitySink'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -85,9 +86,8 @@ export struct ReaderSurface {
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPreview: ReaderEntryPreviewSource | null = null
   @Event onClose: (context: ReaderCloseContext | null) => void = () => {}
-  @Event onChromeVisible: (visible: boolean) => void = () => {}
-  /** Host-neutral foreground interaction signal for pausable processors. */
-  @Event onInteractionBusy: (busy: boolean) => void = () => {}
+  /** Host-neutral UI activity signals for presentation and pausable processors. */
+  @Param activitySink: ReaderActivitySink | null = null
   @Local private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
   @Local private chromeVisible: boolean = true
   @Local private thumbnailsVisible: boolean = false
@@ -181,7 +181,7 @@ export struct ReaderSurface {
         this.entryTransition?.pending() === true)
     if (busy === this.interactionBusyReported) return
     this.interactionBusyReported = busy
-    this.onInteractionBusy?.(busy)
+    this.activitySink?.interactionBusyChanged(busy)
   }
 
   private publishObserved(state: ReaderPagedSnapshot): void {
@@ -251,7 +251,7 @@ export struct ReaderSurface {
     this.input?.disconnect(this.inputConnection)
     if (this.interactionBusyReported) {
       this.interactionBusyReported = false
-      this.onInteractionBusy(false)
+      this.activitySink?.interactionBusyChanged(false)
     }
     this.session.close()
   }
@@ -542,7 +542,7 @@ export struct ReaderSurface {
   private commitChromeVisible(visible: boolean): void {
     this.chromeVisible = visible
     if (!this.chromeVisible) this.previewIndex = -1
-    this.onChromeVisible(this.chromeVisible)
+    this.activitySink?.chromeChanged(this.chromeVisible)
     console.info(`[ReaderSurface] chrome=${this.chromeVisible}`)
   }
 

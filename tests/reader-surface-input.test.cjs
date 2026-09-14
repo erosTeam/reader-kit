@@ -226,7 +226,7 @@ test('preferred host variant waits for the original asset instead of consuming i
 test('host interaction signal is edge-triggered and clears after the gesture', () => {
   const surface = new ReaderSurface(), events = []
   Object.assign(surface, { active: true, closing: false, chromeDisposed: false, inputLocked: false,
-    onInteractionBusy: busy => events.push(busy) })
+    activitySink: { interactionBusyChanged: busy => events.push(busy) } })
   surface.reportInteractionBusy()
   surface.touching = true; surface.reportInteractionBusy(); surface.reportInteractionBusy()
   surface.touching = false; surface.reportInteractionBusy()
@@ -282,7 +282,7 @@ test('unit boundary intent is accepted only for a current available adjacent uni
 function chromeScenario() {
   const { surface } = scenario()
   const events = []
-  surface.onChromeVisible = visible => events.push(visible)
+  surface.activitySink = { chromeChanged: visible => events.push(visible) }
   surface.session.setViewportActive = () => {}
   surface.session.close = () => {}
   surface.shareController.update = () => {}
