@@ -27,6 +27,7 @@ function evaluate(source) {
       } }
       if (name === './ReaderCloseContext') return { ReaderCloseContext }
       if (name === './ReaderVariantPolicy') return { ReaderVariantPolicy }
+      if (name === './ReaderCropPolicy') return { ReaderCropPolicy }
       assert.fail(`unexpected import: ${name}`)
     },
     ObservedV2: value => value, ComponentV2: value => value,
@@ -40,6 +41,7 @@ function evaluate(source) {
 const { ReaderEntryTransition } = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderEntryTransition.ets'), 'utf8'))
 const { ReaderCloseContext } = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderCloseContext.ets'), 'utf8'))
 const { ReaderVariantPolicy } = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderVariantPolicy.ets'), 'utf8'))
+const { ReaderCropPolicy } = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderCropPolicy.ets'), 'utf8'))
 const source = fs.readFileSync(path.join(uiPath, 'ReaderSurface.ets'), 'utf8')
 // Execute actual surface methods, excluding only ArkUI declarative build syntax.
 // The session below records calls; no rendering, hardware delivery or UI acceptance is simulated.
@@ -124,9 +126,13 @@ test('image information appends host-owned lines after retained file facts', () 
 test('host crop source revision refreshes retained crop without owning host settings', () => {
   const surface = new ReaderSurface(); let refreshes = 0
   surface.session = { refreshCrop() { refreshes++ } }
-  surface.onCropSourceRevisionChanged()
+  surface.cropPolicy = new ReaderCropPolicy(true, true, 'detector:v2')
+  surface.onCropPolicyChanged()
   assert.equal(refreshes, 1)
-  assert.match(source, /@Param cropSourceRevision: string = ''/)
+  surface.cropPolicy = new ReaderCropPolicy(false, true, 'detector:v2')
+  surface.onCropPolicyChanged()
+  assert.equal(refreshes, 1)
+  assert.match(source, /@Param cropPolicy: ReaderCropPolicy \| null = null/)
 })
 
 test('enabled page-turn animation emits one adjacent native pager command before session selection', () => {

@@ -28,6 +28,7 @@ import { ReaderExternalOpen } from './ReaderExternalOpen'
 import { ReaderHostActions } from './ReaderHostActions'
 import { ReaderCenterAction } from './ReaderCenterAction'
 import { ReaderVariantPolicy } from './ReaderVariantPolicy'
+import { ReaderCropPolicy } from './ReaderCropPolicy'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -61,10 +62,7 @@ export struct ReaderSurface {
   @Param preloadDepth: number = 0
   /** Optional host policy. Null retains the default, unprocessed asset behavior. */
   @Param variantPolicy: ReaderVariantPolicy | null = null
-  @Param cropBorders: boolean = false
-  /** Host-owned crop detector/configuration identity; changes re-read retained assets without navigation. */
-  @Param cropSourceRevision: string = ''
-  @Param cropAvailable: boolean = false
+  @Param cropPolicy: ReaderCropPolicy | null = null
   @Param hostSettings: ReaderHostSettings | null = null
   @Param externalOpen: ReaderExternalOpen | null = null
   @Param hostActions: ReaderHostActions | null = null
@@ -121,6 +119,7 @@ export struct ReaderSurface {
   private variantAttempts: Set<string> = new Set<string>()
   private interactionBusyReported: boolean = false
   private tapZonePreviewShownRevision: number = 0
+  private appliedCropSourceRevision: string = ''
 
   private reportZoomed(zoomed: boolean, topology: number, navigation: number): void {
     if (!this.active || this.closing || this.chromeDisposed || topology !== this.state.topologyRevision ||
@@ -202,7 +201,8 @@ export struct ReaderSurface {
     this.chromeCloseRequested = false
     this.session.setNeighborPreload(true)
     this.session.setPreloadDepth(this.preloadDepth)
-    this.session.setCropEnabled(this.cropBorders)
+    this.appliedCropSourceRevision = this.cropPolicy?.sourceRevision ?? ''
+    this.session.setCropEnabled(this.cropPolicy?.enabled ?? false)
     this.session.setViewportActive(this.active)
     this.autoReadController.subscribe((enabled: boolean): void => { this.autoReadEnabled = enabled })
     this.shareController.subscribe((busy: boolean): void => { this.shareBusy = busy; this.syncAutoRead() })
@@ -230,8 +230,13 @@ export struct ReaderSurface {
   @Monitor('preloadDepth')
   onPreloadDepthChanged(): void { this.session.setPreloadDepth(this.preloadDepth) }
 
-  @Monitor('cropSourceRevision')
-  onCropSourceRevisionChanged(): void { this.session.refreshCrop() }
+  @Monitor('cropPolicy')
+  onCropPolicyChanged(): void {
+    const revision = this.cropPolicy?.sourceRevision ?? ''
+    if (revision === this.appliedCropSourceRevision) return
+    this.appliedCropSourceRevision = revision
+    this.session.refreshCrop()
+  }
 
   aboutToDisappear(): void {
     this.chromeDisposed = true
@@ -321,7 +326,7 @@ export struct ReaderSurface {
   }
 
   private toggleCrop(): void {
-    if (!this.cropAvailable || !this.active || this.closing || this.state.phase !== 'ready') return
+    if (this.cropPolicy?.available !== true || !this.active || this.closing || this.state.phase !== 'ready') return
     const policy = this.state.policy.copy()
     this.session.setCropEnabled(!this.state.cropEnabled)
     this.preferenceSink?.cropChanged(this.session.snapshot().cropEnabled, policy)
@@ -802,7 +807,7 @@ export struct ReaderSurface {
           saveAvailable: this.mediaActions !== null && this.mediaActions.imageSave !== null,
           saveBusy: this.saveBusy,
           autoReadAvailable: this.autoReadAvailable, autoReadEnabled: this.autoReadEnabled,
-          cropAvailable: this.cropAvailable,
+          cropAvailable: this.cropPolicy?.available === true,
           enhancementVisible: this.enhancementVisible(),
           enhancementProcessing: this.enhancementProcessing(),
           enhancementApplied: this.enhancementApplied(),

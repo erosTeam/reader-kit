@@ -57,7 +57,7 @@ test('surface publishes only the display policy actually adopted by the live ses
 test('surface reports adopted crop state without owning host persistence', () => {
   const Subject = method('toggleCrop')
   const surface = new Subject(), events = []
-  surface.active = true; surface.closing = false; surface.cropAvailable = true
+  surface.active = true; surface.closing = false; surface.cropPolicy = { available: true }
   const policy = new ReaderDisplayPolicy()
   policy.layout = 'continuous'
   surface.state = { phase: 'ready', cropEnabled: false, policy }
@@ -73,9 +73,9 @@ test('surface reports adopted crop state without owning host persistence', () =>
   assert.notEqual(events[0][1], policy)
   assert.equal(events[0][1].layout, 'continuous')
 
-  surface.cropAvailable = false
+  surface.cropPolicy = { available: false }
   surface.toggleCrop()
-  surface.cropAvailable = true; surface.closing = true
+  surface.cropPolicy = { available: true }; surface.closing = true
   surface.toggleCrop()
   assert.equal(events.length, 1)
 })
