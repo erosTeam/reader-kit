@@ -23,6 +23,7 @@ import { ReaderHostStatus } from './ReaderHostStatus'
 import { ReaderObservationSink } from './ReaderObservationSink'
 import { ReaderPreferenceSink } from './ReaderPreferenceSink'
 import { ReaderActivitySink } from './ReaderActivitySink'
+import { ReaderHostSettings } from './ReaderHostSettings'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -66,8 +67,7 @@ export struct ReaderSurface {
   /** Host-owned crop detector/configuration identity; changes re-read retained assets without navigation. */
   @Param cropSourceRevision: string = ''
   @Param cropAvailable: boolean = false
-  @Param hostSettingsAvailable: boolean = false
-  @Event onHostSettings: () => void = () => {}
+  @Param hostSettings: ReaderHostSettings | null = null
   @Param externalOpenAvailable: boolean = false
   @Event onExternalOpen: (source: ReaderUnitKey) => void = () => {}
   @Param hostActions: ReaderHostAction[] = []
@@ -813,8 +813,8 @@ export struct ReaderSurface {
           enhancementVisible: this.enhancementVisible(),
           enhancementProcessing: this.enhancementProcessing(),
           enhancementApplied: this.enhancementApplied(),
-          hostSettingsAvailable: this.hostSettingsAvailable,
-          onHostSettings: (): void => { this.onHostSettings() },
+          hostSettingsAvailable: this.hostSettings !== null,
+          onHostSettings: (): void => { this.hostSettings?.request() },
           externalOpenAvailable: this.externalOpenAvailable,
           onExternalOpen: (source: ReaderUnitKey): void => { this.onExternalOpen(source) },
           hostActions: this.hostActions,
