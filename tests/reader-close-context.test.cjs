@@ -23,6 +23,7 @@ function frame(key, sourceIndex, fragment, slotId) {
   const asset = new core.ReaderSnapshot()
   asset.phase = 'displayed'; asset.kind = 'original'; asset.requestId = slotId + 10
   asset.assetRequestId = slotId + 10; asset.page = new core.ReaderPage(key, `p${sourceIndex}`, sourceIndex)
+  asset.page.width = 1200; asset.page.height = 1800
   return new core.ReaderPagedFrame(slotId, part, asset)
 }
 
@@ -43,6 +44,7 @@ test('spread close context selects the actually observed frame and freezes reque
   const context = ReaderCloseContext.from(value)
   assert.equal(context.part.sourceIndex, 3)
   assert.equal(context.captureComponentId, 'rkit-part-3-whole')
+  assert.equal(context.contentAspectRatio, 2 / 3)
   assert.deepEqual(Array.from(context.displayedSourceIndexes), [2, 3])
   assert.equal(context.matches(value), true)
   value.frames[1].asset.assetRequestId++

@@ -5,8 +5,9 @@
 `ReaderSurface.onClose` receives an optional immutable `ReaderCloseContext`
 captured before reader requests are cancelled. A context exists only when the
 current original frame has actually been presented and observed. It identifies
-the live unit, source part, request generations, displayed source set, and the
-reader component that a host may capture.
+the live unit, source part, request generations, displayed source set, the
+reader component that a host may capture, and the exact split/crop/rotation-
+aware content aspect ratio used by that component.
 
 This is deliberately not a route or animation implementation. The host must
 restore its system bars first, remeasure the current thumbnail target, reject a

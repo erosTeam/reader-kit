@@ -3,7 +3,8 @@ import {
   ReaderSession, ReaderSnapshot, ReaderCatalog, ReaderAssetProvider, ReaderAssetKind, ReaderAssetVariant,
   ReaderCancellation, ReaderProcessedAssetVariant, ReaderPreloadHost, ReaderResolvedAssetPlan, ReaderVariantAssetPlan,
 } from './ReaderSession'
-import { ReaderDisplayMap, ReaderDisplayPolicy, ReaderDisplayPart, ReaderReadingAnchor, ReaderFragment } from './ReaderDisplayMap'
+import { ReaderDisplayMap, ReaderDisplayPolicy, ReaderDisplayPart, ReaderReadingAnchor, ReaderFragment,
+  readerPolicyRotatesPage } from './ReaderDisplayMap'
 import { ReaderThumbnailWindow } from './ReaderThumbnailWindow'
 import { ReaderImageInformation } from './ReaderImageInformation'
 import { ReaderImageCropBounds } from './ReaderImageCrop'
@@ -22,6 +23,22 @@ export class ReaderPagedFrame {
     this.asset = asset.copy()
     this.crop = crop.copy()
   }
+}
+
+/** Exact displayed content ratio, including split, crop and wide-page rotation. */
+export function readerPagedFrameAspectRatio(frame: ReaderPagedFrame,
+  policy: ReaderDisplayPolicy | null = null): number {
+  const page = frame.asset.page
+  const width = frame.asset.kind === 'thumbnail' ? page?.thumbnail.width ?? 0 : page?.width ?? 0
+  const height = frame.asset.kind === 'thumbnail' ? page?.thumbnail.height ?? 0 : page?.height ?? 0
+  const region = frame.crop.region(frame.part)
+  const fraction = frame.asset.kind === 'original' ? region.width / region.height : 1
+  if (policy !== null && frame.part.fragment === 'whole' && readerPolicyRotatesPage(policy, page)) {
+    const originalRatio = page !== null && page.width > 0 && page.height > 0
+      ? page.width / page.height * region.width / region.height : 0
+    return originalRatio > 0 ? 1 / originalRatio : 0.75
+  }
+  return width > 0 && height > 0 ? width / height * fraction : 0.75
 }
 
 export class ReaderPageCropMetadata {

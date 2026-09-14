@@ -4,9 +4,10 @@ const path = require('node:path')
 const test = require('node:test')
 const load = require('./load-core.cjs')
 
-const { ReaderUnitKey, ReaderUnit, ReaderPage } = load('ReaderSession')
+const { ReaderUnitKey, ReaderUnit, ReaderPage, ReaderSnapshot } = load('ReaderSession')
 const { ReaderDisplayMap, ReaderDisplayPolicy, readerPageIsWide,
   readerPolicyRotatesPage } = load('ReaderDisplayMap')
+const { ReaderPagedFrame, readerPagedFrameAspectRatio } = load('ReaderPagedSession')
 const root = path.resolve(__dirname, '..')
 const paged = fs.readFileSync(path.join(root, 'reader-ui/src/main/ets/ReaderPagedViewport.ets'), 'utf8')
 const continuous = fs.readFileSync(path.join(root, 'reader-ui/src/main/ets/ReaderContinuousSurface.ets'), 'utf8')
@@ -55,7 +56,13 @@ test('split remains mutually exclusive and rotation never changes logical topolo
 
 test('paged rendering swaps fitted geometry, rotates clockwise, resets zoom and cancels entry morph', () => {
   assert.match(paged, /function rotatedFrame\([\s\S]*?readerPolicyRotatesPage/)
-  assert.match(paged, /originalRatio > 0 \? 1 \/ originalRatio : 0\.75/)
+  assert.match(paged, /readerPagedFrameAspectRatio\(frame, this\.snapshot\.policy\)/)
+  const wide = page(2400, 1200), policy = new ReaderDisplayPolicy()
+  policy.rotateWidePages = true
+  const asset = new ReaderSnapshot(); asset.page = wide; asset.kind = 'original'
+  const frame = new ReaderPagedFrame(1,
+    new (load('ReaderDisplayMap').ReaderDisplayPart)(wide.unit, wide.key, 0), asset)
+  assert.equal(readerPagedFrameAspectRatio(frame, policy), 0.5)
   assert.match(paged, /snapshot\.policy\.rotateWidePages/)
   assert.match(paged, /private renderWidth\(\): number \{ return this\.rotateClockwise \? this\.viewportHeight : this\.viewportWidth \}/)
   assert.match(paged, /private renderHeight\(\): number \{ return this\.rotateClockwise \? this\.viewportWidth : this\.viewportHeight \}/)

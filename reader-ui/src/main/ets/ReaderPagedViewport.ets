@@ -1,5 +1,5 @@
 import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPart, ReaderDisplayPolicy, ReaderSnapshot, ReaderAssetNotice,
-  ReaderUnitKey, ReaderFragment, readerPolicyRotatesPage } from '@reader-kit/core'
+  ReaderUnitKey, ReaderFragment, readerPolicyRotatesPage, readerPagedFrameAspectRatio } from '@reader-kit/core'
 import { ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/core'
 import { ReaderFailurePanel } from './ReaderFailurePanel'
 import { ReaderAssetNoticePanel } from './ReaderAssetNoticePanel'
@@ -31,20 +31,6 @@ class ReaderEntryMeasurement {
   contentRect: ReaderEntryRect | null = null
 }
 
-function partRatio(frame: ReaderPagedFrame, policy: ReaderDisplayPolicy | null = null): number {
-  const page = frame.asset.page
-  const width = frame.asset.kind === 'thumbnail' ? page?.thumbnail.width ?? 0 : page?.width ?? 0
-  const height = frame.asset.kind === 'thumbnail' ? page?.thumbnail.height ?? 0 : page?.height ?? 0
-  const region = frame.crop.region(frame.part)
-  const fraction = frame.asset.kind === 'original' ? region.width / region.height : 1
-  if (policy !== null && frame.part.fragment === 'whole' && readerPolicyRotatesPage(policy, page)) {
-    const originalRatio = page !== null && page.width > 0 && page.height > 0
-      ? page.width / page.height * region.width / region.height : 0
-    return originalRatio > 0 ? 1 / originalRatio : 0.75
-  }
-  return width > 0 && height > 0 ? width / height * fraction : 0.75
-}
-
 function rotatedFrame(frame: ReaderPagedFrame, policy: ReaderDisplayPolicy): boolean {
   return frame.part.fragment === 'whole' && readerPolicyRotatesPage(policy, frame.asset.page)
 }
@@ -62,7 +48,8 @@ export class ReaderEntryGeometryGate {
     if (page === null) return 'unknown'
     const state = ReaderEntryGeometryGate.dimensions(page.width, page.height)
     if (state !== 'ready') return state
-    return Number.isFinite(partRatio(frame)) && partRatio(frame) > 0 ? 'ready' : 'invalid'
+    return Number.isFinite(readerPagedFrameAspectRatio(frame)) &&
+      readerPagedFrameAspectRatio(frame) > 0 ? 'ready' : 'invalid'
   }
 
   static ready(frames: ReaderPagedFrame[]): boolean {
@@ -297,7 +284,7 @@ export struct ReaderPagedViewport {
     })
     if (this.splitLayout()) {
       const widths = this.snapshot.frames.map((frame: ReaderPagedFrame): number =>
-        this.containedHeight(frame) * partRatio(frame, this.snapshot.policy))
+        this.containedHeight(frame) * readerPagedFrameAspectRatio(frame, this.snapshot.policy))
       const heights = this.snapshot.frames.map((frame: ReaderPagedFrame): number => this.containedHeight(frame))
       // The whole equal-slot Row scales, including the gap between narrow images.
       // Preserve the actual asymmetric outer edges rather than summing image widths.
@@ -382,7 +369,7 @@ export struct ReaderPagedViewport {
 
   private totalRatio(): number {
     return Math.max(0.01, this.snapshot.frames.reduce((sum: number, frame: ReaderPagedFrame) =>
-      sum + partRatio(frame, this.snapshot.policy), 0))
+      sum + readerPagedFrameAspectRatio(frame, this.snapshot.policy), 0))
   }
 
   private frameHeight(): number { return Math.min(this.viewportHeight, this.viewportWidth / this.totalRatio()) }
@@ -403,7 +390,8 @@ export struct ReaderPagedViewport {
 
   private containedHeight(frame: ReaderPagedFrame): number {
     return this.splitLayout()
-      ? Math.min(this.viewportHeight, this.equalSlotWidth() / partRatio(frame, this.snapshot.policy)) : this.frameHeight()
+      ? Math.min(this.viewportHeight, this.equalSlotWidth() /
+        readerPagedFrameAspectRatio(frame, this.snapshot.policy)) : this.frameHeight()
   }
 
   private equalSlots(): boolean { return this.recovering || this.splitLayout() }
@@ -559,10 +547,12 @@ struct ReaderPagedCell {
   }
 
   private cellWidth(): number {
-    return this.frameWidth > 0 ? this.frameWidth : this.frameHeight * partRatio(this.frame(), this.snapshot.policy)
+    return this.frameWidth > 0 ? this.frameWidth : this.frameHeight *
+      readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy)
   }
   private imageHeight(): number {
-    return Math.min(this.frameHeight, this.cellWidth() / partRatio(this.frame(), this.snapshot.policy))
+    return Math.min(this.frameHeight, this.cellWidth() /
+      readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy))
   }
 
   private rotateClockwise(): boolean { return rotatedFrame(this.frame(), this.snapshot.policy) }
@@ -615,7 +605,7 @@ struct ReaderPagedCell {
           entryMeasurement: this.entryMeasurement,
           entryPhase: this.entryTransition?.phase ?? 'finished',
           entryLayoutWidth: this.entryGeometryReady ?
-            this.imageHeight() * partRatio(this.frame(), this.snapshot.policy) : 0,
+            this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy) : 0,
           entryLayoutHeight: this.entryGeometryReady ? this.imageHeight() : 0,
           slotId: this.slotId, assetRequestId: this.presentedFrame().asset.assetRequestId,
           renderedFragment: this.renderedFragment,
@@ -634,7 +624,8 @@ struct ReaderPagedCell {
             if (this.retainedFrameValue === null) this.onInvalidDecodedMetrics(slotId, requestId, assetRequestId)
           },
         })
-          .width(this.imageHeight() * partRatio(this.frame(), this.snapshot.policy)).height(this.imageHeight())
+          .width(this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy))
+          .height(this.imageHeight())
           .zIndex(this.retainedFrameValue !== null && this.frame().asset.phase === 'decoding' ? 1 : 0)
         if (this.retainedFrameValue !== null) {
           ReaderPagedImage({
@@ -645,7 +636,7 @@ struct ReaderPagedCell {
             entryMeasurement: this.entryMeasurement,
             entryPhase: this.entryTransition?.phase ?? 'finished',
             entryLayoutWidth: this.entryGeometryReady ?
-              this.imageHeight() * partRatio(this.frame(), this.snapshot.policy) : 0,
+              this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy) : 0,
             entryLayoutHeight: this.entryGeometryReady ? this.imageHeight() : 0,
             slotId: this.slotId, assetRequestId: this.frame().asset.assetRequestId,
             renderedFragment: this.renderedFragment,
@@ -653,7 +644,8 @@ struct ReaderPagedCell {
             active: this.active && this.snapshot.phase === 'ready',
             onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onInvalidDecodedMetrics: this.onInvalidDecodedMetrics,
-          }).width(this.imageHeight() * partRatio(this.frame(), this.snapshot.policy)).height(this.imageHeight())
+          }).width(this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy))
+            .height(this.imageHeight())
             .zIndex(this.frame().asset.phase === 'displayed' ? 1 : 0)
         }
       }

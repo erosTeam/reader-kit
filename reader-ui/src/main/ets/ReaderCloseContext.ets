@@ -1,5 +1,5 @@
 import { ReaderDisplayPart, ReaderFragment, ReaderPagedFrame, ReaderPagedItemSnapshot, ReaderPagedSnapshot,
-  ReaderUnitKey } from '@reader-kit/core'
+  ReaderUnitKey, readerPagedFrameAspectRatio } from '@reader-kit/core'
 
 /**
  * Immutable identity for an actually presented reading frame at close time.
@@ -17,6 +17,7 @@ export class ReaderCloseContext {
   requestId: number
   assetRequestId: number
   captureComponentId: string
+  contentAspectRatio: number
 
   constructor(snapshot: ReaderPagedSnapshot, frame: ReaderPagedFrame, captureComponentId: string,
     displayedSourceIndexes: number[]) {
@@ -31,6 +32,7 @@ export class ReaderCloseContext {
     this.requestId = frame.asset.requestId
     this.assetRequestId = frame.asset.assetRequestId
     this.captureComponentId = captureComponentId
+    this.contentAspectRatio = readerPagedFrameAspectRatio(frame, snapshot.policy)
   }
 
   static from(snapshot: ReaderPagedSnapshot): ReaderCloseContext | null {
@@ -61,6 +63,7 @@ export class ReaderCloseContext {
       current.displayIndex === this.displayIndex &&
       current.slotId === this.slotId && current.requestId === this.requestId &&
       current.assetRequestId === this.assetRequestId && current.captureComponentId === this.captureComponentId &&
+      current.contentAspectRatio === this.contentAspectRatio &&
       current.displayedSourceIndexes.length === this.displayedSourceIndexes.length &&
       current.displayedSourceIndexes.every((sourceIndex: number, index: number): boolean =>
         sourceIndex === this.displayedSourceIndexes[index])

@@ -21,10 +21,10 @@ function subject(file, names, prelude = '') {
   return context.exports.Subject
 }
 const src = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderPagedViewport.ets'), 'utf8')
-const ratio = src.slice(src.indexOf('function partRatio('), src.indexOf('/** Entry eligibility'))
+const rotated = src.slice(src.indexOf('function rotatedFrame('), src.indexOf('/** Entry eligibility'))
 const Viewport = subject('ReaderPagedViewport', ['geometry', 'totalRatio', 'frameHeight', 'splitLayout',
   'effectivePageGap', 'equalSlotWidth', 'containedHeight', 'equalSlots'],
-  ratio + '\nfunction normalizedReaderPageGap(value) { return Number.isFinite(value) ? Math.max(0, Math.min(96, value)) : 0 }')
+  rotated + '\nfunction normalizedReaderPageGap(value) { return Number.isFinite(value) ? Math.max(0, Math.min(96, value)) : 0 }')
 const Chrome = subject('ReaderChrome', ['toggleSpreadLayout'])
 function frame(i, width, height) {
   const key = new core.ReaderUnitKey('test', 'work', 'unit')
