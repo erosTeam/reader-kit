@@ -1,10 +1,16 @@
 import { LengthMetrics } from '@kit.ArkUI'
+import { ReaderEnhancementStatus } from './ReaderEnhancementStatus'
 
 /** Passive reading status, outlined for both light and dark original pages. */
 @ComponentV2
 export struct ReaderPageStatus {
   @Require @Param value: string
   @Param bottomMargin: number = 0
+  @Param showPageNumber: boolean = true
+  @Param showEnhancement: boolean = false
+  @Param enhancementProcessing: boolean = false
+  @Param enhancementApplied: boolean = false
+  @Param accent: ResourceColor = '#D93646'
   private controller: TextController = new TextController()
 
   @Monitor('value')
@@ -18,9 +24,15 @@ export struct ReaderPageStatus {
   }
 
   build() {
-    Row() {
-      Text(undefined, { controller: this.controller }).textAlign(TextAlign.Center).maxLines(1)
-        .onAppear((): void => { this.updateText() }).id('rkit-persistent-page')
+    Row({ space: 4 }) {
+      if (this.showPageNumber) {
+        Text(undefined, { controller: this.controller }).textAlign(TextAlign.Center).maxLines(1)
+          .onAppear((): void => { this.updateText() }).id('rkit-persistent-page')
+      }
+      if (this.showEnhancement) {
+        ReaderEnhancementStatus({ processing: this.enhancementProcessing,
+          applied: this.enhancementApplied, accent: this.accent })
+      }
     }.width('100%').justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Center)
       .margin({ bottom: this.bottomMargin }).hitTestBehavior(HitTestMode.None)
   }

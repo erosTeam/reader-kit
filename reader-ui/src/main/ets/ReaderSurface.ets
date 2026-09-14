@@ -412,6 +412,25 @@ export struct ReaderSurface {
     return lines.join('\n')
   }
 
+  private enhancementSourceIndex(): number {
+    return this.state.anchor?.sourceIndexHint ?? -1
+  }
+
+  private enhancementVisible(): boolean {
+    return this.preferredVariant === 'enhanced' && this.preferredVariantIdentity.length > 0
+  }
+
+  private enhancementProcessing(): boolean {
+    const sourceIndex = this.enhancementSourceIndex()
+    return sourceIndex >= 0 && this.state.isPreparingVariant(sourceIndex, 'enhanced')
+  }
+
+  private enhancementApplied(): boolean {
+    const sourceIndex = this.enhancementSourceIndex()
+    return sourceIndex >= 0 && this.state.frames.some((frame: ReaderPagedFrame): boolean =>
+      frame.part.sourceIndex === sourceIndex && frame.asset.variant === 'enhanced')
+  }
+
   private async showInformation(frame: ReaderPagedFrame): Promise<void> {
     const state = this.session.snapshot()
     const unit = state.unit?.key.copy() ?? null
@@ -784,6 +803,9 @@ export struct ReaderSurface {
           saveAvailable: this.imageSave !== null, saveBusy: this.saveBusy,
           autoReadAvailable: this.autoReadAvailable, autoReadEnabled: this.autoReadEnabled,
           cropAvailable: this.cropAvailable,
+          enhancementVisible: this.enhancementVisible(),
+          enhancementProcessing: this.enhancementProcessing(),
+          enhancementApplied: this.enhancementApplied(),
           hostSettingsAvailable: this.hostSettingsAvailable,
           onHostSettings: (): void => { this.onHostSettings() },
           externalOpenAvailable: this.externalOpenAvailable,
@@ -836,9 +858,12 @@ export struct ReaderSurface {
             console.info(`[ReaderSurface] seek_source=${index} accepted=${accepted}`)
           },
         })
-      } else if (this.showPageNumber && this.state.unit !== null && this.state.unit.pageCount > 0) {
+      } else if ((this.showPageNumber || this.enhancementVisible()) &&
+        this.state.unit !== null && this.state.unit.pageCount > 0) {
         ReaderPageStatus({ value: `${(this.state.anchor?.sourceIndexHint ?? 0) + 1} / ${this.state.unit.pageCount}`,
-          bottomMargin: this.bottomInset + 8 })
+          bottomMargin: this.bottomInset + 8, showPageNumber: this.showPageNumber,
+          showEnhancement: this.enhancementVisible(), enhancementProcessing: this.enhancementProcessing(),
+          enhancementApplied: this.enhancementApplied(), accent: this.accent })
       }
     }.width('100%').height('100%').backgroundColor(this.canvasBackground).id('rkit-reading-surface')
       .onTouch((event: TouchEvent): void => {

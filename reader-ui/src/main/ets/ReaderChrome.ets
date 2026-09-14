@@ -5,6 +5,7 @@ import { deviceInfo } from '@kit.BasicServicesKit'
 import { SymbolGlyphModifier } from '@kit.ArkUI'
 import { ReaderHostAction } from './ReaderHostAction'
 import { readerElementKey } from './ReaderElementKey'
+import { ReaderEnhancementStatus } from './ReaderEnhancementStatus'
 
 export type ReaderRuntimePolicyIntent = 'layout' | 'direction' | 'spread_layout' |
   'first_page_alone' | 'split_wide_pages'
@@ -24,6 +25,9 @@ export struct ReaderChrome {
   @Param saveBusy: boolean = false
   @Param autoReadAvailable: boolean = false
   @Param cropAvailable: boolean = false
+  @Param enhancementVisible: boolean = false
+  @Param enhancementProcessing: boolean = false
+  @Param enhancementApplied: boolean = false
   @Event onCrop: () => void = () => {}
   @Param originalAvailable: boolean = false
   @Event onOriginal: (frames: ReaderPagedFrame[], unit: ReaderUnitKey, navigation: number, enabled: boolean) => void = () => {}
@@ -511,9 +515,15 @@ export struct ReaderChrome {
               })
           }
         }.width('100%').height(56).alignItems(VerticalAlign.Center)
-        Text(`${this.page()} / ${this.count()}`).fontSize(14).fontColor(Color.White)
-          .maxLines(1).textAlign(TextAlign.Center).hitTestBehavior(HitTestMode.None)
-          .id('rkit-chrome-page')
+        Row({ space: 4 }) {
+          Text(`${this.page()} / ${this.count()}`).fontSize(14).fontColor(Color.White)
+            .maxLines(1).textAlign(TextAlign.Center).hitTestBehavior(HitTestMode.None)
+            .id('rkit-chrome-page')
+          if (this.enhancementVisible) {
+            ReaderEnhancementStatus({ processing: this.enhancementProcessing,
+              applied: this.enhancementApplied, accent: this.accent })
+          }
+        }.alignItems(VerticalAlign.Center).hitTestBehavior(HitTestMode.None)
       }.width('100%').height(this.topInset + 56)
         .padding({ top: this.topInset, left: 8, right: 8 })
         .backgroundColor('#CC000000').position({ x: 0, y: 0 })

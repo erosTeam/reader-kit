@@ -87,6 +87,8 @@ export class ReaderPagedSnapshot {
   kind: ReaderAssetKind = 'original'
   originalPreparing: boolean = false
   variantPreparing: boolean = false
+  preparingSourceIndexes: number[] = []
+  preparingVariants: ReaderAssetVariant[] = []
   cropEnabled: boolean = false
   displayIndex: number = 0
   displayCount: number = 0
@@ -114,6 +116,13 @@ export class ReaderPagedSnapshot {
   }
   canPreviousUnit: boolean = false
   canNextUnit: boolean = false
+
+  isPreparingVariant(sourceIndex: number, variant: ReaderAssetVariant): boolean {
+    for (let index: number = 0; index < this.preparingSourceIndexes.length; index++) {
+      if (this.preparingSourceIndexes[index] === sourceIndex && this.preparingVariants[index] === variant) return true
+    }
+    return false
+  }
 
   observedPosition(): ReaderObservedPosition | null {
     const anchor = this.observedAnchor
@@ -146,6 +155,8 @@ export class ReaderPagedSnapshot {
     value.kind = this.kind
     value.originalPreparing = this.originalPreparing
     value.variantPreparing = this.variantPreparing
+    value.preparingSourceIndexes = this.preparingSourceIndexes.slice()
+    value.preparingVariants = this.preparingVariants.slice()
     value.cropEnabled = this.cropEnabled
     value.displayIndex = this.displayKeys.indexOf(key)
     value.displayCount = this.displayCount
@@ -436,6 +447,10 @@ export class ReaderPagedSession {
     value.originalPreparing = Array.from(this.preparationVariants.values())
       .some((variant: ReaderAssetVariant): boolean => variant === 'original')
     value.variantPreparing = this.originalPreparations.size > 0
+    this.preparationVariants.forEach((variant: ReaderAssetVariant, sourceIndex: number): void => {
+      value.preparingSourceIndexes.push(sourceIndex)
+      value.preparingVariants.push(variant)
+    })
     value.cropEnabled = this.cropEnabled
     value.displayIndex = this.state.displayIndex
     value.displayCount = this.map?.count() ?? 0
