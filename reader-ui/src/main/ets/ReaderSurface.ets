@@ -30,6 +30,7 @@ import { ReaderCenterAction } from './ReaderCenterAction'
 import { ReaderVariantPolicy } from './ReaderVariantPolicy'
 import { ReaderCropPolicy } from './ReaderCropPolicy'
 import { ReaderAutoReadPolicy } from './ReaderAutoReadPolicy'
+import { ReaderTapPolicy } from './ReaderTapPolicy'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -42,6 +43,8 @@ export struct ReaderSurface {
   @Require @Param active: boolean
   @Param closing: boolean = false
   @Param showPageNumber: boolean = true
+  /** Preferred grouped capability. Legacy scalar inputs remain temporarily source-compatible. */
+  @Param tapPolicy: ReaderTapPolicy | null = null
   @Param tapZoneResolver: ((xFraction: number, yFraction: number, layout: ReaderLayout) => ReaderTapAction) | null = null
   /** Host-owned normalized geometry; revision explicitly requests one-shot shared presentation. */
   @Param tapZonePreviewRegions: ReaderTapZonePreviewRegion[] = []
@@ -284,11 +287,12 @@ export struct ReaderSurface {
   @Monitor('autoReadPolicy', 'shareBusy', 'saveBusy', 'informationBusy', 'previewIndex')
   onAutoReadInputsChanged(): void { this.syncAutoRead() }
 
-  @Monitor('tapZonePreviewRevision', 'tapZonePreviewRegions')
+  @Monitor('tapPolicy', 'tapZonePreviewRevision', 'tapZonePreviewRegions')
   onTapZonePreviewChanged(): void {
-    if (this.tapZonePreviewRevision <= this.tapZonePreviewShownRevision || this.closing ||
+    const revision = this.tapPolicy?.previewRevision ?? this.tapZonePreviewRevision
+    if (revision <= this.tapZonePreviewShownRevision || this.closing ||
       this.chromeDisposed || this.state.phase !== 'ready' || this.validTapZonePreviewRegions().length === 0) return
-    this.tapZonePreviewShownRevision = this.tapZonePreviewRevision
+    this.tapZonePreviewShownRevision = revision
     this.tapZonePreviewVisible = true
     this.commitChromeVisible(false)
     this.reportInteractionBusy()
@@ -580,7 +584,8 @@ export struct ReaderSurface {
     const topology = this.state.topologyRevision
     const navigation = this.state.navigationRevision
     const sessionNavigation = session.snapshot().navigationRevision
-    const action: ReaderTapAction = this.tapZoneResolver !== null
+    const policyAction: ReaderTapAction | null = this.tapPolicy?.resolve(x, y, this.state.policy.layout) ?? null
+    const action: ReaderTapAction = policyAction !== null ? policyAction : this.tapZoneResolver !== null
       ? this.tapZoneResolver(x, y, this.state.policy.layout)
       : continuous || (x >= 1 / 3 && x <= 2 / 3) ? 'menu' : x < 1 / 3 ? 'left' : 'right'
     if (!this.active || this.closing || this.chromeDisposed || this.chromeCloseRequested ||
@@ -642,7 +647,8 @@ export struct ReaderSurface {
   }
 
   private validTapZonePreviewRegions(): ReaderTapZonePreviewRegion[] {
-    return this.tapZonePreviewRegions.filter((region: ReaderTapZonePreviewRegion): boolean => region.valid())
+    const regions = this.tapPolicy?.previewRegions() ?? this.tapZonePreviewRegions
+    return regions.filter((region: ReaderTapZonePreviewRegion): boolean => region.valid())
   }
 
   private tapZonePreviewColor(action: ReaderTapAction): ResourceColor {

@@ -18,6 +18,7 @@ export { ReaderVariantPolicy, ReaderVariantSelectionResult } from './src/main/et
 export { ReaderCropPolicy } from './src/main/ets/ReaderCropPolicy'
 export { ReaderAutoReadPolicy } from './src/main/ets/ReaderAutoReadPolicy'
 export { ReaderTapAction } from './src/main/ets/ReaderTapAction'
+export { ReaderTapPolicy } from './src/main/ets/ReaderTapPolicy'
 export { ReaderTapZonePreviewRegion } from './src/main/ets/ReaderTapZonePreviewRegion'
 export { ReaderEntryRect, ReaderEntryTarget, ReaderEntryTransition, ReaderEntryPhase } from './src/main/ets/ReaderEntryTransition'
 export { ReaderEntryPreviewSource } from './src/main/ets/ReaderEntryPreview'
