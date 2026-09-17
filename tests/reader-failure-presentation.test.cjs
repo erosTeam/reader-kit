@@ -23,6 +23,13 @@ test('failure classification is a session port instead of a resource-decorator o
   const session = read('reader-core/src/main/ets/ReaderSession.ets')
   const probe = read('reader-ui/src/main/ets/ReaderLabAssetProbe.ets')
   assert.match(session, /interface ReaderAssetFailureClassifier[\s\S]*?classify\(error: Error\): ReaderAssetFailure/)
-  assert.match(session, /this\.failures\?\.classify\(error as Error\)/)
+  assert.match(session, /private classifyFailure\(fallbackCode: string, error: Error \| null = null\): ReaderAssetFailure/)
+  assert.match(session, /this\.failures\?\.classify\(error \?\? new Error\(fallbackCode\)\)/)
   assert.doesNotMatch(probe, /failure\(error: Error\)/)
+})
+
+test('decode and render failures carry the host classification too', () => {
+  const session = read('reader-core/src/main/ets/ReaderSession.ets')
+  assert.match(session, /this\.state\.failure = success \? null : this\.classifyFailure\('reader_decode_failed'\)/)
+  assert.match(session, /reportRenderFailure[\s\S]*?this\.state\.failure = this\.classifyFailure\('reader_decode_failed'\)/)
 })

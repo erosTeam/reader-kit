@@ -499,9 +499,19 @@ export class ReaderSession {
       }
       this.emit()
     } catch (error) {
-      const failure = this.failures?.classify(error as Error) ?? new ReaderAssetFailure('reader_asset_failed')
+      const failure = this.classifyFailure('reader_asset_failed', error as Error)
       this.fail(epoch, failure.code, failure)
     }
+  }
+
+  /**
+   * Single host-owned classification port for every failure the panel can present:
+   * acquisition errors carry their real Error; decode/render failures pass a
+   * synthetic one so the host can still supply localized copy.
+   */
+  private classifyFailure(fallbackCode: string, error: Error | null = null): ReaderAssetFailure {
+    return this.failures?.classify(error ?? new Error(fallbackCode)) ??
+      new ReaderAssetFailure(fallbackCode)
   }
 
   reportPresentation(requestId: number, success: boolean): void {
@@ -518,7 +528,9 @@ export class ReaderSession {
     }
     this.state.phase = success ? 'displayed' : 'failed'
     this.state.error = success ? '' : 'reader_decode_failed'
-    this.state.failure = null
+    // A decode failure is a host-presentable failure too: use the same
+    // classification port so the panel can show host-owned copy.
+    this.state.failure = success ? null : this.classifyFailure('reader_decode_failed')
     if (!success) {
       this.releaseRetiredAsset()
       this.state.retainedUri = ''
@@ -533,7 +545,7 @@ export class ReaderSession {
       (this.state.phase !== 'displayed' && this.state.phase !== 'decoding')) return
     this.state.phase = 'failed'
     this.state.error = 'reader_decode_failed'
-    this.state.failure = null
+    this.state.failure = this.classifyFailure('reader_decode_failed')
     this.releaseRetiredAsset()
     this.state.retainedUri = ''
     this.state.retainedAssetRequestId = 0
