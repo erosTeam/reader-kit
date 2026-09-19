@@ -422,7 +422,10 @@ export class ReaderSession {
     epoch: number, cancellation: ReaderCancellation, forceReload: boolean = false,
     assetPlan: ReaderResolvedAssetPlan | null = null,
   ): Promise<void> {
-    const retainDisplayed = forceReload && this.state.phase === 'displayed' && this.state.unit !== null &&
+    const isReplacingVariant = assetPlan !== null && this.originalPlan !== assetPlan &&
+      this.state.unit !== null && this.state.unit.key.equals(unit.key) && this.state.sourceIndex === index &&
+      this.state.kind === kind && this.state.phase === 'displayed' && this.asset !== null
+    const retainDisplayed = (forceReload || isReplacingVariant) && this.state.phase === 'displayed' && this.state.unit !== null &&
       this.state.unit.key.equals(unit.key) && this.state.sourceIndex === index && this.state.kind === kind &&
       this.asset !== null
     this.originalPlan = kind === 'original' ? assetPlan : null
@@ -576,6 +579,13 @@ export class ReaderSession {
     this.state.error = code
     this.state.failure = failure === null ? null : failure.copy()
     this.state.notice = null
+    if (this.originalPlan !== null) {
+      this.state.variant = this.originalPlan.variant ?? 'original'
+      this.state.variantIdentity = (this.originalPlan as any).identity ?? ''
+    }
+    this.releaseRetiredAsset()
+    this.state.retainedUri = ''
+    this.state.retainedAssetRequestId = 0
     this.emit()
   }
 
