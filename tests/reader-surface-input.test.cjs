@@ -299,6 +299,10 @@ test('unit boundary intent is accepted only for a current available adjacent uni
 
 function chromeScenario() {
   const { surface } = scenario()
+  // The reader entry default is hidden (matching every legacy host). These
+  // toggle tests exercise the show/hide state machine from the already-shown
+  // state, so request it explicitly instead of relying on the old default.
+  surface.chromeVisible = true
   const events = []
   surface.activitySink = { chromeChanged: visible => events.push(visible) }
   surface.session.setViewportActive = () => {}
@@ -353,6 +357,15 @@ test('optional automatic advance consumes actual session readiness and Surface i
   session.close(); surface.autoReadController.close()
 })
 async function flushChrome() { await Promise.resolve(); await Promise.resolve() }
+
+test('entry chrome follows the host param and defaults hidden like every legacy host', () => {
+  // Mount-time default: the product opens hidden, and the param may override it
+  // on the first frame for a host-owned QA launch.
+  assert.equal(new ReaderSurface().chromeVisible, false, 'product default is hidden')
+  assert.equal(new ReaderSurface().initialChromeVisible, false, 'param default is hidden')
+  assert.match(source, /this\.chromeVisible = this\.initialChromeVisible/,
+    'mount must apply the host request instead of a fixed initial value')
+})
 
 test('null chrome gate preserves synchronous hide/show and preview dismissal', () => {
   const { surface, events } = chromeScenario()

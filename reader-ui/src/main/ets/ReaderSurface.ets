@@ -63,6 +63,16 @@ export struct ReaderSurface {
   @Param pageGap: number = 0
   /** Host preference for future cache warming; native render neighbors remain fixed and bounded. */
   @Param preloadDepth: number = 0
+  /**
+   * Initial chrome visibility on entry. All three legacy hosts mount their
+   * reader with chrome hidden and reveal it only on a user gesture (or a failed
+   * first load): NextN `ReaderPage.readerChromeVisible`, NextE
+   * `ReaderPage.showChrome` from `RouteParams.initialChromeVisible`, and Koma
+   * `ReaderPage.chromeShown`. The shared surface must open the same way instead
+   * of painting the top/bottom bars on the first frame. A host-owned QA path
+   * may pass `true` explicitly; the product default stays hidden.
+   */
+  @Param initialChromeVisible: boolean = false
   /** Optional host policy. Null retains the default, unprocessed asset behavior. */
   @Param variantPolicy: ReaderVariantPolicy | null = null
   @Param cropPolicy: ReaderCropPolicy | null = null
@@ -84,7 +94,7 @@ export struct ReaderSurface {
   /** Host-neutral UI activity signals for presentation and pausable processors. */
   @Param activitySink: ReaderActivitySink | null = null
   @Local private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
-  @Local private chromeVisible: boolean = true
+  @Local private chromeVisible: boolean = false
   @Local private thumbnailsVisible: boolean = false
   @Local private previewIndex: number = -1
   @Local private tapZonePreviewVisible: boolean = false
@@ -202,6 +212,10 @@ export struct ReaderSurface {
   aboutToAppear(): void {
     this.chromeDisposed = false
     this.chromeCloseRequested = false
+    // Enter exactly as the host asked. Every legacy reader opens with chrome
+    // hidden, so the product default is hidden; an explicit host QA launch may
+    // request the bars on the first frame instead.
+    this.chromeVisible = this.initialChromeVisible
     this.session.setNeighborPreload(true)
     this.session.setPreloadDepth(this.preloadDepth)
     this.appliedCropSourceRevision = this.cropPolicy?.sourceRevision ?? ''
