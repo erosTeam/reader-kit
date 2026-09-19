@@ -581,7 +581,8 @@ export class ReaderSession {
     this.state.notice = null
     if (this.originalPlan !== null) {
       this.state.variant = this.originalPlan.variant ?? 'original'
-      this.state.variantIdentity = (this.originalPlan as any).identity ?? ''
+      this.state.variantIdentity = this.originalPlan.variant === 'enhanced' || this.originalPlan.variant === 'translated'
+        ? (this.originalPlan as ReaderVariantAssetPlan).identity : ''
     }
     this.releaseRetiredAsset()
     this.state.retainedUri = ''
