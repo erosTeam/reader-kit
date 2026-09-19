@@ -651,7 +651,8 @@ struct ReaderPagedCell {
             .zIndex(this.frame().asset.phase === 'displayed' ? 1 : 0)
         }
       }
-      if (this.frame().asset.phase === 'idle' || this.frame().asset.phase === 'asset' || this.frame().asset.phase === 'decoding') {
+      if ((this.frame().asset.phase === 'idle' || this.frame().asset.phase === 'asset' || this.frame().asset.phase === 'decoding') &&
+        this.retainedFrameValue === null) {
         LoadingProgress().width(32).height(32)
       }
     }
