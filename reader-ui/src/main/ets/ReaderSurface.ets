@@ -73,6 +73,13 @@ export struct ReaderSurface {
    * may pass `true` explicitly; the product default stays hidden.
    */
   @Param initialChromeVisible: boolean = false
+  /**
+   * Hosts bump this when a presentation setting that affects window chrome
+   * flips (fullscreen, background, theme). The surface re-publishes its real
+   * chrome state through the activity sink, keeping one authoritative chrome
+   * stream instead of hosts reading surface internals.
+   */
+  @Param chromeRepublishToken: number = 0
   /** Optional host policy. Null retains the default, unprocessed asset behavior. */
   @Param variantPolicy: ReaderVariantPolicy | null = null
   @Param cropPolicy: ReaderCropPolicy | null = null
@@ -252,6 +259,12 @@ export struct ReaderSurface {
 
   @Monitor('preloadDepth')
   onPreloadDepthChanged(): void { this.session.setPreloadDepth(this.preloadDepth) }
+
+  @Monitor('chromeRepublishToken')
+  onChromeRepublishTokenChanged(): void {
+    if (this.chromeDisposed) return
+    this.activitySink?.chromeChanged(this.chromeVisible)
+  }
 
   @Monitor('cropPolicy')
   onCropPolicyChanged(): void {
