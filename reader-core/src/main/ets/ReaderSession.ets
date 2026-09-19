@@ -422,7 +422,8 @@ export class ReaderSession {
     epoch: number, cancellation: ReaderCancellation, forceReload: boolean = false,
     assetPlan: ReaderResolvedAssetPlan | null = null,
   ): Promise<void> {
-    const isReplacingVariant = assetPlan !== null && this.originalPlan !== assetPlan &&
+    const targetVariantPlan = kind === 'original' ? assetPlan : null
+    const isReplacingVariant = this.originalPlan !== targetVariantPlan &&
       this.state.unit !== null && this.state.unit.key.equals(unit.key) && this.state.sourceIndex === index &&
       this.state.kind === kind && this.state.phase === 'displayed' && this.asset !== null
     const retainDisplayed = (forceReload || isReplacingVariant) && this.state.phase === 'displayed' && this.state.unit !== null &&
