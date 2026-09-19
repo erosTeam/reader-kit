@@ -90,6 +90,8 @@ export struct ReaderSurface {
   @Param preferenceSink: ReaderPreferenceSink | null = null
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPreview: ReaderEntryPreviewSource | null = null
+  @Param contentOpacity: number = 1
+  @BuilderParam openingPlaceholder: () => void = this.DefaultOpeningPlaceholder
   @Event onClose: (context: ReaderCloseContext | null) => void = () => {}
   /** Host-neutral UI activity signals for presentation and pausable processors. */
   @Param activitySink: ReaderActivitySink | null = null
@@ -697,11 +699,13 @@ export struct ReaderSurface {
     Stack({ alignContent: Alignment.Bottom }) {
       // The existing cell feedback stays above the optional source preview.
       // The preview's declared coverage controls its fade beneath the original image.
+      this.openingPlaceholder()
       if (this.entryTransition !== null && this.entryPreview !== null) {
         ReaderEntryPreview({ entry: this.entryTransition, source: this.entryPreview })
       }
       // This content owns a black canvas even when its host (or the separate Lab) is light.
       WithTheme({ colorMode: ThemeColorMode.DARK }) {
+        Stack() {
         if (this.state.policy.layout === 'continuous') {
           ReaderContinuousSurface({
             imageInterpolation: this.imageInterpolation,
@@ -774,6 +778,7 @@ export struct ReaderSurface {
             },
           })
         }
+        }.width('100%').height('100%').opacity(this.contentOpacity)
       }
       if (this.state.error.length > 0) {
         Column({ space: 16 }) {
@@ -902,6 +907,9 @@ export struct ReaderSurface {
         this.syncAutoRead()
       })
   }
+
+  @Builder
+  private DefaultOpeningPlaceholder() {}
 
   @Builder
   private TapZonePreview() {
