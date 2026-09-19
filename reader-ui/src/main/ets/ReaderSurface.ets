@@ -218,6 +218,10 @@ export struct ReaderSurface {
     // hidden, so the product default is hidden; an explicit host QA launch may
     // request the bars on the first frame instead.
     this.chromeVisible = this.initialChromeVisible
+    // Publish the real initial chrome once so the host and the surface can never
+    // disagree before the first user toggle; later flips keep flowing through
+    // commitChromeVisible.
+    this.activitySink?.chromeChanged(this.chromeVisible)
     this.session.setNeighborPreload(true)
     this.session.setPreloadDepth(this.preloadDepth)
     this.appliedCropSourceRevision = this.cropPolicy?.sourceRevision ?? ''
