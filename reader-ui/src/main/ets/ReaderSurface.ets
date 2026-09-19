@@ -235,6 +235,11 @@ export struct ReaderSurface {
 
   @Monitor('cropPolicy')
   onCropPolicyChanged(): void {
+    // The host settings sheet can flip crop on/off while the reader stays open,
+    // which changes only `enabled` and leaves the detector revision alone. Apply
+    // the switch unconditionally (`setCropEnabled` is a no-op when unchanged) so
+    // the retained page follows the host setting exactly as the legacy reader does.
+    this.session.setCropEnabled(this.cropPolicy?.enabled ?? false)
     const revision = this.cropPolicy?.sourceRevision ?? ''
     if (revision === this.appliedCropSourceRevision) return
     this.appliedCropSourceRevision = revision

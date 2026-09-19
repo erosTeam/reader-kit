@@ -125,15 +125,22 @@ test('image information appends host-owned lines after retained file facts', () 
   ].join('\n'))
 })
 
-test('host crop source revision refreshes retained crop without owning host settings', () => {
-  const surface = new ReaderSurface(); let refreshes = 0
-  surface.session = { refreshCrop() { refreshes++ } }
+test('host crop switch and source revision both reach the retained page', () => {
+  const surface = new ReaderSurface(); let refreshes = 0; const applied = []
+  surface.session = {
+    refreshCrop() { refreshes++ },
+    setCropEnabled(value) { applied.push(value) },
+  }
   surface.cropPolicy = new ReaderCropPolicy(true, true, 'detector:v2')
   surface.onCropPolicyChanged()
   assert.equal(refreshes, 1)
+  assert.equal(applied.at(-1), true)
+  // Flipping only the host switch (the in-reader host settings sheet) must still
+  // reach the open page; the detector revision is unchanged and needs no refresh.
   surface.cropPolicy = new ReaderCropPolicy(false, true, 'detector:v2')
   surface.onCropPolicyChanged()
   assert.equal(refreshes, 1)
+  assert.equal(applied.at(-1), false)
   assert.match(source, /@Param cropPolicy: ReaderCropPolicy \| null = null/)
 })
 
