@@ -859,8 +859,9 @@ export class ReaderPagedSession {
       })
     })
     if (unit === null) return
+    const targetPlan = (index: number): ReaderResolvedAssetPlan | null =>
+      this.state.kind === 'original' ? this.assetPlans.get(index) ?? null : null
     const retained = this.slots.filter((slot: ReaderPageSlot) => slot.kind === this.state.kind &&
-      slot.assetPlan === (this.state.kind === 'original' ? this.assetPlans.get(slot.index) ?? null : null) &&
       parts.some((part: ReaderDisplayPart) => part.sourceIndex === slot.index))
     const removed = this.slots.filter((slot: ReaderPageSlot) => !retained.includes(slot))
     this.slots = retained
@@ -870,9 +871,16 @@ export class ReaderPagedSession {
       if (this.slots.some((slot: ReaderPageSlot) => slot.index === part.sourceIndex)) return
       const slot = new ReaderPageSlot(++this.slotSerial, part.sourceIndex, this.state.kind,
         new ReaderSession(this.catalog, this.assets, this.failures),
-        this.state.kind === 'original' ? this.assetPlans.get(part.sourceIndex) ?? null : null)
+        targetPlan(part.sourceIndex))
       this.slots.push(slot)
       added.push(slot)
+    })
+    retained.forEach((slot: ReaderPageSlot) => {
+      const plan = targetPlan(slot.index)
+      if (slot.assetPlan !== plan) {
+        slot.assetPlan = plan
+        void slot.session.show(slot.index, slot.kind, false, plan)
+      }
     })
     this.emit()
     added.forEach((slot: ReaderPageSlot) => {
