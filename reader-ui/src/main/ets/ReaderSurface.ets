@@ -38,6 +38,10 @@ export struct ReaderSurface {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param canvasBackground: ResourceColor = Color.Black
   @Param canvasForeground: ResourceColor = Color.White
+  /** Hosts may fade the canvas independently while a root-owned transition proxy keeps the image visible. */
+  @Param canvasBackdropOpacity: number = 1
+  /** A close handoff may retire Reader controls and images without removing its canvas. */
+  @Param bodyOpacity: number = 1
   @Require @Param session: ReaderPagedSession
   @Require @Param initialUnit: ReaderUnitKey
   @Require @Param active: boolean
@@ -714,6 +718,16 @@ export struct ReaderSurface {
 
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
+      // The canvas and Reader body have distinct transition owners. A host can
+      // fade this backdrop while a root proxy owns the moving image, without
+      // exposing the destination beneath an abruptly removed Reader surface.
+      Column() {}
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.canvasBackground)
+        .opacity(this.canvasBackdropOpacity)
+        .hitTestBehavior(HitTestMode.None)
+      Stack({ alignContent: Alignment.Bottom }) {
       // The existing cell feedback stays above the optional source preview.
       // The preview's declared coverage controls its fade beneath the original image.
       this.openingPlaceholder()
@@ -917,7 +931,8 @@ export struct ReaderSurface {
           showEnhancement: this.enhancementVisible(), enhancementProcessing: this.enhancementProcessing(),
           enhancementApplied: this.enhancementApplied(), accent: this.accent })
       }
-    }.width('100%').height('100%').backgroundColor(this.canvasBackground).id('rkit-reading-surface')
+      }.width('100%').height('100%').opacity(this.bodyOpacity)
+    }.width('100%').height('100%').backgroundColor(Color.Transparent).id('rkit-reading-surface')
       .onTouch((event: TouchEvent): void => {
         this.touching = event.type !== TouchType.Up && event.type !== TouchType.Cancel
         this.reportInteractionBusy()

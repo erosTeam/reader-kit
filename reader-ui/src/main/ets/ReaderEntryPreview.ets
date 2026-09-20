@@ -113,9 +113,10 @@ export struct ReaderEntryPreview {
       })
     } else if (this.entry.phase === 'waiting' && target.decodedReady) {
       const epoch = ++this.epoch
-      if (this.source.coverage === 'unknown') {
-        // A partial preview has no proven pixel correspondence with the original.
-        // Retire it in the same non-animated commit that exposes the decoded image.
+      if (this.source.coverage !== 'whole-page' || !this.sameFittedAspect(this.source.rect, target.contentRect)) {
+        // A partial preview, or a whole-page preview with a different fitted
+        // aspect, cannot share a geometric handoff with the original. Retire it
+        // in the same non-animated commit that exposes the decoded image.
         this.getUIContext().animateTo({ duration: 0 }, (): void => {
           UIUtils.applySync((): void => {
             this.entry.reveal()
@@ -141,6 +142,17 @@ export struct ReaderEntryPreview {
   private previewClip(): ReaderEntryRect { return this.entry.target?.clipRect ?? this.origin }
 
   private clipped(): boolean { return this.entry.target?.clipRect !== null && this.entry.target?.clipRect !== undefined }
+
+  /**
+   * Whole-page coverage says the snapshot includes the page, not that its fitted
+   * pixels share the destination aspect ratio. Only equal fitted geometry may
+   * cross-fade; otherwise two valid images become a visibly offset double image.
+   */
+  private sameFittedAspect(left: ReaderEntryRect, right: ReaderEntryRect): boolean {
+    if (!left.valid() || !right.valid()) return false
+    const ratio = left.width * right.height / (left.height * right.width)
+    return Number.isFinite(ratio) && Math.abs(ratio - 1) <= 0.001
+  }
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
