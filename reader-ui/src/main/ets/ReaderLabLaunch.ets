@@ -19,6 +19,8 @@ export class ReaderLabRequest {
   pageTurnAnimationOverride: boolean | null = null
   shareProbe: string = ''
   informationProbe: string = ''
+  /** Debug-only NextE host auto-read source probe; empty preserves the direct host bridge. */
+  autoReadSourceProbe: string = ''
   originalVariantProbe: string = ''
   cropBorders: boolean = false
   /** Explicit host persistence permission; false for every ordinary Lab request. */
@@ -119,6 +121,10 @@ export function captureReaderLabWant(want: Want, debugBuild: boolean): void {
   const informationProbe = want.parameters['readerLabInformationProbe']
   request.informationProbe = typeof informationProbe === 'string' &&
     (informationProbe === 'fail-once' || informationProbe === 'delay-once') ? informationProbe : ''
+  const autoReadSourceProbe = want.parameters['readerLabAutoReadSourceProbe']
+  request.autoReadSourceProbe = request.readingChrome && typeof autoReadSourceProbe === 'string' &&
+    autoReadSourceProbe === 'delay-once'
+    ? autoReadSourceProbe : ''
   const originalVariantProbe = want.parameters['readerLabOriginalVariantProbe']
   request.originalVariantProbe = typeof originalVariantProbe === 'string' &&
     (originalVariantProbe === 'prepare-fail-once' || originalVariantProbe === 'decode-fail-once') ?

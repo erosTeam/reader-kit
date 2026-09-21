@@ -434,6 +434,7 @@ export struct ReaderPagedViewport {
       .scale({ x: this.zoomState.scale, y: this.zoomState.scale })
       .translate({ x: this.zoomState.x, y: this.zoomState.y })
       .animation({ duration: this.zoomAnimating ? 180 : 0, curve: Curve.FastOutSlowIn })
+      .id(this.selected ? 'rkit-paged-content' : `rkit-cached-content-${this.snapshot.displayIndex}`)
       if (this.snapshot.phase === 'catalog') {
         LoadingProgress().width(32).height(32)
       }

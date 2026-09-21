@@ -14,7 +14,7 @@ function snapshot() {
   s.anchor=new ReaderReadingAnchor(s.unit.key,'p0',0)
   s.frames=[1,0].map(i => {
     const a=new ReaderSnapshot(); a.unit=s.unit.copy(); a.page=new ReaderPage(s.unit.key,`p${i}`,i)
-    a.sourceIndex=i; a.phase='displayed'; a.uri=`file://${i}`; a.assetRequestId=i+1
+    a.sourceIndex=i; a.phase='displayed'; a.uri=`file://${i}`; a.saveUri=a.uri; a.assetRequestId=i+1
     return new ReaderPagedFrame(i+1,new ReaderDisplayPart(s.unit.key,`p${i}`,i,'whole'),a)
   })
   return s
@@ -27,9 +27,20 @@ test('visual RTL targets, current anchor, copies, and displayed original gates',
   assert.equal(Target.from(s,'right').items[0].sourceIndex,0)
   assert.equal(Target.from(s,'current').items[0].sourceIndex,0)
   const t=Target.from(s,'both'); s.frames[0].asset.uri='changed'; assert.equal(t.items[0].uri,'file://1')
-  for(const alter of [s=>s.frames[0].asset.phase='decoding',s=>s.frames[0].asset.kind='thumbnail',s=>s.frames[0].asset.uri='',s=>s.frames[0].asset.page.key='wrong',s=>s.frames[0].asset.page.sourceIndex=8]) {
+  for(const alter of [s=>s.frames[0].asset.phase='decoding',s=>s.frames[0].asset.kind='thumbnail',s=>s.frames[0].asset.saveUri='',s=>s.frames[0].asset.page.key='wrong',s=>s.frames[0].asset.page.sourceIndex=8]) {
     const s=snapshot(); alter(s); assert.equal(Target.from(s,'both'),null)
   }
+})
+test('save target freezes the host export source while the displayed variant remains the stale guard', () => {
+  const s=snapshot(), frame=s.frames.find(f=>f.part.sourceIndex===0)
+  frame.asset.uri='file://translated-page'; frame.asset.saveUri='https://source/resampled-page'
+  frame.asset.variant='translated'; frame.asset.assetRequestId=40
+  const target=Target.from(s,'current')
+  assert.equal(target.items[0].uri,'https://source/resampled-page')
+  const replacement=snapshot(), next=replacement.frames.find(f=>f.part.sourceIndex===0)
+  next.asset.uri='file://enhanced-page'; next.asset.saveUri='https://source/resampled-page'
+  next.asset.variant='enhanced'; next.asset.assetRequestId=41
+  assert.equal(target.equals(Target.from(replacement,'current')),false)
 })
 test('late prepare releases once, never presents, and cannot clear newer busy operation', async () => {
   const c=ready(), a=deferred(), b=deferred(); let released=0, shown=0

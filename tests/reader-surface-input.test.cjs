@@ -6,7 +6,8 @@ const vm = require('node:vm')
 const ts = require(process.env.READER_KIT_TYPESCRIPT || '/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/node_modules/typescript')
 const load = require('./load-core.cjs')
 const core = { ...load('ReaderContent'), ...load('ReaderSession'), ...load('ReaderDisplayMap'),
-  ...load('ReaderPagedSession'), ...load('ReaderInputPort'), ...load('ReaderImageShare'), ...load('ReaderImageSave'), ...load('ReaderAutoRead') }
+  ...load('ReaderPagedSession'), ...load('ReaderInputPort'), ...load('ReaderImageShare'), ...load('ReaderImageSave'),
+  ...load('ReaderAutoRead'), ...load('ReaderTemporaryVariantOverride') }
 const uiPath = path.join(__dirname, '../reader-ui/src/main/ets')
 function evaluate(source) {
   const exports = {}
@@ -226,7 +227,7 @@ test('preferred host variant waits for the original asset instead of consuming i
   state.phase = 'ready'; state.kind = 'thumbnail'
   state.unit = new core.ReaderUnit(new core.ReaderUnitKey('source', 'work', 'unit'), 'Title', 1)
   state.frames = [{ part: { sourceIndex: 0 }, slotId: 7,
-    asset: { requestId: 11, phase: 'displayed', variant: 'default', variantIdentity: '' } }]
+    asset: { requestId: 11, assetRequestId: 11, phase: 'displayed', variant: 'default', variantIdentity: '' } }]
 
   surface.syncPreferredVariant(state)
   assert.equal(calls.length, 0)
@@ -239,6 +240,75 @@ test('preferred host variant waits for the original asset instead of consuming i
   assert.equal(calls[0][1], 11)
   assert.equal(calls[0][4], 'enhanced')
   assert.equal(calls[0][5], 'model-a:2000')
+})
+
+test('temporary enhancement override survives an operational pause, changes only the current unit, and never writes host preferences', () => {
+  const surface = new ReaderSurface(), callbacks = [], cancels = [], preparationCancels = [], selects = [], preferenceWrites = []
+  surface.active = true; surface.temporaryVariantActive = true; surface.closing = false; surface.chromeDisposed = false
+  surface.variantPolicy = new ReaderVariantPolicy(new core.ReaderVariantPreference('enhanced', 'model-a:2000'))
+  surface.temporaryVariantControl = { available: true, changed: enabled => callbacks.push(enabled) }
+  surface.preferenceSink = {
+    policyChanged: () => preferenceWrites.push('policy'),
+    cropChanged: () => preferenceWrites.push('crop'),
+  }
+  let key = new core.ReaderUnitKey('source', 'work', 'unit-a')
+  const page = new core.ReaderPage(key, 'page-a', 0)
+  const state = new core.ReaderPagedSnapshot()
+  state.phase = 'ready'; state.kind = 'original'; state.unit = new core.ReaderUnit(key, 'Title', 1)
+  state.navigationRevision = 7
+  state.frames = [{ part: { sourceIndex: 0 }, slotId: 7,
+    asset: { requestId: 11, assetRequestId: 12, phase: 'displayed', variant: 'enhanced',
+      variantIdentity: 'model-a:2000', page } }]
+  surface.state = state
+  surface.session = {
+    snapshot: () => state,
+    cancelRetainedProcessedVariantReplacements: indexes => cancels.push(indexes),
+    cancelProcessedVariantPreparations: indexes => preparationCancels.push(Array.from(indexes)),
+    selectVariant: (...args) => { selects.push(args); return Promise.resolve('changed') },
+    setViewportActive() {},
+  }
+  // Exercise the real active monitor while keeping unrelated share/save UI
+  // presenters out of this state-contract fixture.
+  surface.shareController = { update() {} }
+  surface.saveController = { update() {} }
+
+  surface.toggleTemporaryVariant()
+  let scope = surface.temporaryVariantScope(state)
+  assert.equal(surface.temporaryVariantOverride.isDisabled(scope), true)
+  assert.deepEqual(cancels.map(indexes => Array.from(indexes)), [[0]])
+  assert.deepEqual(callbacks, [false])
+  assert.deepEqual(preferenceWrites, [])
+
+  // A host settings sheet pauses operational input by setting active=false; it does not end the Reader route.
+  surface.active = false; surface.onActiveChanged()
+  assert.equal(surface.temporaryVariantOverride.isDisabled(scope), true)
+  surface.active = true; surface.onActiveChanged()
+
+  state.frames[0].asset = { requestId: 13, assetRequestId: 13, phase: 'displayed', variant: 'default',
+    variantIdentity: '', page }
+  surface.toggleTemporaryVariant()
+  assert.deepEqual(callbacks, [false, true])
+  assert.equal(selects.length, 1)
+  assert.equal(selects[0][4], 'enhanced')
+  assert.equal(selects[0][5], 'model-a:2000')
+  assert.deepEqual(preferenceWrites, [])
+
+  surface.toggleTemporaryVariant()
+  assert.deepEqual(preparationCancels, [[0]])
+  state.navigationRevision = 8; surface.syncPreferredVariant(state)
+  scope = surface.temporaryVariantScope(state)
+  assert.equal(surface.temporaryVariantOverride.isDisabled(scope), false)
+
+  surface.toggleTemporaryVariant()
+  key = new core.ReaderUnitKey('source', 'work', 'unit-b')
+  state.unit = new core.ReaderUnit(key, 'Title', 1); page.unit = key
+  surface.syncPreferredVariant(state)
+  scope = surface.temporaryVariantScope(state)
+  assert.equal(surface.temporaryVariantOverride.isDisabled(scope), false)
+
+  surface.toggleTemporaryVariant()
+  surface.temporaryVariantActive = false; surface.onTemporaryVariantLifecycleChanged()
+  assert.equal(surface.temporaryVariantOverride.isDisabled(surface.temporaryVariantScope(state)), false)
 })
 
 test('host interaction signal is edge-triggered and clears after the gesture', () => {
