@@ -2,23 +2,33 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const load = require('./load-core.cjs')
 const { ReaderImageShareTarget, ReaderImageShareController } = load('ReaderImageShare')
-const { ReaderUnit, ReaderUnitKey } = load('ReaderContent')
+const { ReaderUnit, ReaderUnitKey, ReaderPage } = load('ReaderContent')
 const { ReaderPagedSnapshot } = load('ReaderPagedSession')
 const { ReaderReadingAnchor } = load('ReaderDisplayMap')
 const unit = () => new ReaderUnit(new ReaderUnitKey('source', 'work', 'chapter'), 'Title', 10)
 const target = (page = 1, navigation = 2) => new ReaderImageShareTarget(unit(), page, navigation)
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b }); return { promise, resolve, reject } }
 const ready = () => { const c = new ReaderImageShareController(); c.update(target(), true); return c }
+function displayedFrame(s, index, variant, uri, requestId) {
+  const page = new ReaderPage(s.unit.key, `page${index + 1}`, index)
+  return { part: { unit: s.unit.key.copy(), sourceIndex: index, pageKey: page.key }, asset: {
+    variant, unit: s.unit.copy(), page, sourceIndex: index, phase: 'displayed', uri, assetRequestId: requestId,
+  } }
+}
 
-test('share target follows original anchor, copies identity, ignores RTL frame order', () => {
+test('share target freezes a matching displayed resource and ignores RTL frame order', () => {
   const s = new ReaderPagedSnapshot()
   s.unit = unit(); s.phase = 'ready'; s.navigationRevision = 7
   s.anchor = new ReaderReadingAnchor(s.unit.key, 'page2', 1)
-  s.frames = [{ part: { sourceIndex: 2 }, asset: { variant: 'default' } },
-    { part: { sourceIndex: 1 }, asset: { variant: 'original' } }]
+  s.frames = [displayedFrame(s, 2, 'default', 'file:///page3.jpg', 31),
+    displayedFrame(s, 1, 'original', 'file:///page2.jpg', 21)]
   const t = ReaderImageShareTarget.from(s)
   assert.equal(t.sourceIndex, 1); assert.equal(t.navigation, 7)
   assert.equal(t.variant, 'original'); assert.equal(t.copy().variant, 'original')
+  assert.equal(t.uri, 'file:///page2.jpg'); assert.equal(t.assetRequestId, 21)
+  s.frames[1].asset.phase = 'decoding'
+  assert.equal(ReaderImageShareTarget.from(s), null)
+  s.frames[1].asset.phase = 'displayed'
   s.unit.key.unit = 'replaced'
   assert.equal(t.unit.key.unit, 'chapter')
   s.phase = 'closed'
@@ -32,6 +42,15 @@ test('variant change cancels a pending share even on the same source and navigat
   pending.resolve({ present: async () => { shown++ }, release: () => released++ })
   assert.equal(await run, 'cancelled'); assert.equal(shown, 0); assert.equal(released, 1)
   assert.equal(original.equals(target()), false)
+})
+
+test('displayed URI and request replacement cancel a pending share on the same page and variant', async () => {
+  const c = ready(), pending = deferred(); let shown = 0, released = 0
+  const run = c.share({ prepare: () => pending.promise })
+  const replacement = target(); replacement.uri = 'file:///translated-new.png'; replacement.assetRequestId = 9
+  c.update(replacement, true)
+  pending.resolve({ present: async () => { shown++ }, release: () => released++ })
+  assert.equal(await run, 'cancelled'); assert.equal(shown, 0); assert.equal(released, 1)
 })
 
 test('late preparation after page change never presents and cannot clear a newer operation', async () => {

@@ -92,6 +92,7 @@ export class ReaderEntryGeometryGate {
 export struct ReaderPagedViewport {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param pageGap: number = 0
+  @Param retainedProjectionDiagnostic: boolean = false
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param entryTransition: ReaderEntryTransition | null = null
@@ -410,6 +411,7 @@ export struct ReaderPagedViewport {
           ReaderPagedCell({
             imageInterpolation: this.imageInterpolation,
             snapshot: this.snapshot, slotId: frame.slotId,
+            retainedProjectionDiagnostic: this.retainedProjectionDiagnostic,
             entryTransition: this.entryTransition,
             entryMeasurement: this.entryMeasurement,
             entryGeometryReady: this.entryViewportLaidOut && this.entryRatiosReady(),
@@ -483,6 +485,7 @@ export struct ReaderPagedViewport {
 @ComponentV2
 struct ReaderPagedCell {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
+  @Param retainedProjectionDiagnostic: boolean = false
   @Require @Param snapshot: ReaderPagedSnapshot
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryMeasurement: ReaderEntryMeasurement | null = null
@@ -493,6 +496,7 @@ struct ReaderPagedCell {
   @Require @Param frameHeight: number
   @Require @Param active: boolean
   @Local private retainedFrameValue: ReaderPagedFrame | null = null
+  private lastRetainedProjectionDiagnostic: string = ''
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -517,20 +521,41 @@ struct ReaderPagedCell {
     // same file source. The separate candidate site below owns that callback.
     if (retainedUri.length === 0 || retainedRequest <= 0) {
       this.retainedFrameValue = null
-      return
+    } else if (this.retainedFrameValue?.asset.uri !== retainedUri ||
+      this.retainedFrameValue.asset.assetRequestId !== retainedRequest) {
+      const asset = frame.asset.copy()
+      asset.phase = 'displayed'
+      asset.uri = retainedUri
+      asset.requestId = retainedRequest
+      asset.assetRequestId = retainedRequest
+      asset.retainedUri = ''
+      asset.retainedAssetRequestId = 0
+      const retained = new ReaderPagedFrame(frame.slotId, frame.part, asset, frame.crop)
+      retained.cropPending = frame.cropPending
+      this.retainedFrameValue = retained
     }
-    if (this.retainedFrameValue?.asset.uri === retainedUri &&
-      this.retainedFrameValue.asset.assetRequestId === retainedRequest) return
-    const asset = frame.asset.copy()
-    asset.phase = 'displayed'
-    asset.uri = retainedUri
-    asset.requestId = retainedRequest
-    asset.assetRequestId = retainedRequest
-    asset.retainedUri = ''
-    asset.retainedAssetRequestId = 0
-    const retained = new ReaderPagedFrame(frame.slotId, frame.part, asset, frame.crop)
-    retained.cropPending = frame.cropPending
-    this.retainedFrameValue = retained
+    this.reportRetainedProjection()
+  }
+
+  /** Emits only when a host explicitly enables the one-shot Debug diagnostic. */
+  private reportRetainedProjection(): void {
+    if (!this.retainedProjectionDiagnostic) return
+    const frame = this.frame()
+    const asset = frame.asset
+    const local = this.retainedFrameValue
+    const spinner = (asset.phase === 'idle' || asset.phase === 'asset' || asset.phase === 'decoding') && local === null
+    const signature = `${this.snapshot.selectionId}:${this.snapshot.navigationRevision}:${frame.slotId}:` +
+      `${asset.phase}:${asset.assetRequestId}:${asset.retainedUri.length}:${asset.retainedAssetRequestId}:` +
+      `${local?.asset.assetRequestId ?? 0}:${local?.asset.uri.length ?? 0}:${spinner}`
+    if (signature === this.lastRetainedProjectionDiagnostic) return
+    this.lastRetainedProjectionDiagnostic = signature
+    console.info('[ReaderPagedCell] retained_projection ' +
+      `selection=${this.snapshot.selectionId} navigation=${this.snapshot.navigationRevision} ` +
+      `source=${frame.part.sourceIndex} slot=${frame.slotId} asset_phase=${asset.phase} ` +
+      `asset_request=${asset.assetRequestId} raw_retained_uri_length=${asset.retainedUri.length} ` +
+      `raw_retained_request=${asset.retainedAssetRequestId} local_retained=${local !== null} ` +
+      `local_request=${local?.asset.assetRequestId ?? 0} local_uri_length=${local?.asset.uri.length ?? 0} ` +
+      `spinner=${spinner}`)
   }
 
   aboutToAppear(): void { this.syncRetainedFrame() }

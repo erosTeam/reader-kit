@@ -66,3 +66,14 @@ test('enhancement status follows only the current source and requested host vari
   value.variantPolicy = { defaultPreference: () => ({ variant: 'enhanced', identity: '' }) }
   assert.equal(value.enhancementVisible(), false)
 })
+
+test('temporary status control is a child hot zone and visibly distinguishes the current-unit override', () => {
+  const status = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderEnhancementStatus.ets'), 'utf8')
+  const chrome = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderChrome.ets'), 'utf8')
+  const pageStatus = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderPageStatus.ets'), 'utf8')
+  assert.match(status, /@Param enhancementEnabled: boolean = true/)
+  assert.match(status, /HitTestMode\.Block/)
+  assert.match(status, /\.opacity\(this\.enhancementEnabled \? 0\.78 : 0\.39\)/)
+  assert.match(chrome, /this\.enhancementToggleAvailable \? HitTestMode\.Transparent : HitTestMode\.None/)
+  assert.match(pageStatus, /this\.enhancementToggleAvailable \? HitTestMode\.Transparent : HitTestMode\.None/)
+})

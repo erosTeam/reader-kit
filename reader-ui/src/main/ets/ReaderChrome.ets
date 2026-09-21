@@ -28,6 +28,9 @@ export struct ReaderChrome {
   @Param enhancementVisible: boolean = false
   @Param enhancementProcessing: boolean = false
   @Param enhancementApplied: boolean = false
+  @Param enhancementEnabled: boolean = true
+  @Param enhancementToggleAvailable: boolean = false
+  @Event onToggleEnhancement: () => void = () => {}
   @Event onCrop: () => void = () => {}
   @Param originalAvailable: boolean = false
   @Event onOriginal: (frames: ReaderPagedFrame[], unit: ReaderUnitKey, navigation: number, enabled: boolean) => void = () => {}
@@ -521,9 +524,12 @@ export struct ReaderChrome {
             .id('rkit-chrome-page')
           if (this.enhancementVisible) {
             ReaderEnhancementStatus({ processing: this.enhancementProcessing,
-              applied: this.enhancementApplied, accent: this.accent })
+              applied: this.enhancementApplied, enhancementEnabled: this.enhancementEnabled,
+              toggleAvailable: this.enhancementToggleAvailable, accent: this.accent,
+              onToggle: (): void => { this.onToggleEnhancement() } })
           }
-        }.alignItems(VerticalAlign.Center).hitTestBehavior(HitTestMode.None)
+        }.alignItems(VerticalAlign.Center)
+          .hitTestBehavior(this.enhancementToggleAvailable ? HitTestMode.Transparent : HitTestMode.None)
       }.width('100%').height(this.topInset + 56)
         .padding({ top: this.topInset, left: 8, right: 8 })
         .backgroundColor('#CC000000').position({ x: 0, y: 0 })

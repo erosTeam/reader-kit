@@ -1,5 +1,5 @@
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy, ReaderLayout,
-  ReaderVariantPreference,
+  ReaderVariantPreference, ReaderPage, ReaderTemporaryVariantScope, ReaderTemporaryVariantOverride,
   ReaderInputPort, ReaderMoveIntent, ReaderImageShareTarget,
   ReaderImageShareController, ReaderPagedFrame, ReaderImageInformation,
   ReaderImageSaveController, ReaderImageSaveChoice, ReaderAutoReadController } from '@reader-kit/core'
@@ -31,6 +31,7 @@ import { ReaderVariantPolicy } from './ReaderVariantPolicy'
 import { ReaderCropPolicy } from './ReaderCropPolicy'
 import { ReaderAutoReadPolicy } from './ReaderAutoReadPolicy'
 import { ReaderTapPolicy } from './ReaderTapPolicy'
+import { ReaderTemporaryVariantControl } from './ReaderTemporaryVariantControl'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -38,9 +39,15 @@ export struct ReaderSurface {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param canvasBackground: ResourceColor = Color.Black
   @Param canvasForeground: ResourceColor = Color.White
+  /** Hosts may fade the canvas independently while a root-owned transition proxy keeps the image visible. */
+  @Param canvasBackdropOpacity: number = 1
+  /** A close handoff may retire Reader controls and images without removing its canvas. */
+  @Param bodyOpacity: number = 1
   @Require @Param session: ReaderPagedSession
   @Require @Param initialUnit: ReaderUnitKey
   @Require @Param active: boolean
+  /** Route lifetime for current-unit overrides; host sheets pause operations without ending it. */
+  @Param temporaryVariantActive: boolean = true
   @Param closing: boolean = false
   @Param showPageNumber: boolean = true
   /** Preferred grouped capability. Legacy scalar inputs remain temporarily source-compatible. */
@@ -82,6 +89,10 @@ export struct ReaderSurface {
   @Param chromeRepublishToken: number = 0
   /** Optional host policy. Null retains the default, unprocessed asset behavior. */
   @Param variantPolicy: ReaderVariantPolicy | null = null
+  /** Optional current-unit enhancement control; services and preferences stay host-owned. */
+  @Param temporaryVariantControl: ReaderTemporaryVariantControl | null = null
+  /** Restricted Debug-only lifecycle probe; false keeps all retained-projection logging disabled. */
+  @Param retainedProjectionDiagnostic: boolean = false
   @Param cropPolicy: ReaderCropPolicy | null = null
   @Param hostSettings: ReaderHostSettings | null = null
   @Param externalOpen: ReaderExternalOpen | null = null
@@ -117,7 +128,7 @@ export struct ReaderSurface {
   private zoomResetSerial: number = 0
   private autoReadController: ReaderAutoReadController = new ReaderAutoReadController((): boolean => {
     return this.externalMove('next')
-  })
+  }, undefined, (): void => { this.session.requestAutoReadTargetSource() })
   private saveController: ReaderImageSaveController = new ReaderImageSaveController()
   private saveFeedback: ResourceStr | null = null
   @Local private informationBusy: boolean = false
@@ -139,6 +150,7 @@ export struct ReaderSurface {
   private lastObservedPositionSignature: string = ''
   private variantAttemptContext: string = ''
   private variantAttempts: Set<string> = new Set<string>()
+  private temporaryVariantOverride: ReaderTemporaryVariantOverride = new ReaderTemporaryVariantOverride()
   private interactionBusyReported: boolean = false
   private tapZonePreviewShownRevision: number = 0
   private appliedCropSourceRevision: string = ''
@@ -159,10 +171,12 @@ export struct ReaderSurface {
 
   private syncPreferredVariant(state: ReaderPagedSnapshot): void {
     const unit = state.unit?.key
+    const temporaryScope = this.reconcileTemporaryVariantOverride(state)
     const fallback = this.variantPolicy?.defaultPreference() ?? new ReaderVariantPreference()
     const hasPerSourcePreference = this.variantPolicy?.hasPerSourcePreference() ?? false
     const context = JSON.stringify([unit?.scope ?? '', unit?.work ?? '', unit?.unit ?? '', state.navigationRevision,
-      fallback.variant, fallback.identity, hasPerSourcePreference, this.variantPolicy?.revision ?? 0])
+      fallback.variant, fallback.identity, hasPerSourcePreference, this.variantPolicy?.revision ?? 0,
+      this.temporaryVariantControl?.available ?? false, this.temporaryVariantOverride.revision])
     if (context !== this.variantAttemptContext) {
       this.variantAttemptContext = context
       this.variantAttempts.clear()
@@ -171,11 +185,26 @@ export struct ReaderSurface {
       state.kind !== 'original' || unit === undefined) return
     state.frames.forEach((frame: ReaderPagedFrame): void => {
       if (frame.asset.phase !== 'displayed') return
-      const preference = this.variantPolicy?.preference(frame.part.sourceIndex) ?? fallback
+      const resolved = this.variantPolicy?.preference(frame.part.sourceIndex) ?? fallback
+      const preference = this.temporaryVariantOverride.preference(temporaryScope, frame.part.sourceIndex,
+        frame.asset.page?.key ?? '', resolved)
+      // A retained fallback remains displayed while ReaderSession has already
+      // advanced its request epoch for a replacement candidate. Re-selecting
+      // the same policy in that interval starts a second load and drops the
+      // fallback; evaluate again when the candidate becomes current instead.
+      if (frame.asset.requestId !== frame.asset.assetRequestId) {
+        if (preference.variant === 'default') {
+          this.session.cancelRetainedProcessedVariantReplacements([frame.part.sourceIndex])
+        }
+        return
+      }
       if (preference.variant !== 'default' && preference.identity.length === 0) return
       const wantsDefault = preference.variant === 'default'
       if (wantsDefault && frame.asset.variant !== 'enhanced' &&
-        !(hasPerSourcePreference && frame.asset.variant === 'translated')) return
+        !(hasPerSourcePreference && frame.asset.variant === 'translated')) {
+        this.session.cancelProcessedVariantPreparations([frame.part.sourceIndex])
+        return
+      }
       if (!wantsDefault && (frame.asset.variant === 'original' ||
         (!hasPerSourcePreference && frame.asset.variant === 'translated') ||
         (frame.asset.variant === preference.variant && frame.asset.variantIdentity === preference.identity))) return
@@ -234,7 +263,10 @@ export struct ReaderSurface {
     this.appliedCropSourceRevision = this.cropPolicy?.sourceRevision ?? ''
     this.session.setCropEnabled(this.cropPolicy?.enabled ?? false)
     this.session.setViewportActive(this.active)
-    this.autoReadController.subscribe((enabled: boolean): void => { this.autoReadEnabled = enabled })
+    this.autoReadController.subscribe((enabled: boolean): void => {
+      this.autoReadEnabled = enabled
+      if (!enabled) this.session.cancelAutoReadSourcePreparations()
+    })
     this.shareController.subscribe((busy: boolean): void => { this.shareBusy = busy; this.syncAutoRead() })
     this.saveController.subscribe((busy: boolean): void => { this.saveBusy = busy; this.syncAutoRead() })
     this.session.subscribe((state: ReaderPagedSnapshot): void => {
@@ -281,6 +313,7 @@ export struct ReaderSurface {
 
   aboutToDisappear(): void {
     this.chromeDisposed = true
+    this.temporaryVariantOverride.clear()
     this.autoReadController.close()
     this.invalidateChromeShow()
     this.entryTransition?.cancel()
@@ -317,8 +350,23 @@ export struct ReaderSurface {
     this.syncAutoRead()
   }
 
+  @Monitor('temporaryVariantActive')
+  onTemporaryVariantLifecycleChanged(): void {
+    if (!this.temporaryVariantActive) {
+      this.temporaryVariantOverride.clear()
+      this.variantAttemptContext = ''
+      this.variantAttempts?.clear()
+    }
+    this.syncPreferredVariant(this.session.snapshot())
+  }
+
   @Monitor('variantPolicy')
   onVariantPolicyChanged(): void {
+    this.syncPreferredVariant(this.session.snapshot())
+  }
+
+  @Monitor('temporaryVariantControl')
+  onTemporaryVariantControlChanged(): void {
     this.syncPreferredVariant(this.session.snapshot())
   }
 
@@ -352,7 +400,7 @@ export struct ReaderSurface {
       this.touching || this.menuVisible || this.tapZonePreviewVisible || this.shareBusy || this.saveBusy ||
       this.informationBusy || this.state.originalPreparing ||
       this.previewIndex >= 0 || this.inputTopology !== this.state.topologyRevision || this.inputLocked ||
-      this.entryTransition?.phase === 'layout', this.autoReadPolicy.seconds)
+      this.entryTransition?.phase === 'layout', this.autoReadPolicy.seconds, this.autoReadPolicy.targetReadiness)
   }
 
   private toggleAutoRead(): void {
@@ -465,6 +513,52 @@ export struct ReaderSurface {
     return preference?.variant === 'enhanced' && preference.identity.length > 0
   }
 
+  private temporaryVariantScope(state: ReaderPagedSnapshot): ReaderTemporaryVariantScope | null {
+    const unit = state.unit?.key
+    if (unit === undefined || state.phase !== 'ready' || state.kind !== 'original') return null
+    const pages: ReaderPage[] = []
+    state.frames.forEach((frame: ReaderPagedFrame): void => {
+      const page = frame.asset.page
+      if (page === null || page === undefined || pages.some((value: ReaderPage): boolean =>
+        value.sourceIndex === page.sourceIndex && value.key === page.key)) return
+      pages.push(page.copy())
+    })
+    return pages.length > 0 ? ReaderTemporaryVariantScope.fromPages(unit, state.navigationRevision, pages) : null
+  }
+
+  private temporaryVariantToggleAvailable(state: ReaderPagedSnapshot = this.state): boolean {
+    const scope = this.temporaryVariantScope(state)
+    if (scope === null || this.temporaryVariantControl?.available !== true || !this.enhancementVisible()) return false
+    return scope.sources.every((source): boolean => {
+      const preference = this.variantPolicy?.preference(source.sourceIndex) ?? new ReaderVariantPreference()
+      return preference.variant === 'enhanced' && preference.identity.length > 0
+    })
+  }
+
+  private reconcileTemporaryVariantOverride(state: ReaderPagedSnapshot): ReaderTemporaryVariantScope | null {
+    const scope = this.temporaryVariantScope(state)
+    if (!this.temporaryVariantActive || this.closing || this.chromeDisposed || !this.temporaryVariantToggleAvailable(state)) {
+      this.temporaryVariantOverride.clear()
+      return scope
+    }
+    this.temporaryVariantOverride.reconcile(scope)
+    return scope
+  }
+
+  private enhancementEnabledForCurrentUnit(): boolean {
+    return !this.temporaryVariantOverride.isDisabled(this.temporaryVariantScope(this.state))
+  }
+
+  private toggleTemporaryVariant(): void {
+    const scope = this.temporaryVariantScope(this.state)
+    if (scope === null || !this.temporaryVariantToggleAvailable(this.state)) return
+    const enabled = this.temporaryVariantOverride.toggle(scope)
+    this.variantAttemptContext = ''
+    this.variantAttempts.clear()
+    this.temporaryVariantControl?.changed(enabled)
+    this.syncPreferredVariant(this.session.snapshot())
+  }
+
   private enhancementProcessing(): boolean {
     const sourceIndex = this.enhancementSourceIndex()
     return sourceIndex >= 0 && this.state.isPreparingVariant(sourceIndex, 'enhanced')
@@ -523,6 +617,7 @@ export struct ReaderSurface {
   @Monitor('closing')
   onClosingChanged(): void {
     if (this.closing) {
+      this.temporaryVariantOverride.clear()
       this.originalFeedbackEpoch += 1
       this.session.cancelOriginalPreparations()
       this.autoReadController.stop()
@@ -532,6 +627,7 @@ export struct ReaderSurface {
       this.variantAttempts?.clear()
     }
     this.reportInteractionBusy?.()
+    this.syncPreferredVariant(this.session.snapshot())
   }
 
   private requestClose(): void {
@@ -714,6 +810,16 @@ export struct ReaderSurface {
 
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
+      // The canvas and Reader body have distinct transition owners. A host can
+      // fade this backdrop while a root proxy owns the moving image, without
+      // exposing the destination beneath an abruptly removed Reader surface.
+      Column() {}
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.canvasBackground)
+        .opacity(this.canvasBackdropOpacity)
+        .hitTestBehavior(HitTestMode.None)
+      Stack({ alignContent: Alignment.Bottom }) {
       // The existing cell feedback stays above the optional source preview.
       // The preview's declared coverage controls its fade beneath the original image.
       this.openingPlaceholder()
@@ -763,6 +869,7 @@ export struct ReaderSurface {
             imageInterpolation: this.imageInterpolation,
             pageGap: this.pageGap,
             snapshot: this.state, active: this.active,
+            retainedProjectionDiagnostic: this.retainedProjectionDiagnostic,
             zoomResetCommand: this.zoomResetCommand,
             command: this.pagerCommand,
             entryTransition: this.entryTransition,
@@ -858,6 +965,9 @@ export struct ReaderSurface {
           enhancementVisible: this.enhancementVisible(),
           enhancementProcessing: this.enhancementProcessing(),
           enhancementApplied: this.enhancementApplied(),
+          enhancementEnabled: this.enhancementEnabledForCurrentUnit(),
+          enhancementToggleAvailable: this.temporaryVariantToggleAvailable(),
+          onToggleEnhancement: (): void => { this.toggleTemporaryVariant() },
           hostSettingsAvailable: this.hostSettings !== null,
           onHostSettings: (): void => { this.hostSettings?.request() },
           externalOpenAvailable: this.externalOpen !== null,
@@ -915,9 +1025,12 @@ export struct ReaderSurface {
         ReaderPageStatus({ value: `${(this.state.anchor?.sourceIndexHint ?? 0) + 1} / ${this.state.unit.pageCount}`,
           bottomMargin: this.bottomInset + 8, showPageNumber: this.showPageNumber,
           showEnhancement: this.enhancementVisible(), enhancementProcessing: this.enhancementProcessing(),
-          enhancementApplied: this.enhancementApplied(), accent: this.accent })
+          enhancementApplied: this.enhancementApplied(), enhancementEnabled: this.enhancementEnabledForCurrentUnit(),
+          enhancementToggleAvailable: this.temporaryVariantToggleAvailable(), accent: this.accent,
+          onToggleEnhancement: (): void => { this.toggleTemporaryVariant() } })
       }
-    }.width('100%').height('100%').backgroundColor(this.canvasBackground).id('rkit-reading-surface')
+      }.width('100%').height('100%').opacity(this.bodyOpacity)
+    }.width('100%').height('100%').backgroundColor(Color.Transparent).id('rkit-reading-surface')
       .onTouch((event: TouchEvent): void => {
         this.touching = event.type !== TouchType.Up && event.type !== TouchType.Cancel
         this.reportInteractionBusy()

@@ -20,14 +20,25 @@ function snapshot(index = 0, layout = 'spread', count = 6) {
   return s
 }
 function fixture() {
-  let id = 0, calls = 0
+  let id = 0, calls = 0, pending = 0
   const timers = new Map(), cancelled = []
   const c = new ReaderAutoReadController(() => { calls++; return true }, {
     set(callback, delay) { timers.set(++id, {callback, delay}); return id },
     clear(id) { const t = timers.get(id); if (t) cancelled.push(t.callback); timers.delete(id) }
-  })
-  return { c, timers, cancelled, calls: () => calls,
+  }, () => { pending++ })
+  return { c, timers, cancelled, calls: () => calls, pending: () => pending,
     fire() { const [id, t] = [...timers][0]; timers.delete(id); t.callback() } }
+}
+function setTargetSourceState(s, ready, failed = false) {
+  const map = new ReaderDisplayMap(s.unit, s.pageMetadata, s.policy)
+  const target = map.item(s.displayIndex + 1)
+  assert.notEqual(target, null)
+  target.parts.forEach(part => {
+    const page = s.pageMetadata.find(candidate => candidate.sourceIndex === part.sourceIndex && candidate.key === part.pageKey)
+    assert.notEqual(page, undefined)
+    page.bodySourceReady = ready
+    page.bodySourceFailed = failed
+  })
 }
 test('only complete expected original display parts start one full one-shot interval', () => {
   const f = fixture(), s = snapshot(); f.c.setEnabled(true)
@@ -59,6 +70,42 @@ test('foreground and blocking pause then restart a full interval; failures await
   s.frames[0].asset.phase = 'failed'; f.c.update(s, true, false, 7); assert.equal(f.timers.size, 0)
   assert.equal(f.c.isEnabled(), true); s.frames[0].asset.phase = 'displayed'; f.c.update(s, true, false, 7)
   assert.equal([...f.timers.values()][0].delay, 7000)
+})
+test('source-target preparation fires once, then ready restarts a complete dwell before next', () => {
+  const f = fixture(), s = snapshot(); f.c.update(s, true, false, 7, 'source'); f.c.setEnabled(true)
+  assert.equal([...f.timers.values()][0].delay, 7000)
+  f.fire(); assert.equal(f.pending(), 1); assert.equal(f.calls(), 0); assert.equal(f.timers.size, 0)
+  f.c.update(s, true, false, 7, 'source')
+  assert.equal(f.pending(), 1); assert.equal(f.timers.size, 0)
+  setTargetSourceState(s, true)
+  f.c.update(s, true, false, 7, 'source')
+  assert.equal(f.calls(), 0); assert.equal([...f.timers.values()][0].delay, 7000)
+  f.fire(); assert.equal(f.calls(), 1)
+})
+test('source-target failure waits for a later ready update and complete dwell before next', () => {
+  const failed = fixture(), failure = snapshot(); failed.c.update(failure, true, false, 4, 'source'); failed.c.setEnabled(true)
+  failed.fire(); setTargetSourceState(failure, false, true); failed.c.update(failure, true, false, 4, 'source')
+  assert.equal(failed.pending(), 1); assert.equal(failed.calls(), 0); assert.equal(failed.timers.size, 0)
+  setTargetSourceState(failure, true); failed.c.update(failure, true, false, 4, 'source')
+  assert.equal(failed.calls(), 0); assert.equal([...failed.timers.values()][0].delay, 4000)
+  failed.fire(); assert.equal(failed.calls(), 1)
+})
+test('disabling source-target waiting restarts a full dwell; close and late navigation never advance', () => {
+  for (const action of ['stop', 'close']) {
+    const f = fixture(), s = snapshot(); f.c.update(s, true, false, 4, 'source'); f.c.setEnabled(true); f.fire()
+    action === 'stop' ? f.c.stop() : f.c.close()
+    f.c.update(s, true, false, 4, 'source'); f.c.setEnabled(true)
+    if (action === 'stop') {
+      assert.equal([...f.timers.values()][0].delay, 4000)
+      f.fire(); assert.equal(f.pending(), 2); assert.equal(f.calls(), 0)
+    }
+    assert.equal(f.calls(), 0); assert.equal(f.timers.size, 0)
+  }
+  const navigation = fixture(), before = snapshot(), after = snapshot(); after.navigationRevision += 1
+  navigation.c.update(before, true, false, 4, 'source'); navigation.c.setEnabled(true); navigation.fire()
+  setTargetSourceState(before, true); navigation.c.update(after, true, false, 4, 'source')
+  assert.equal(navigation.calls(), 0); assert.equal([...navigation.timers.values()][0].delay, 4000)
+  navigation.fire(); assert.equal(navigation.calls(), 0); assert.equal(navigation.pending(), 2)
 })
 test('continuous index change without navigation restarts; anchor movement alone does not', () => {
   const f = fixture(), s = snapshot(0, 'continuous'); f.c.update(s, true, false); f.c.setEnabled(true)

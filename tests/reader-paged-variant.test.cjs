@@ -3,6 +3,8 @@ const assert = require('node:assert/strict')
 const load = require('./load-core.cjs')
 const { ReaderPagedSession } = load('ReaderPagedSession')
 const { ReaderUnitKey, ReaderUnit, ReaderPage, ReaderAsset } = load('ReaderSession')
+const { ReaderImageInformation } = load('ReaderImageInformation')
+const { ReaderImageCropBounds } = load('ReaderImageCrop')
 const tick = () => new Promise(resolve => setImmediate(resolve))
 
 async function fixture() {
@@ -14,7 +16,14 @@ async function fixture() {
   }
   const provider = {
     cancellationMode: 'consumer-only',
-    async load(p) { return new ReaderAsset(`default-${p.sourceIndex}`, () => releases.push(p.sourceIndex)) },
+    async load(p) {
+      const information = new ReaderImageInformation()
+      information.mimeType = 'image/webp'; information.width = 800; information.height = 1200
+      const asset = new ReaderAsset(`default-${p.sourceIndex}`, () => releases.push(p.sourceIndex),
+        { async read() { return information } })
+      asset.crop = { async read() { return new ReaderImageCropBounds(.1, .2, .1, .2) } }
+      return asset
+    },
     async prepareVariant(p, variant, identity) {
       calls.push([p.sourceIndex, variant, identity])
       return { page: p.copy(), variant, identity, async load(_c, force) {
@@ -138,6 +147,64 @@ test('navigation, background and close fence late host processing before its rec
     resolve(); assert.equal(await pending, 'stale', action); assert.equal(loads, 0, action)
     f.s.close()
   }
+})
+
+test('temporary current-unit disable cancels a late processed plan before it can replace the default', async () => {
+  const f = await fixture(); let resolve, cancellation, loads = 0
+  f.provider.prepareVariant = async (page, variant, identity, value) => {
+    cancellation = value
+    return new Promise(done => { resolve = () => done({ page, variant, identity,
+      async load() { loads += 1; return new ReaderAsset('must-not-replace-default') } }) })
+  }
+  const pending = f.choose('enhanced')
+  assert.equal(cancellation.isCancelled(), false)
+  f.s.cancelProcessedVariantPreparations([0])
+  assert.equal(cancellation.isCancelled(), true)
+  resolve()
+  assert.equal(await pending, 'stale')
+  assert.equal(f.frame().asset.variant, 'default')
+  assert.equal(f.frame().asset.uri, 'default-0')
+  assert.equal(loads, 0)
+  f.s.close()
+})
+
+test('temporary current-unit disable retains fallback metadata and can select the processed plan again', async () => {
+  const f = await fixture(); let resolve; let cancellation; let loads = 0; let preparations = 0
+  f.provider.prepareVariant = async (page, variant, identity) => ({ page, variant, identity,
+    async load(value) {
+      preparations += 1
+      if (preparations > 1) return new ReaderAsset('enhanced-reselected')
+      cancellation = value
+      return new Promise(done => { resolve = () => { loads += 1; done(new ReaderAsset('late-enhanced')) } })
+    },
+  })
+  assert.equal(await f.choose('enhanced'), 'changed')
+  await tick()
+  assert.notEqual(f.frame().asset.requestId, f.frame().asset.assetRequestId)
+  assert.equal(cancellation.isCancelled(), false)
+  f.s.cancelRetainedProcessedVariantReplacements([0])
+  assert.equal(cancellation.isCancelled(), true)
+  resolve(); await tick()
+  let frame = f.frame()
+  assert.equal(frame.asset.variant, 'default')
+  assert.equal(frame.asset.uri, 'default-0')
+  assert.equal(frame.asset.requestId, frame.asset.assetRequestId)
+  assert.equal((await f.s.imageInformation(frame.slotId, frame.asset.assetRequestId, f.key.copy(),
+    f.s.snapshot().navigationRevision)).mimeType, 'image/webp')
+  f.s.setCropEnabled(true); await tick()
+  assert.equal(f.frame().crop.left, .1)
+  // A repeated default reconciliation remains unchanged, but must not leave
+  // the cancelled enhanced recipe in the parent plan map.
+  assert.equal(await f.choose('default'), 'unchanged')
+  assert.equal(await f.s.prepareVariantForSource(0, f.key.copy(), f.s.snapshot().navigationRevision,
+    'enhanced', 'enhanced:v1'), 'changed')
+  await tick(); f.decode()
+  frame = f.frame()
+  assert.equal(frame.asset.variant, 'enhanced')
+  assert.equal(frame.asset.uri, 'enhanced-reselected')
+  assert.equal(preparations, 2)
+  assert.equal(loads, 1)
+  f.s.close()
 })
 
 test('one source can replace enhanced with translated then reveal its default again', async () => {

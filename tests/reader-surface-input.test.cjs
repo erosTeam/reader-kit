@@ -7,6 +7,7 @@ const ts = require(process.env.READER_KIT_TYPESCRIPT || '/Applications/DevEco-St
 const load = require('./load-core.cjs')
 const core = { ...load('ReaderContent'), ...load('ReaderSession'), ...load('ReaderDisplayMap'),
   ...load('ReaderPagedSession'), ...load('ReaderInputPort'), ...load('ReaderImageShare'), ...load('ReaderImageSave'), ...load('ReaderAutoRead') }
+Object.assign(core, load('ReaderTemporaryVariantOverride'))
 const uiPath = path.join(__dirname, '../reader-ui/src/main/ets')
 function evaluate(source) {
   const exports = {}
@@ -29,6 +30,7 @@ function evaluate(source) {
       if (name === './ReaderVariantPolicy') return { ReaderVariantPolicy }
       if (name === './ReaderCropPolicy') return { ReaderCropPolicy }
       if (name === './ReaderAutoReadPolicy') return { ReaderAutoReadPolicy }
+      if (name === './ReaderTemporaryVariantControl') return { ReaderTemporaryVariantControl: class ReaderTemporaryVariantControl {} }
       assert.fail(`unexpected import: ${name}`)
     },
     ObservedV2: value => value, ComponentV2: value => value,
@@ -216,6 +218,108 @@ test('preferred host variant follows exact processing identity and returns to de
   session.close()
 })
 
+test('current-unit toggle selects the original without changing the host preference', async () => {
+  const surface = new ReaderSurface()
+  surface.active = true; surface.closing = false; surface.chromeDisposed = false
+  const enhanced = new core.ReaderVariantPreference('enhanced', 'model-a:2000')
+  surface.variantPolicy = new ReaderVariantPolicy(enhanced, 0, () => enhanced)
+  const changes = []
+  surface.temporaryVariantControl = { available: true, changed: enabled => changes.push(enabled) }
+  const key = new core.ReaderUnitKey('source', 'work', 'unit')
+  const session = new core.ReaderPagedSession({
+    open: async k => new core.ReaderUnit(k, 'Title', 2),
+    page: async (unit, index) => new core.ReaderPage(unit.key, `p${index}`, index), adjacent: () => null,
+  }, { cancellationMode: 'consumer-only', async load(page) { return new core.ReaderAsset(`default-${page.sourceIndex}`) },
+    async prepareVariant(page, variant, identity) { return { page, variant, identity,
+      async load() { return new core.ReaderAsset(`${variant}-${identity}`) } } },
+  })
+  surface.session = session
+  session.setViewportActive(true)
+  session.subscribe(state => { surface.state = state; surface.syncPreferredVariant(state) })
+  await session.open(key); await new Promise(resolve => setImmediate(resolve))
+  let frame = session.snapshot().frames[0]
+  session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true)
+  await new Promise(resolve => setImmediate(resolve))
+  frame = session.snapshot().frames[0]
+  session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true)
+  assert.equal(frame.asset.variant, 'enhanced')
+
+  surface.toggleTemporaryVariant()
+  assert.deepEqual(changes, [false])
+  assert.equal(surface.enhancementEnabledForCurrentUnit(), false)
+  assert.equal(surface.variantPolicy.preference(0).variant, 'enhanced')
+  await new Promise(resolve => setImmediate(resolve))
+  frame = session.snapshot().frames[0]
+  session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true)
+  assert.equal(session.snapshot().frames[0].asset.variant, 'default')
+  session.close()
+})
+
+test('temporary close cancels an unfinished enhanced request before it can publish', async () => {
+  const surface = new ReaderSurface()
+  surface.active = true; surface.closing = false; surface.chromeDisposed = false
+  const enhanced = new core.ReaderVariantPreference('enhanced', 'model-a:2000')
+  surface.variantPolicy = new ReaderVariantPolicy(enhanced, 0, () => enhanced)
+  const changes = []; let resolve; let cancellation; let loads = 0
+  surface.temporaryVariantControl = { available: true, changed: enabled => changes.push(enabled) }
+  const key = new core.ReaderUnitKey('source', 'work', 'unit')
+  const session = new core.ReaderPagedSession({
+    open: async k => new core.ReaderUnit(k, 'Title', 2),
+    page: async (unit, index) => new core.ReaderPage(unit.key, `p${index}`, index), adjacent: () => null,
+  }, { cancellationMode: 'consumer-only', async load(page) { return new core.ReaderAsset(`default-${page.sourceIndex}`) },
+    async prepareVariant(page, variant, identity, value) {
+      cancellation = value
+      return new Promise(done => { resolve = () => done({ page, variant, identity,
+        async load() { loads += 1; return new core.ReaderAsset('must-not-publish') } }) })
+    },
+  })
+  surface.session = session
+  session.setViewportActive(true)
+  session.subscribe(state => { surface.state = state; surface.syncPreferredVariant(state) })
+  await session.open(key); await new Promise(done => setImmediate(done))
+  let frame = session.snapshot().frames[0]
+  session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true)
+  await new Promise(done => setImmediate(done))
+  assert.equal(frame.asset.variant, 'default')
+  assert.equal(cancellation.isCancelled(), false)
+
+  surface.toggleTemporaryVariant()
+  assert.deepEqual(changes, [false])
+  assert.equal(cancellation.isCancelled(), true)
+  resolve()
+  await new Promise(done => setImmediate(done))
+  frame = session.snapshot().frames[0]
+  assert.equal(frame.asset.variant, 'default')
+  assert.equal(frame.asset.uri, 'default-0')
+  assert.equal(loads, 0)
+  session.close()
+})
+
+test('temporary override cancels a retained processed replacement before the F2 guard returns', () => {
+  const surface = new ReaderSurface()
+  surface.active = true; surface.closing = false; surface.chromeDisposed = false
+  surface.variantPolicy = new ReaderVariantPolicy(new core.ReaderVariantPreference('enhanced', 'model-a:2000'))
+  surface.temporaryVariantControl = { available: true, changed() {} }
+  const key = new core.ReaderUnitKey('source', 'work', 'unit')
+  const state = new core.ReaderPagedSnapshot()
+  state.phase = 'ready'; state.kind = 'original'; state.navigationRevision = 4
+  state.unit = new core.ReaderUnit(key, 'Title', 1)
+  state.frames = [{ part: { sourceIndex: 0 }, slotId: 7,
+    asset: { requestId: 12, assetRequestId: 11, page: new core.ReaderPage(key, 'p0', 0),
+      phase: 'displayed', variant: 'default', variantIdentity: '' } }]
+  surface.state = state
+  const scope = surface.temporaryVariantScope(state)
+  assert.notEqual(scope, null)
+  surface.temporaryVariantOverride.toggle(scope)
+  const cancelled = []
+  surface.session = { cancelRetainedProcessedVariantReplacements: sources => cancelled.push(sources) }
+
+  surface.syncPreferredVariant(state)
+  assert.equal(cancelled.length, 1)
+  assert.equal(cancelled[0][0], 0)
+  assert.equal(surface.variantAttempts.size, 0)
+})
+
 test('preferred host variant waits for the original asset instead of consuming its attempt on a thumbnail', () => {
   const surface = new ReaderSurface()
   surface.active = true; surface.closing = false; surface.chromeDisposed = false
@@ -226,7 +330,8 @@ test('preferred host variant waits for the original asset instead of consuming i
   state.phase = 'ready'; state.kind = 'thumbnail'
   state.unit = new core.ReaderUnit(new core.ReaderUnitKey('source', 'work', 'unit'), 'Title', 1)
   state.frames = [{ part: { sourceIndex: 0 }, slotId: 7,
-    asset: { requestId: 11, phase: 'displayed', variant: 'default', variantIdentity: '' } }]
+    asset: { requestId: 11, assetRequestId: 11, page: new core.ReaderPage(state.unit.key, 'p0', 0),
+      phase: 'displayed', variant: 'default', variantIdentity: '' } }]
 
   surface.syncPreferredVariant(state)
   assert.equal(calls.length, 0)
