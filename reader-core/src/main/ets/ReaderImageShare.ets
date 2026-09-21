@@ -8,12 +8,17 @@ export class ReaderImageShareTarget {
   sourceIndex: number
   navigation: number
   variant: ReaderAssetVariant
+  uri: string
+  assetRequestId: number
 
-  constructor(unit: ReaderUnit, sourceIndex: number, navigation: number, variant: ReaderAssetVariant = 'default') {
+  constructor(unit: ReaderUnit, sourceIndex: number, navigation: number, variant: ReaderAssetVariant = 'default',
+    uri: string = '', assetRequestId: number = 0) {
     this.unit = unit.copy()
     this.sourceIndex = sourceIndex
     this.navigation = navigation
     this.variant = variant
+    this.uri = uri
+    this.assetRequestId = assetRequestId
   }
 
   static from(snapshot: ReaderPagedSnapshot): ReaderImageShareTarget | null {
@@ -22,17 +27,29 @@ export class ReaderImageShareTarget {
     if (snapshot.phase !== 'ready' || unit === null || anchor === null ||
       !anchor.unit.equals(unit.key) || anchor.sourceIndexHint < 0 ||
       anchor.sourceIndexHint >= unit.pageCount) return null
-    const frame = snapshot.frames.find(value => value.part.sourceIndex === anchor.sourceIndexHint)
-    return new ReaderImageShareTarget(unit, anchor.sourceIndexHint, snapshot.navigationRevision, frame?.asset.variant ?? 'default')
+    const frame = snapshot.frames.find(value => {
+      const asset = value.asset
+      const page = asset.page
+      return value.part.sourceIndex === anchor.sourceIndexHint && value.part.unit.equals(unit.key) &&
+        value.part.pageKey !== null && asset.phase === 'displayed' && asset.uri.length > 0 &&
+        asset.assetRequestId > 0 && asset.unit?.key.equals(unit.key) === true && page !== null &&
+        page.unit.equals(unit.key) && page.sourceIndex === anchor.sourceIndexHint &&
+        page.key === value.part.pageKey && asset.sourceIndex === anchor.sourceIndexHint
+    })
+    if (frame === undefined) return null
+    return new ReaderImageShareTarget(unit, anchor.sourceIndexHint, snapshot.navigationRevision, frame.asset.variant,
+      frame.asset.uri, frame.asset.assetRequestId)
   }
 
   copy(): ReaderImageShareTarget {
-    return new ReaderImageShareTarget(this.unit, this.sourceIndex, this.navigation, this.variant)
+    return new ReaderImageShareTarget(this.unit, this.sourceIndex, this.navigation, this.variant,
+      this.uri, this.assetRequestId)
   }
 
   equals(other: ReaderImageShareTarget): boolean {
     return this.unit.key.equals(other.unit.key) && this.sourceIndex === other.sourceIndex &&
-      this.navigation === other.navigation && this.variant === other.variant
+      this.navigation === other.navigation && this.variant === other.variant && this.uri === other.uri &&
+      this.assetRequestId === other.assetRequestId
   }
 }
 

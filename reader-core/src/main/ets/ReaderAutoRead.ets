@@ -6,6 +6,9 @@ export interface ReaderAutoReadClock {
   clear(id: number): void
 }
 
+/** Host semantics for whether the next display item may receive an automatic turn. */
+export type ReaderAutoReadTargetReadiness = 'current' | 'source'
+
 class AutoReadClock implements ReaderAutoReadClock {
   set(callback: () => void, delayMs: number): number { return setTimeout(callback, delayMs) }
   clear(id: number): void { clearTimeout(id) }
@@ -22,16 +25,22 @@ export class ReaderAutoReadController {
   private blocked: boolean = false
   private ready: boolean = false
   private last: boolean = false
+  private targetReady: boolean = true
+  private waitingForTarget: boolean = false
   private interval: number = 3
   private boundary: string = ''
   private identity: string = ''
   private fired: string = ''
   private timer: number = -1
   private generation: number = 0
+  /** Invoked once after the dwell interval when a source-target needs host preparation. */
+  private targetPending: (() => void) | null
 
-  constructor(onNext: () => boolean, clock: ReaderAutoReadClock = new AutoReadClock()) {
+  constructor(onNext: () => boolean, clock: ReaderAutoReadClock = new AutoReadClock(),
+    onTargetPending: (() => void) | null = null) {
     this.next = onNext
     this.clock = clock
+    this.targetPending = onTargetPending
   }
   subscribe(listener: ((enabled: boolean) => void) | null): void {
     this.listener = listener
@@ -42,6 +51,7 @@ export class ReaderAutoReadController {
     if (this.closed || enabled === this.enabled) return
     this.enabled = enabled
     this.fired = ''
+    if (!enabled) this.waitingForTarget = false
     this.cancelTimer()
     this.listener?.(enabled)
     this.schedule()
@@ -53,7 +63,8 @@ export class ReaderAutoReadController {
     this.cancelTimer()
     this.listener = null
   }
-  update(snapshot: ReaderPagedSnapshot, foreground: boolean, blocked: boolean, intervalSeconds: number = 3): void {
+  update(snapshot: ReaderPagedSnapshot, foreground: boolean, blocked: boolean, intervalSeconds: number = 3,
+    targetReadiness: ReaderAutoReadTargetReadiness = 'current'): void {
     if (this.closed) return
     const boundary = snapshot.unit === null ? '' : JSON.stringify([snapshot.unit.key, snapshot.policy.layout])
     if (this.boundary !== '' && boundary !== this.boundary) this.stop()
@@ -61,6 +72,7 @@ export class ReaderAutoReadController {
     const interval = Number.isFinite(intervalSeconds) ? Math.max(1, Math.min(60, Math.round(intervalSeconds))) : 3
     let ready = false
     let last = false
+    let targetReady = true
     let identity = ''
     if (snapshot.unit !== null && snapshot.phase === 'ready' && snapshot.kind === 'original') {
       const map = new ReaderDisplayMap(snapshot.unit, snapshot.pageMetadata, snapshot.policy)
@@ -80,6 +92,9 @@ export class ReaderAutoReadController {
             asset.kind === 'original' && asset.phase === 'displayed' && asset.uri.length > 0
         })
         last = map.isLastDisplayItem(snapshot.displayIndex)
+        if (ready && !last && targetReadiness !== 'current') {
+          targetReady = this.targetSourceReady(snapshot, map)
+        }
       }
       identity = JSON.stringify([boundary, snapshot.policy, snapshot.topologyRevision, snapshot.navigationRevision,
         snapshot.displayIndex, snapshot.selectionId, snapshot.frames.map(frame =>
@@ -88,14 +103,39 @@ export class ReaderAutoReadController {
     }
     if (identity !== this.identity || !ready || foreground !== this.foreground || blocked !== this.blocked ||
       interval !== this.interval) this.cancelTimer()
-    if (identity !== this.identity) this.fired = ''
+    if (identity !== this.identity) {
+      this.fired = ''
+      this.waitingForTarget = false
+    }
     this.identity = identity
     this.ready = ready
     this.last = last
+    this.targetReady = targetReady
     this.foreground = foreground
     this.blocked = blocked
     this.interval = interval
+    if (this.waitingForTarget && targetReady && ready && identity.length > 0) {
+      this.waitingForTarget = false
+      this.fired = ''
+    }
     this.schedule()
+  }
+
+  private targetSourceReady(snapshot: ReaderPagedSnapshot, map: ReaderDisplayMap): boolean {
+    const targetIndex = snapshot.displayIndex + 1
+    const target = map.item(targetIndex)
+    if (target === null) return false
+    return target.parts.every(part => {
+      if (part.pageKey === null) return false
+      const page = snapshot.pageMetadata.find(candidate => candidate.sourceIndex === part.sourceIndex &&
+        candidate.key === part.pageKey && candidate.unit.equals(part.unit))
+      if (page === undefined || !page.bodySourceReady || page.bodySourceFailed) return false
+      const item = snapshot.window.find(candidate => candidate.index === targetIndex)
+      if (item === undefined) return true
+      const matches = item.frames.filter(frame => frame.part.sourceIndex === part.sourceIndex &&
+        frame.part.fragment === part.fragment)
+      return matches.length <= 1 && (matches.length === 0 || matches[0].asset.phase !== 'failed')
+    })
   }
   private cancelTimer(): void {
     this.generation++
@@ -103,7 +143,7 @@ export class ReaderAutoReadController {
     this.timer = -1
   }
   private schedule(): void {
-    if (this.closed || !this.enabled || !this.foreground || this.blocked || !this.ready ||
+    if (this.closed || !this.enabled || !this.foreground || this.blocked || !this.ready || this.waitingForTarget ||
       this.timer !== -1 || this.identity === this.fired) return
     const generation = this.generation
     const identity = this.identity
@@ -112,9 +152,14 @@ export class ReaderAutoReadController {
         !this.foreground || this.blocked || !this.ready) return
       this.timer = -1
       this.generation++
-      this.fired = identity
       if (this.last) this.stop()
       else {
+        if (!this.targetReady) {
+          this.waitingForTarget = true
+          this.targetPending?.()
+          return
+        }
+        this.fired = identity
         const accepted = this.next()
         // next may synchronously update to a new selection and arm its timer.
         if (!accepted && this.identity === identity && this.fired === identity) {

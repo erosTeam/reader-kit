@@ -1,6 +1,7 @@
 export {
   ReaderUnitKey, ReaderUnit, ReaderPage, ReaderThumbnail, ReaderAsset, ReaderAssetNotice, ReaderAssetFailure,
-  ReaderCatalog, ReaderAssetProvider, ReaderAssetFailureClassifier, ReaderPreloadHost, ReaderCancellation, ReaderSnapshot,
+  ReaderCatalog, ReaderAssetProvider, ReaderAssetFailureClassifier, ReaderPreloadHost, ReaderAutoReadSourceHost,
+  ReaderCancellation, ReaderSnapshot,
   ReaderSession, ReaderPhase, ReaderAssetKind, ReaderAssetVariant, ReaderProcessedAssetVariant,
   ReaderVariantPreference,
   ReaderOriginalAssetPlan, ReaderVariantAssetPlan, ReaderResolvedAssetPlan,
@@ -24,4 +25,5 @@ export { ReaderImageShareTarget, ReaderImageSharePresentation, ReaderImageShareH
 export { ReaderImageSaveChoice, ReaderImageSaveItemStatus, ReaderImageSaveOutcome,
   ReaderImageSaveItem, ReaderImageSaveTarget, ReaderImageSaveItemResult, ReaderImageSaveResult,
   ReaderImageSavePresentation, ReaderImageSaveHost, ReaderImageSaveController } from './src/main/ets/ReaderImageSave'
-export { ReaderAutoReadClock, ReaderAutoReadController } from './src/main/ets/ReaderAutoRead'
+export { ReaderAutoReadClock, ReaderAutoReadController, ReaderAutoReadTargetReadiness } from './src/main/ets/ReaderAutoRead'
+export { ReaderTemporaryVariantSource, ReaderTemporaryVariantScope, ReaderTemporaryVariantOverride } from './src/main/ets/ReaderTemporaryVariantOverride'
