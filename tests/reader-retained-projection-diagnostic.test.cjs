@@ -90,6 +90,8 @@ test('variant policy does not start a second replacement while the retained fall
     session: {
       selectVariant: (...args) => { calls.push(args); return Promise.resolve('changed') },
     },
+    reconcileTemporaryVariantOverride: () => null,
+    temporaryVariantOverride: { clear(){}, reconcile(){}, isDisabled: () => false, toggle: () => false, revision: 0, preference: (_scope, _source, _key, resolved) => resolved },
   })
   const state = {
     phase: 'ready',
@@ -114,7 +116,7 @@ test('diagnostic wiring is default-off and reaches the exact paged cell and sess
   const paged = core('ReaderPagedSession.ets')
   const lab = nextN('feature/reader/src/main/ets/lab/NextNReaderLabPage.ets')
   assert.match(surface, /@Param retainedProjectionDiagnostic: boolean = false/)
-  assert.match(surface, /if \(frame\.asset\.requestId !== frame\.asset\.assetRequestId\) return/)
+  assert.match(surface, /if \(frame\.asset\.requestId !== frame\.asset\.assetRequestId\) \{[\s\S]*?cancelRetainedProcessedVariantReplacements\(\[frame\.part\.sourceIndex\]\)/)
   assert.match(surface, /ReaderPagerSurface\(\{[\s\S]*retainedProjectionDiagnostic: this\.retainedProjectionDiagnostic/)
   assert.match(pager, /export struct ReaderPagerSurface \{[\s\S]*@Param retainedProjectionDiagnostic: boolean = false/)
   assert.match(pager, /struct ReaderNativePager \{[\s\S]*@Param retainedProjectionDiagnostic: boolean = false/)
