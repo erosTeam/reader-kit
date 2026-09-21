@@ -62,6 +62,14 @@ export class ReaderPage {
   width: number = 0
   height: number = 0
   thumbnail: ReaderThumbnail = new ReaderThumbnail()
+  /**
+   * Host-confirmed body-source state for automatic reading. It is deliberately
+   * independent from thumbnail availability: a preview can exist before the
+   * host has resolved a usable body image.
+   */
+  bodySourceReady: boolean = false
+  /** A failed target stays paused until a host publishes a fresh source state. */
+  bodySourceFailed: boolean = false
 
   constructor(unit: ReaderUnitKey, key: string, sourceIndex: number) {
     this.unit = unit
@@ -74,6 +82,8 @@ export class ReaderPage {
     value.width = this.width
     value.height = this.height
     value.thumbnail = this.thumbnail.copy()
+    value.bodySourceReady = this.bodySourceReady
+    value.bodySourceFailed = this.bodySourceFailed
     return value
   }
 }

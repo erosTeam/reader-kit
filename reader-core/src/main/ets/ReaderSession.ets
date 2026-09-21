@@ -106,6 +106,8 @@ export class ReaderCancellation {
  */
 export class ReaderAsset {
   uri: string
+  /** Source captured for an explicit user export. Defaults to the displayed URI. */
+  saveUri: string
   crop: ReaderImageCropSource | null = null
   originalAvailable: boolean = false
   notice: ReaderAssetNotice | null = null
@@ -121,6 +123,7 @@ export class ReaderAsset {
   constructor(uri: string, releaseResource: () => void = () => {},
     information: ReaderImageInformationSource | null = null, presentResource: () => void = () => {}) {
     this.uri = uri
+    this.saveUri = uri
     this.releaseResource = releaseResource
     this.information = information
     this.presentResource = presentResource
@@ -183,6 +186,15 @@ export interface ReaderPreloadHost {
   preload(page: ReaderPage, cancellation: ReaderCancellation): Promise<void>
 }
 
+/**
+ * Optional host bridge for an automatic-reading target. Unlike cache warming,
+ * it returns the refreshed body-source fact so the shared session can publish
+ * it without treating a thumbnail as a decoded or resolved body image.
+ */
+export interface ReaderAutoReadSourceHost {
+  prepareAutoReadSource(page: ReaderPage, cancellation: ReaderCancellation): Promise<ReaderPage>
+}
+
 /** A host-owned resolved recipe, not a downloaded asset or a persistent reader preference. */
 export interface ReaderOriginalAssetPlan {
   page: ReaderPage
@@ -211,6 +223,8 @@ export class ReaderSnapshot {
   variantIdentity: string = ''
   originalAvailable: boolean = false
   uri: string = ''
+  /** Host-selected export source; may intentionally differ from the rendered URI. */
+  saveUri: string = ''
   /** Previous displayed pixels kept below an exact in-place replacement. */
   retainedUri: string = ''
   retainedAssetRequestId: number = 0
@@ -238,6 +252,7 @@ export class ReaderSnapshot {
     value.variantIdentity = this.variantIdentity
     value.originalAvailable = this.originalAvailable
     value.uri = this.uri
+    value.saveUri = this.saveUri
     value.retainedUri = this.retainedUri
     value.retainedAssetRequestId = this.retainedAssetRequestId
     value.requestId = this.requestId
@@ -273,6 +288,8 @@ export class ReaderSession {
   private pendingUnit: ReaderUnitKey | null = null
   private pendingIndex: number = 0
   private viewportActive: boolean = false
+  /** Restricted diagnostic only; false leaves all replacement-decision logging disabled. */
+  private retainedDecisionDiagnostic: boolean = false
 
   constructor(catalog: ReaderCatalog, assets: ReaderAssetProvider,
     failures: ReaderAssetFailureClassifier | null = null) {
@@ -287,6 +304,26 @@ export class ReaderSession {
   }
 
   snapshot(): ReaderSnapshot { return this.state.copy() }
+  setRetainedDecisionDiagnostic(enabled: boolean): void { this.retainedDecisionDiagnostic = enabled }
+
+  /** Discard an unpresented enhanced/translated replacement while retaining the displayed fallback. */
+  cancelRetainedProcessedReplacement(): boolean {
+    const target = this.originalPlan
+    if ((target?.variant !== 'enhanced' && target?.variant !== 'translated') ||
+      this.state.phase !== 'displayed' || this.state.requestId === this.state.assetRequestId) return false
+    this.cancellation.cancel()
+    this.epoch += 1
+    // The retained fallback is still the displayed asset. Give it the newly
+    // current request identity as well: the cancelled candidate must fail its
+    // epoch fence, while crop and image-information reads remain eligible for
+    // the fallback that stayed on screen.
+    this.state.requestId = this.epoch
+    this.state.assetRequestId = this.epoch
+    this.originalPlan = null
+    this.emit()
+    return true
+  }
+
   async imageCrop(requestId: number): Promise<ReaderImageCropBounds | null> {
     const asset = this.asset
     const eligible = (): boolean => this.current(requestId) && this.state.assetRequestId === requestId &&
@@ -429,6 +466,14 @@ export class ReaderSession {
     const retainDisplayed = (forceReload || isReplacingVariant) && this.state.phase === 'displayed' && this.state.unit !== null &&
       this.state.unit.key.equals(unit.key) && this.state.sourceIndex === index && this.state.kind === kind &&
       this.asset !== null
+    if (this.retainedDecisionDiagnostic) {
+      console.info('[ReaderSession] retained_decision ' +
+        `source=${index} phase=${this.state.phase} current_variant=${this.state.variant} ` +
+        `current_asset_request=${this.state.assetRequestId} target_variant=${targetVariantPlan?.variant ?? 'default'} ` +
+        `force_reload=${forceReload} replacing_variant=${isReplacingVariant} ` +
+        `same_unit=${this.state.unit?.key.equals(unit.key) === true} same_source=${this.state.sourceIndex === index} ` +
+        `same_kind=${this.state.kind === kind} asset_present=${this.asset !== null} retain_displayed=${retainDisplayed}`)
+    }
     this.originalPlan = kind === 'original' ? assetPlan : null
     const variant: ReaderAssetVariant = this.originalPlan?.variant ?? (this.originalPlan === null ? 'default' : 'original')
     const variantIdentity: string = this.originalPlan?.variant === 'enhanced' || this.originalPlan?.variant === 'translated'
@@ -444,6 +489,7 @@ export class ReaderSession {
       this.state.informationAvailable = false
       this.state.notice = null
       this.state.uri = ''
+      this.state.saveUri = ''
       this.state.retainedUri = ''
       this.state.retainedAssetRequestId = 0
       this.state.assetRequestId = 0
@@ -491,6 +537,7 @@ export class ReaderSession {
       this.state.variantIdentity = variantIdentity
       this.state.page = page
       this.state.uri = asset.uri
+      this.state.saveUri = asset.saveUri.length > 0 ? asset.saveUri : asset.uri
       this.state.informationAvailable = asset.information !== null
       this.state.notice = asset.notice === null ? null : asset.notice.copy()
       this.state.originalAvailable = this.state.variant === 'original' || asset.originalAvailable
@@ -614,6 +661,7 @@ export class ReaderSession {
     this.state.informationAvailable = false
     this.state.notice = null
     this.state.uri = ''
+    this.state.saveUri = ''
     this.state.retainedUri = ''
     this.state.retainedAssetRequestId = 0
     this.state.assetRequestId = 0

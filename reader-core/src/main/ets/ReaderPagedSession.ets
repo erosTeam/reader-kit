@@ -1,7 +1,8 @@
 import { ReaderUnitKey, ReaderUnit, ReaderPage } from './ReaderContent'
 import {
   ReaderSession, ReaderSnapshot, ReaderCatalog, ReaderAssetProvider, ReaderAssetKind, ReaderAssetVariant,
-  ReaderCancellation, ReaderProcessedAssetVariant, ReaderPreloadHost, ReaderResolvedAssetPlan, ReaderVariantAssetPlan,
+  ReaderCancellation, ReaderProcessedAssetVariant, ReaderPreloadHost, ReaderAutoReadSourceHost,
+  ReaderResolvedAssetPlan, ReaderVariantAssetPlan,
   ReaderAssetFailureClassifier,
 } from './ReaderSession'
 import { ReaderDisplayMap, ReaderDisplayPolicy, ReaderDisplayPart, ReaderReadingAnchor, ReaderFragment,
@@ -209,6 +210,7 @@ export class ReaderPagedSession {
   private readonly catalog: ReaderCatalog
   private readonly assets: ReaderAssetProvider
   private readonly preloadHost: ReaderPreloadHost | null
+  private readonly autoReadSourceHost: ReaderAutoReadSourceHost | null
   private readonly failures: ReaderAssetFailureClassifier | null
   private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
   private map: ReaderDisplayMap | null = null
@@ -223,6 +225,9 @@ export class ReaderPagedSession {
   private preloadEpoch: number = 0
   private preloadSignature: string = ''
   private preloadCancellation: ReaderCancellation = new ReaderCancellation()
+  private autoReadSourcePreparations: Map<number, ReaderCancellation> = new Map()
+  /** Retires source preparations even when navigation returns to the same target index. */
+  private autoReadSourceGeneration: number = 0
   private displayKeys: string[] = []
   private topologySignature: string = ''
   private topologyRevision: number = 0
@@ -237,21 +242,30 @@ export class ReaderPagedSession {
   private disposed: boolean = false
   private active: boolean = false
   private cropEnabled: boolean = false
+  /** Restricted diagnostic only; copied into slots before they begin loading. */
+  private retainedDecisionDiagnostic: boolean = false
   private activityEpoch: number = 0
   private listener: ((snapshot: ReaderPagedSnapshot) => void) | null = null
 
   constructor(catalog: ReaderCatalog, assets: ReaderAssetProvider, preloadHost: ReaderPreloadHost | null = null,
-    failures: ReaderAssetFailureClassifier | null = null) {
+    failures: ReaderAssetFailureClassifier | null = null, autoReadSourceHost: ReaderAutoReadSourceHost | null = null) {
     this.catalog = catalog
     this.assets = assets
     this.preloadHost = preloadHost
     this.failures = failures
+    this.autoReadSourceHost = autoReadSourceHost
   }
 
   cancellationMode(): string { return this.assets.cancellationMode }
   informationSupported(): boolean { return this.assets.informationSupported === true }
   originalSelectionSupported(): boolean { return this.assets.prepareOriginal !== undefined }
   variantSelectionSupported(): boolean { return this.assets.prepareVariant !== undefined }
+
+  setRetainedDecisionDiagnostic(enabled: boolean): void {
+    if (this.retainedDecisionDiagnostic === enabled) return
+    this.retainedDecisionDiagnostic = enabled
+    this.slots.forEach((slot: ReaderPageSlot): void => slot.session.setRetainedDecisionDiagnostic(enabled))
+  }
 
   /** Runtime presentation only. Does not modify host preferences or source dimensions. */
   setCropEnabled(enabled: boolean): void {
@@ -303,6 +317,41 @@ export class ReaderPagedSession {
     this.originalPreparations.clear()
     this.preparationVariants.clear()
     this.emit()
+  }
+
+  /** Reject in-flight host derivatives without disturbing a canonical/original preparation. */
+  cancelProcessedVariantPreparations(sourceIndexes: number[]): void {
+    let changed: boolean = false
+    sourceIndexes.forEach((sourceIndex: number): void => {
+      const variant = this.preparationVariants.get(sourceIndex)
+      if (variant !== 'enhanced' && variant !== 'translated') return
+      this.originalPreparations.get(sourceIndex)?.cancel()
+      this.originalPreparations.delete(sourceIndex)
+      this.preparationVariants.delete(sourceIndex)
+      changed = true
+    })
+    if (changed) this.emit()
+  }
+
+  /**
+   * Keep a displayed default/source asset when its processed replacement is
+   * still loading. The parent owns the recipe map, so its matching processed
+   * plan must leave with the cancelled child replacement.
+   */
+  cancelRetainedProcessedVariantReplacements(sourceIndexes: number[]): void {
+    let changed: boolean = false
+    sourceIndexes.forEach((sourceIndex: number): void => {
+      const slot = this.slots.find((candidate: ReaderPageSlot): boolean => candidate.index === sourceIndex)
+      if (slot === undefined || !slot.session.cancelRetainedProcessedReplacement()) return
+      const plan = this.assetPlans.get(sourceIndex)
+      if (plan?.variant === 'enhanced' || plan?.variant === 'translated') this.assetPlans.delete(sourceIndex)
+      if (slot.assetPlan?.variant === 'enhanced' || slot.assetPlan?.variant === 'translated') slot.assetPlan = null
+      this.cropPages.delete(sourceIndex)
+      changed = true
+    })
+    if (!changed) return
+    this.state.selectionId += 1
+    this.reconcile()
   }
 
   /** Per-source selection within this reading unit; resolution failure keeps the current asset. */
@@ -453,6 +502,7 @@ export class ReaderPagedSession {
   }
   setViewportActive(active: boolean): void {
     if (!active) this.cancelOriginalPreparations()
+    if (!active) this.cancelAutoReadSourcePreparations()
     if (this.active && !active) this.activityEpoch += 1
     this.active = active && !this.disposed
   }
@@ -604,11 +654,83 @@ export class ReaderPagedSession {
     })
   }
 
+  /**
+   * The common auto-read controller calls this only after its dwell expires.
+   * It requests just the next logical display item's sources, so a zero normal
+   * preload depth still has a real path to body-source readiness.
+   */
+  requestAutoReadTargetSource(): void {
+    const unit = this.state.unit
+    if (this.disposed || !this.active || this.autoReadSourceHost === null || unit === null ||
+      this.state.phase !== 'ready' || this.map === null) return
+    const targetIndex = this.state.displayIndex + 1
+    const target = this.map.item(targetIndex)
+    if (target === null) return
+    const targetUnit = unit.copy()
+    const generation = this.autoReadSourceGeneration
+    target.parts.forEach((part: ReaderDisplayPart): void => {
+      const existing = this.pages.get(part.sourceIndex)
+      if (existing?.bodySourceReady === true || existing?.bodySourceFailed === true ||
+        this.autoReadSourcePreparations.has(part.sourceIndex)) return
+      const cancellation = new ReaderCancellation()
+      this.autoReadSourcePreparations.set(part.sourceIndex, cancellation)
+      void this.catalog.page(targetUnit.copy(), part.sourceIndex, cancellation).then((page: ReaderPage): Promise<void> | void => {
+        if (!this.autoReadSourceCurrent(targetUnit, targetIndex, part.sourceIndex, generation, cancellation) ||
+          page.sourceIndex !== part.sourceIndex || !page.unit.equals(targetUnit.key)) return
+        this.installAutoReadSourcePage(page)
+        if (page.bodySourceReady || page.bodySourceFailed) return
+        return this.autoReadSourceHost?.prepareAutoReadSource(page.copy(), cancellation).then((resolved: ReaderPage): void => {
+          if (!this.autoReadSourceCurrent(targetUnit, targetIndex, part.sourceIndex, generation, cancellation) ||
+            resolved.sourceIndex !== part.sourceIndex || !resolved.unit.equals(targetUnit.key)) return
+          this.installAutoReadSourcePage(resolved)
+        })
+      }).catch((): void => {
+        if (!this.autoReadSourceCurrent(targetUnit, targetIndex, part.sourceIndex, generation, cancellation)) return
+        const failed = this.pages.get(part.sourceIndex)
+        if (failed !== undefined) {
+          const value = failed.copy()
+          value.bodySourceFailed = true
+          this.installAutoReadSourcePage(value)
+        }
+        console.warn(`[ReaderAutoRead] target_source_failed source=${part.sourceIndex}`)
+      }).finally((): void => {
+        if (this.autoReadSourcePreparations.get(part.sourceIndex) === cancellation) {
+          this.autoReadSourcePreparations.delete(part.sourceIndex)
+        }
+      })
+    })
+  }
+
+  private autoReadSourceCurrent(unit: ReaderUnit, targetIndex: number, sourceIndex: number, generation: number,
+    cancellation: ReaderCancellation): boolean {
+    return !this.disposed && this.active && !cancellation.isCancelled() && generation === this.autoReadSourceGeneration &&
+      this.state.phase === 'ready' &&
+      this.state.unit?.key.equals(unit.key) === true && this.state.displayIndex + 1 === targetIndex &&
+      this.map?.item(targetIndex)?.parts.some((part: ReaderDisplayPart): boolean => part.sourceIndex === sourceIndex) === true
+  }
+
+  private installAutoReadSourcePage(page: ReaderPage): void {
+    const previous = this.pages.get(page.sourceIndex)
+    const value = page.copy()
+    if (value.bodySourceReady) value.bodySourceFailed = false
+    this.pages.set(page.sourceIndex, value)
+    if (previous === undefined) this.rebuild()
+    else this.emit()
+  }
+
+  /** Stop automatic-target preparation without changing the reader selection. */
+  cancelAutoReadSourcePreparations(): void {
+    this.autoReadSourceGeneration += 1
+    this.autoReadSourcePreparations.forEach((cancellation: ReaderCancellation): void => cancellation.cancel())
+    this.autoReadSourcePreparations.clear()
+  }
+
   private emit(): void { if (this.listener !== null) this.listener(this.snapshot()) }
 
   async open(key: ReaderUnitKey, index: number = 0): Promise<void> {
     if (this.disposed) return
     this.cancelOriginalPreparations()
+    this.cancelAutoReadSourcePreparations()
     this.preloadSignature = ''
     this.preloadCancellation.cancel()
     this.preloadCancellation = new ReaderCancellation()
@@ -662,6 +784,7 @@ export class ReaderPagedSession {
     }
     this.state.policy = policy.copy()
     this.cancelOriginalPreparations()
+    this.cancelAutoReadSourcePreparations()
     this.navigationRevision += 1
     this.continuousStart = -1
     this.continuousEnd = -1
@@ -694,6 +817,7 @@ export class ReaderPagedSession {
     const target = this.spreadShiftTarget()
     if (target === null) return false
     this.cancelOriginalPreparations()
+    this.cancelAutoReadSourcePreparations()
     this.state.policy = this.state.policy.copy()
     this.state.policy.firstPageAlone = target % 2 === 1
     this.navigationRevision += 1
@@ -710,6 +834,7 @@ export class ReaderPagedSession {
       !this.state.unit.key.equals(unit) || navigationRevision !== this.navigationRevision ||
       !Number.isSafeInteger(index) || index < 0 || index >= this.state.unit.pageCount) return false
     this.cancelOriginalPreparations()
+    this.cancelAutoReadSourcePreparations()
     this.navigationRevision += 1
     this.continuousStart = -1
     this.continuousEnd = -1
@@ -727,6 +852,7 @@ export class ReaderPagedSession {
       !Number.isInteger(index) || index < 0 || index >= this.map.count()) return false
     if (index === this.state.displayIndex) return true
     this.cancelOriginalPreparations()
+    this.cancelAutoReadSourcePreparations()
     this.navigationRevision += 1
     this.continuousStart = -1
     this.continuousEnd = -1
@@ -741,6 +867,7 @@ export class ReaderPagedSession {
       frame.asset.page === null || !frame.asset.page.thumbnail.available)) return
     this.state.kind = kind
     this.cancelOriginalPreparations()
+    this.cancelAutoReadSourcePreparations()
     this.navigationRevision += 1
     this.continuousStart = -1
     this.continuousEnd = -1
@@ -757,9 +884,12 @@ export class ReaderPagedSession {
   async retry(): Promise<void> {
     if (this.disposed) return
     if (this.pendingUnit !== null) await this.open(this.pendingUnit, this.pendingIndex)
-    else await Promise.all(this.slots.filter((slot: ReaderPageSlot) => slot.session.snapshot().phase === 'failed' &&
-      this.map?.item(this.state.displayIndex)?.parts.some((part: ReaderDisplayPart) => part.sourceIndex === slot.index))
-      .map((slot: ReaderPageSlot) => slot.session.retry()))
+    else {
+      this.cancelAutoReadSourcePreparations()
+      await Promise.all(this.slots.filter((slot: ReaderPageSlot) => slot.session.snapshot().phase === 'failed' &&
+        this.map?.item(this.state.displayIndex)?.parts.some((part: ReaderDisplayPart) => part.sourceIndex === slot.index))
+        .map((slot: ReaderPageSlot) => slot.session.retry()))
+    }
   }
 
   /** Retry one visible failed asset without selecting it or reopening its host unit. */
@@ -774,6 +904,7 @@ export class ReaderPagedSession {
       candidate.asset.requestId === requestId && candidate.asset.phase === 'failed')
     const slot = frame === undefined ? undefined : this.slots.find((candidate: ReaderPageSlot) => candidate.id === slotId)
     if (slot === undefined) return false
+    this.cancelAutoReadSourcePreparations()
     await slot.session.retry()
     return true
   }
@@ -869,8 +1000,10 @@ export class ReaderPagedSession {
     const added: ReaderPageSlot[] = []
     parts.forEach((part: ReaderDisplayPart) => {
       if (this.slots.some((slot: ReaderPageSlot) => slot.index === part.sourceIndex)) return
+      const session = new ReaderSession(this.catalog, this.assets, this.failures)
+      session.setRetainedDecisionDiagnostic(this.retainedDecisionDiagnostic)
       const slot = new ReaderPageSlot(++this.slotSerial, part.sourceIndex, this.state.kind,
-        new ReaderSession(this.catalog, this.assets, this.failures),
+        session,
         targetPlan(part.sourceIndex))
       this.slots.push(slot)
       added.push(slot)
@@ -895,10 +1028,48 @@ export class ReaderPagedSession {
     if (this.disposed || !this.slots.includes(slot)) return
     this.requestCrop(slot, snapshot)
     const page = snapshot.page
-    if (this.state.phase === 'ready' && page !== null && !this.pages.has(page.sourceIndex)) {
-      this.pages.set(page.sourceIndex, page.copy())
-      this.rebuild()
-    } else this.emit()
+    const previous = page === null ? undefined : this.pages.get(page.sourceIndex)?.copy()
+    if (this.state.phase !== 'ready' || page === null || !this.installSlotPage(page)) {
+      this.emit()
+      return
+    }
+    if (this.pageTopologyChanged(previous, this.pages.get(page.sourceIndex) as ReaderPage)) this.rebuild()
+    else this.emit()
+  }
+
+  /** A slot can refresh host metadata for a page retained outside the native window. */
+  private installSlotPage(page: ReaderPage): boolean {
+    const previous = this.pages.get(page.sourceIndex)
+    const value = page.copy()
+    if (previous !== undefined) {
+      // A routine slot snapshot cannot revoke a source fact already confirmed
+      // by a resolver or by successful original presentation.
+      value.bodySourceReady = value.bodySourceReady || previous.bodySourceReady
+      value.bodySourceFailed = !value.bodySourceReady && (value.bodySourceFailed || previous.bodySourceFailed)
+      // Thumbnail or retry metadata may omit native geometry. Keep the last
+      // measured ORIGINAL dimensions until a new positive host value arrives.
+      if (value.width <= 0 && previous.width > 0) value.width = previous.width
+      if (value.height <= 0 && previous.height > 0) value.height = previous.height
+    }
+    if (value.bodySourceReady) value.bodySourceFailed = false
+    if (previous !== undefined && this.samePageMetadata(previous, value)) return false
+    this.pages.set(page.sourceIndex, value)
+    return true
+  }
+
+  private samePageMetadata(left: ReaderPage, right: ReaderPage): boolean {
+    const a = left.thumbnail
+    const b = right.thumbnail
+    return left.unit.equals(right.unit) && left.key === right.key && left.sourceIndex === right.sourceIndex &&
+      left.width === right.width && left.height === right.height && left.bodySourceReady === right.bodySourceReady &&
+      left.bodySourceFailed === right.bodySourceFailed && a.available === b.available && a.kind === b.kind &&
+      a.width === b.width && a.height === b.height && a.spriteWidth === b.spriteWidth &&
+      a.spriteHeight === b.spriteHeight && a.offsetX === b.offsetX && a.offsetY === b.offsetY
+  }
+
+  private pageTopologyChanged(previous: ReaderPage | undefined, current: ReaderPage): boolean {
+    return previous === undefined || !previous.unit.equals(current.unit) || previous.key !== current.key ||
+      previous.sourceIndex !== current.sourceIndex || previous.width !== current.width || previous.height !== current.height
   }
 
   reportPresentation(slotId: number, requestId: number, success: boolean, width: number = 0, height: number = 0): void {
@@ -907,16 +1078,23 @@ export class ReaderPagedSession {
     const before = slot.session.snapshot()
     if (before.assetRequestId !== requestId || requestId === 0) return
     slot.session.reportPresentation(requestId, success)
-    // Native ORIGINAL dimensions, never thumbnail/sprite dimensions, can refine topology.
-    const page = this.pages.get(slot.index)
-    if (success && slot.session.snapshot().phase === 'displayed' && before.kind === 'original' &&
-      page !== undefined && this.state.phase === 'ready' &&
-      Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0 &&
-      (page.width !== width || page.height !== height)) {
+    const rendered = slot.session.snapshot()
+    // A successfully presented ORIGINAL proves a current body source. It
+    // clears an earlier target-preheat failure and may refine native geometry;
+    // thumbnail presentation never changes either source fact.
+    if (!success || rendered.phase !== 'displayed' || before.kind !== 'original' || rendered.page === null ||
+      this.state.phase !== 'ready') return
+    const page = rendered.page.copy()
+    page.bodySourceReady = true
+    page.bodySourceFailed = false
+    if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
       page.width = width
       page.height = height
-      this.rebuild()
     }
+    const previous = this.pages.get(page.sourceIndex)?.copy()
+    if (!this.installSlotPage(page)) return
+    if (this.pageTopologyChanged(previous, this.pages.get(page.sourceIndex) as ReaderPage)) this.rebuild()
+    else this.emit()
   }
 
   private currentRenderSlot(selectionId: number, slotId: number, requestId: number,
@@ -970,6 +1148,7 @@ export class ReaderPagedSession {
     this.continuousEnd = end
     if (this.state.displayIndex !== start) {
       this.cancelOriginalPreparations()
+      this.cancelAutoReadSourcePreparations()
       this.state.displayIndex = start
       this.state.anchor = this.map.anchorAt(start)
       this.state.selectionId += 1
@@ -1011,6 +1190,7 @@ export class ReaderPagedSession {
 
   close(): void {
     this.cancelOriginalPreparations()
+    this.cancelAutoReadSourcePreparations()
     this.assetPlans.clear()
     if (this.disposed) return
     this.disposed = true

@@ -6,7 +6,7 @@ export type ReaderImageSaveChoice = 'current' | 'left' | 'right' | 'both'
 export type ReaderImageSaveItemStatus = 'saved' | 'cancelled' | 'failed'
 export type ReaderImageSaveOutcome = 'completed' | 'cancelled' | 'failed' | 'ignored'
 
-/** A descriptor, NOT a resource lease. Hosts must pin/copy its exact reading resource. */
+/** A descriptor, NOT a resource lease. Hosts must pin/copy its exact export resource. */
 export class ReaderImageSaveItem {
   sourceIndex: number
   pageKey: string
@@ -63,10 +63,10 @@ export class ReaderImageSaveTarget {
         !frame.part.unit.equals(unit.key) || page === null || !page.unit.equals(unit.key) ||
         asset.unit === null || !asset.unit.key.equals(unit.key) || page.sourceIndex !== index ||
         asset.sourceIndex !== index || page.key !== frame.part.pageKey || page.key.length === 0 ||
-        asset.kind !== 'original' || asset.phase !== 'displayed' || asset.uri.length === 0 ||
+        asset.kind !== 'original' || asset.phase !== 'displayed' || asset.saveUri.length === 0 ||
         asset.assetRequestId <= 0 || frame.slotId <= 0) return null
       if (!items.some((item: ReaderImageSaveItem) => item.sourceIndex === index)) {
-        items.push(new ReaderImageSaveItem(index, page.key, frame.slotId, asset.assetRequestId, asset.uri))
+        items.push(new ReaderImageSaveItem(index, page.key, frame.slotId, asset.assetRequestId, asset.saveUri))
       }
     }
     return new ReaderImageSaveTarget(unit, snapshot.navigationRevision, items)
