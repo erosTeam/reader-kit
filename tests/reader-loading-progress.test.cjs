@@ -72,6 +72,12 @@ test('viewport renders the shared loading stage with phase labels and real bytes
   assert.match(viewport, /loadProgressLoaded/)
   assert.match(viewport, /loadProgressTotal/)
   assert.doesNotMatch(viewport, /LoadingProgress\(\)\.width\(32\)\.height\(32\)/)
+  const continuous = read('reader-ui/src/main/ets/ReaderContinuousSurface.ets')
+  assert.match(continuous, /ReaderLoadingStage\(\{/)
+  assert.match(continuous, /rkit_loading_resolving/)
+  assert.match(continuous, /rkit_loading_decoding/)
+  assert.match(continuous, /loadProgressLoaded/)
+  assert.doesNotMatch(continuous, /LoadingProgress\(\)\.width\(32\)\.height\(32\)/)
 })
 
 test('session threads progress into asset and plan loads; interfaces expose optional onProgress; probe forwards', () => {
@@ -99,4 +105,3 @@ test('loading stage reuses the legacy bar geometry and all four locales carry th
     }
   }
 })
-
