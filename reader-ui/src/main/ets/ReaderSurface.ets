@@ -109,6 +109,9 @@ export struct ReaderSurface {
   @Param contentOpacity: number = 1
   @BuilderParam openingPlaceholder: () => void = this.DefaultOpeningPlaceholder
   @Event onClose: (context: ReaderCloseContext | null) => void = () => {}
+  /** Raw Image presentation, before core incorporates the measured original geometry. */
+  @Event onAssetPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void =
+    () => {}
   /** Host-neutral UI activity signals for presentation and pausable processors. */
   @Param activitySink: ReaderActivitySink | null = null
   @Local private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
@@ -806,6 +809,11 @@ export struct ReaderSurface {
     this.syncAutoRead()
   }
 
+  private reportAssetPresented(slotId: number, requestId: number, success: boolean, width: number, height: number): void {
+    this.onAssetPresented(slotId, requestId, success, width, height)
+    this.session.reportPresentation(slotId, requestId, success, width, height)
+  }
+
   private validTapZonePreviewRegions(): ReaderTapZonePreviewRegion[] {
     const regions = this.tapPolicy?.previewRegions() ?? this.tapZonePreviewRegions
     return regions.filter((region: ReaderTapZonePreviewRegion): boolean => region.valid())
@@ -874,7 +882,7 @@ export struct ReaderSurface {
               this.session.setContinuousRange(start, end, topology, navigation)
             },
             onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
-              this.session.reportPresentation(slot, request, success, width, height)
+              this.reportAssetPresented(slot, request, success, width, height)
             },
             onRetry: (topology: number, key: string, slot: number, request: number): void => {
               this.retry(topology, key, slot, request)
@@ -910,7 +918,7 @@ export struct ReaderSurface {
               this.session.selectDisplay(index, topology, navigation)
             },
             onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
-              this.session.reportPresentation(slot, request, success, width, height)
+              this.reportAssetPresented(slot, request, success, width, height)
             },
             onRetry: (topology: number, key: string, slot: number, request: number): void => {
               this.retry(topology, key, slot, request)
