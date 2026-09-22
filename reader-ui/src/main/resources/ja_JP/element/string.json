@@ -143,6 +143,9 @@
     { "name": "rkit_crop_off", "value": "余白の切り取りを解除" },
     { "name": "rkit_tap_left", "value": "左側" },
     { "name": "rkit_tap_right", "value": "右側" },
-    { "name": "rkit_tap_menu", "value": "メニュー" }
+    { "name": "rkit_tap_menu", "value": "メニュー" },
+    { "name": "rkit_loading_resolving", "value": "画像を解析中" },
+    { "name": "rkit_loading_image", "value": "画像を読み込み中" },
+    { "name": "rkit_loading_decoding", "value": "画像を準備中" }
   ]
 }

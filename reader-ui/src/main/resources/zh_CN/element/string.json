@@ -143,6 +143,9 @@
     { "name": "rkit_crop_off", "value": "关闭裁边" },
     { "name": "rkit_tap_left", "value": "左侧" },
     { "name": "rkit_tap_right", "value": "右侧" },
-    { "name": "rkit_tap_menu", "value": "菜单" }
+    { "name": "rkit_tap_menu", "value": "菜单" },
+    { "name": "rkit_loading_resolving", "value": "正在解析图片" },
+    { "name": "rkit_loading_image", "value": "正在加载图片" },
+    { "name": "rkit_loading_decoding", "value": "正在准备图片" }
   ]
 }

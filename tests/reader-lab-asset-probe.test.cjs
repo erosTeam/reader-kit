@@ -40,7 +40,7 @@ test('default original probe is disabled and delegates the original arguments an
   const original = page(0)
   const cancellation = new core.ReaderCancellation()
   assert.equal(await probe.load(original, 'original', cancellation, true), backend.asset)
-  assert.deepEqual(backend.calls, [[original, 'original', cancellation, true]])
+  assert.deepEqual(backend.calls, [[original, 'original', cancellation, true, undefined]])
   assert.equal(probe.cancellationMode, backend.cancellationMode)
   assert.equal(probe.informationSupported, true)
 })
@@ -55,7 +55,7 @@ test('original probe matches kind and source index, then retry and later loads d
   assert.equal(backend.calls.length, 2)
   const retry = page(1)
   assert.equal(await probe.load(retry, 'original', cancellation, true), backend.asset)
-  assert.deepEqual(backend.calls[2], [retry, 'original', cancellation, true])
+  assert.deepEqual(backend.calls[2], [retry, 'original', cancellation, true, undefined])
   assert.equal(await probe.load(retry, 'original', cancellation, false), backend.asset)
 })
 
