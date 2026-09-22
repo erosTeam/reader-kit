@@ -18,6 +18,9 @@ function evaluate(source, imports) {
 }
 const uiPath = path.join(__dirname, '../reader-ui/src/main/ets')
 const entry = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderEntryTransition.ets'), 'utf8'), { '@reader-kit/core': core })
+const handoff = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderRootEntryHandoff.ets'), 'utf8'), {
+  './ReaderEntryTransition': entry,
+})
 // Execute the actual platform-free declarations preceding ArkUI structs. This tests decisions and
 // request fencing, not source shape, layout geometry, rendering, or device acceptance.
 const viewport = fs.readFileSync(path.join(uiPath, 'ReaderPagedViewport.ets'), 'utf8')
@@ -43,6 +46,15 @@ function scenario() {
   return { state, transition }
 }
 
+function readyTarget(frame, decoded = false) {
+  const target = new entry.ReaderEntryTarget(frame.part)
+  target.selectionId = 2; target.topologyRevision = 1; target.navigationRevision = 1
+  target.slotId = frame.slotId; target.requestId = 3; target.assetRequestId = 3
+  target.layoutRevision = 1; target.contentRect = new entry.ReaderEntryRect(10, 20, 200, 300)
+  target.geometryReady = true; target.decodedReady = decoded
+  return target
+}
+
 test('zero original metadata waits only in initial layout and never uses thumbnail dimensions', () => {
   for (const dimensions of [[0, 0], [0, 900], [600, 0]]) {
     const frames = [frame(0, ...dimensions)]
@@ -52,6 +64,81 @@ test('zero original metadata waits only in initial layout and never uses thumbna
     for (const phase of ['moving', 'waiting', 'revealing']) assert.equal(gate.cancel(frames, phase), true)
   }
   assert.equal(gate.ready([]), false)
+})
+
+test('an attested whole-page preview supplies shared entry geometry without becoming original metadata', () => {
+  const frames = [frame(0), frame(1)]
+  for (const value of frames) {
+    value.asset.page.previewWidth = value.part.sourceIndex === 0 ? 200 : 500
+    value.asset.page.previewHeight = value.part.sourceIndex === 0 ? 300 : 250
+    value.asset.page.previewCoversWholePage = true
+  }
+  assert.equal(frames[0].asset.page.width, 0)
+  assert.equal(frames[1].asset.page.height, 0)
+  assert.equal(core.readerPagedFrameAspectRatio(frames[0]), 2 / 3)
+  assert.equal(core.readerPagedFrameAspectRatio(frames[1]), 2)
+  assert.equal(gate.ready(frames), true)
+  frames[1].crop.left = 0.1
+  assert.equal(gate.ready(frames), false)
+})
+
+test('the root handoff owner starts one verified-part flight then one decoded reveal', () => {
+  const { state, transition } = scenario()
+  const controller = new handoff.ReaderRootEntryHandoff()
+  const events = []
+  let arrived = null
+  let commitReveal = null
+  let revealed = null
+  const host = {
+    authorizeDeparture: value => { events.push(`authorize:${value.entryId}`); return true },
+    setOpeningTarget: value => { events.push(`target:${value.contentRect.width}x${value.contentRect.height}`); return true },
+    startOpening: callback => { events.push('opening'); arrived = callback },
+    revealOriginal: (commit, callback) => { events.push('reveal'); commitReveal = commit; revealed = callback },
+    notifyReaderImageReady: page => { events.push(`ready:${page}`) },
+  }
+  transition.publishTarget(readyTarget(state.frames[0]))
+  controller.sync(transition, true, false, host)
+  controller.sync(transition, true, false, host)
+  assert.deepEqual(events, ['authorize:1', 'target:200x300', 'opening'])
+  assert.equal(transition.phase, 'moving')
+  arrived()
+  assert.equal(transition.phase, 'waiting')
+  transition.publishTarget(readyTarget(state.frames[0], true))
+  controller.sync(transition, true, true, host)
+  controller.sync(transition, true, true, host)
+  assert.equal(transition.phase, 'waiting')
+  assert.deepEqual(events, ['authorize:1', 'target:200x300', 'opening', 'reveal'])
+  commitReveal()
+  assert.equal(transition.phase, 'revealing')
+  revealed()
+  assert.equal(transition.phase, 'finished')
+  assert.deepEqual(events, ['authorize:1', 'target:200x300', 'opening', 'reveal', 'ready:1'])
+})
+
+test('a cancelled entry ignores late reveal-transaction callbacks', () => {
+  const { state, transition } = scenario()
+  const controller = new handoff.ReaderRootEntryHandoff()
+  let arrived = null
+  let commitReveal = null
+  let revealed = null
+  let ready = 0
+  const host = {
+    authorizeDeparture: () => true,
+    setOpeningTarget: () => true,
+    startOpening: callback => { arrived = callback },
+    revealOriginal: (commit, callback) => { commitReveal = commit; revealed = callback },
+    notifyReaderImageReady: () => { ready++ },
+  }
+  transition.publishTarget(readyTarget(state.frames[0]))
+  controller.sync(transition, true, false, host)
+  arrived()
+  transition.publishTarget(readyTarget(state.frames[0], true))
+  controller.sync(transition, true, true, host)
+  transition.cancel()
+  commitReveal()
+  revealed()
+  assert.equal(transition.phase, 'cancelled')
+  assert.equal(ready, 0)
 })
 
 test('nonfinite, negative, failed and thumbnail frames cannot establish entry geometry', () => {

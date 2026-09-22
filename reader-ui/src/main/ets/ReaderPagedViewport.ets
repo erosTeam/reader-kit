@@ -49,7 +49,8 @@ export class ReaderEntryGeometryGate {
     const page = frame.asset.page
     if (page === null) return 'unknown'
     const state = ReaderEntryGeometryGate.dimensions(page.width, page.height)
-    if (state !== 'ready') return state
+    if (state !== 'ready' && !(state === 'unknown' && frame.part.fragment === 'whole' && !frame.crop.applied() &&
+      page.hasWholePagePreviewGeometry())) return state
     return Number.isFinite(readerPagedFrameAspectRatio(frame)) &&
       readerPagedFrameAspectRatio(frame) > 0 ? 'ready' : 'invalid'
   }
@@ -810,13 +811,13 @@ export struct ReaderPagedImage {
       transition.cancel(); return
     }
     if (page === null) return
-    const dimensions = ReaderEntryGeometryGate.dimensions(page.width, page.height)
-    if (dimensions === 'invalid' || (dimensions === 'unknown' && transition.phase !== 'layout')) {
+    const geometry = ReaderEntryGeometryGate.frame(this.frame)
+    if (geometry === 'invalid' || (geometry === 'unknown' && transition.phase !== 'layout')) {
       transition.cancel(); return
     }
     // completed() reports into core first; the callback's old @Param may still contain zero.
     // Wait for its current snapshot and the actual fitted area, never publish the fallback ratio.
-    if (dimensions === 'unknown') return
+    if (geometry === 'unknown') return
     const layoutWidth = position?.width ?? this.entryLayoutWidth
     const layoutHeight = position?.height ?? this.entryLayoutHeight
     if (!this.entryContentLaidOut || layoutWidth <= 0 || layoutHeight <= 0) return
