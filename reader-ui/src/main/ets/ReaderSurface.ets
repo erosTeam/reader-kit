@@ -751,6 +751,35 @@ export struct ReaderSurface {
     return this.requestMove(intent)
   }
 
+  /** Animated seek for chrome-initiated jumps: keep the pager animation path
+   * when the target display item is adjacent or any finite distance (Swiper
+   * animates arbitrary deltas), falling back to a raw seek when the session
+   * cannot own the transition (continuous, missing metadata, wrong unit). */
+  private seekWithAnimation(index: number, unit: ReaderUnitKey, navigation: number): void {
+    const session: ReaderPagedSession | null = this.session
+    if (session === null || this.state.policy.layout === 'continuous') {
+      session.seekSource(index, unit, navigation)
+      return
+    }
+    const target: number | null = session.displayIndexForSource(index)
+    if (target === null || target === this.state.displayIndex) {
+      session.seekSource(index, unit, navigation)
+      return
+    }
+    if (!this.pageTurnAnimation) {
+      session.seekSource(index, unit, navigation)
+      return
+    }
+    const before: ReaderPagedSnapshot = session.snapshot()
+    if (before.topologyRevision !== this.state.topologyRevision ||
+      before.navigationRevision !== this.state.navigationRevision) {
+      session.seekSource(index, unit, navigation)
+      return
+    }
+    this.pagerCommand = new ReaderPagerCommand(
+      ++this.pagerCommandSerial, target, before.topologyRevision, before.navigationRevision)
+  }
+
   private requestMove(intent: ReaderMoveIntent): boolean {
     const before = this.session.snapshot()
     if (this.pageTurnAnimation && before.policy.layout !== 'continuous' &&
@@ -937,7 +966,7 @@ export struct ReaderSurface {
             ReaderThumbnailRail({ session: this.session, snapshot: this.state, accent: this.accent,
               previewIndex: this.previewIndex,
               onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
-                this.session.seekSource(index, unit, navigation)
+                this.seekWithAnimation(index, unit, navigation)
               },
             })
           }, (identity: string): string => readerElementKey(identity))
@@ -1016,8 +1045,8 @@ export struct ReaderSurface {
             console.info(`[ReaderSurface] preview_source=${this.previewIndex} reading_source=${this.state.anchor?.sourceIndexHint ?? -1}`)
           },
           onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
-            const accepted = this.session.seekSource(index, unit, navigation)
-            console.info(`[ReaderSurface] seek_source=${index} accepted=${accepted}`)
+            this.seekWithAnimation(index, unit, navigation)
+            console.info(`[ReaderSurface] seek_source=${index}`)
           },
         })
       } else if ((this.showPageNumber || this.enhancementVisible()) &&
