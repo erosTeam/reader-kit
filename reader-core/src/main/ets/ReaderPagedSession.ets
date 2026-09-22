@@ -829,6 +829,19 @@ export class ReaderPagedSession {
   /** A source-page command, not a display index or an observed/saved reading position.
    * A slider may outlive its unit/navigation; stale commits must not seek the new unit.
    */
+  /** Resolve a source page index to its display index under the current spread policy. */
+  displayIndexForSource(sourceIndex: number): number | null {
+    if (this.map === null) return null
+    const count: number = this.map.count()
+    for (let displayIndex = 0; displayIndex < count; displayIndex += 1) {
+      const item = this.map.item(displayIndex)
+      if (item !== null && item.parts.some((part): boolean => part.sourceIndex === sourceIndex)) {
+        return displayIndex
+      }
+    }
+    return null
+  }
+
   seekSource(index: number, unit: ReaderUnitKey, navigationRevision: number): boolean {
     if (this.disposed || this.state.phase !== 'ready' || this.state.unit === null ||
       !this.state.unit.key.equals(unit) || navigationRevision !== this.navigationRevision ||
