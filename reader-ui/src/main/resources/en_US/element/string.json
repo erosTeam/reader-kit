@@ -143,6 +143,9 @@
     { "name": "rkit_crop_off", "value": "Disable border crop" },
     { "name": "rkit_tap_left", "value": "Left" },
     { "name": "rkit_tap_right", "value": "Right" },
-    { "name": "rkit_tap_menu", "value": "Menu" }
+    { "name": "rkit_tap_menu", "value": "Menu" },
+    { "name": "rkit_loading_resolving", "value": "Resolving image" },
+    { "name": "rkit_loading_image", "value": "Loading image" },
+    { "name": "rkit_loading_decoding", "value": "Preparing image" }
   ]
 }

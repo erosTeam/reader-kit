@@ -10,6 +10,7 @@ import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { normalizedReaderPageGap } from './ReaderPageGap'
 import { readerElementKey } from './ReaderElementKey'
+import { ReaderLoadingStage } from './ReaderLoadingStage'
 
 class ReaderEntryAfterLayout extends FrameCallback {
   private action: () => void
@@ -436,7 +437,7 @@ export struct ReaderPagedViewport {
       .animation({ duration: this.zoomAnimating ? 180 : 0, curve: Curve.FastOutSlowIn })
       .id(this.selected ? 'rkit-paged-content' : `rkit-cached-content-${this.snapshot.displayIndex}`)
       if (this.snapshot.phase === 'catalog') {
-        LoadingProgress().width(32).height(32)
+        ReaderLoadingStage({ label: $r('app.string.rkit_loading_resolving') })
       }
     }
     .alignContent(Alignment.Center)
@@ -654,7 +655,13 @@ struct ReaderPagedCell {
       }
       if ((this.frame().asset.phase === 'idle' || this.frame().asset.phase === 'asset' || this.frame().asset.phase === 'decoding') &&
         this.retainedFrameValue === null) {
-        LoadingProgress().width(32).height(32)
+        ReaderLoadingStage({
+          label: this.frame().asset.phase === 'idle' ? $r('app.string.rkit_loading_resolving')
+            : this.frame().asset.phase === 'decoding' ? $r('app.string.rkit_loading_decoding')
+              : $r('app.string.rkit_loading_image'),
+          loaded: this.frame().asset.loadProgressLoaded,
+          total: this.frame().asset.loadProgressTotal,
+        })
       }
     }
     .width(this.cellWidth())

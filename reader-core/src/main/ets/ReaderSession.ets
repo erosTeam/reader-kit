@@ -169,7 +169,9 @@ export interface ReaderAssetProvider {
   informationSupported?: boolean
   /** D1 exposes existing service limits instead of claiming detached requests were aborted. */
   cancellationMode: 'consumer-only' | 'transport'
-  load(page: ReaderPage, kind: ReaderAssetKind, cancellation: ReaderCancellation, forceReload: boolean): Promise<ReaderAsset>
+  /** Optional transport progress: real received/total bytes while the asset phase is active. */
+  load(page: ReaderPage, kind: ReaderAssetKind, cancellation: ReaderCancellation, forceReload: boolean,
+    onProgress?: (loaded: number, total: number) => void): Promise<ReaderAsset>
   /** Resolve only; failure must not replace the currently displayed default image. */
   prepareOriginal?(page: ReaderPage, cancellation: ReaderCancellation): Promise<ReaderOriginalAssetPlan>
   /** Host processing stays outside reader-kit; resolution failure leaves the current body untouched. */
@@ -199,7 +201,8 @@ export interface ReaderAutoReadSourceHost {
 export interface ReaderOriginalAssetPlan {
   page: ReaderPage
   variant?: 'original'
-  load(cancellation: ReaderCancellation, forceReload: boolean): Promise<ReaderAsset>
+  load(cancellation: ReaderCancellation, forceReload: boolean,
+    onProgress?: (loaded: number, total: number) => void): Promise<ReaderAsset>
 }
 
 /** A host-owned, already resolved enhanced or translated recipe for one exact source page. */
@@ -208,7 +211,8 @@ export interface ReaderVariantAssetPlan {
   variant: ReaderProcessedAssetVariant
   /** Exact host processing identity, including every setting that can change the output. */
   identity: string
-  load(cancellation: ReaderCancellation, forceReload: boolean): Promise<ReaderAsset>
+  load(cancellation: ReaderCancellation, forceReload: boolean,
+    onProgress?: (loaded: number, total: number) => void): Promise<ReaderAsset>
 }
 
 export type ReaderResolvedAssetPlan = ReaderOriginalAssetPlan | ReaderVariantAssetPlan
@@ -229,6 +233,9 @@ export class ReaderSnapshot {
   retainedUri: string = ''
   retainedAssetRequestId: number = 0
   requestId: number = 0
+  /** Real transport bytes for the in-flight asset request; 0/0 means unknown (never faked). */
+  loadProgressLoaded: number = 0
+  loadProgressTotal: number = 0
   /** Identity of uri/page, retained while a different unit is only being prepared. */
   assetRequestId: number = 0
   informationAvailable: boolean = false
@@ -256,6 +263,8 @@ export class ReaderSnapshot {
     value.retainedUri = this.retainedUri
     value.retainedAssetRequestId = this.retainedAssetRequestId
     value.requestId = this.requestId
+    value.loadProgressLoaded = this.loadProgressLoaded
+    value.loadProgressTotal = this.loadProgressTotal
     value.assetRequestId = this.assetRequestId
     value.informationAvailable = this.informationAvailable
     value.notice = this.notice === null ? null : this.notice.copy()
@@ -469,6 +478,8 @@ export class ReaderSession {
       ? this.originalPlan.identity : ''
     if (!retainDisplayed) {
       this.state.phase = 'asset'
+      this.state.loadProgressLoaded = 0
+      this.state.loadProgressTotal = 0
       this.state.sourceIndex = index
       this.state.kind = kind
       this.state.variant = variant
@@ -486,6 +497,14 @@ export class ReaderSession {
       this.releaseAsset()
       this.emit()
     }
+    const reportProgress = (loaded: number, total: number): void => {
+      if (this.disposed || epoch !== this.epoch || this.state.phase !== 'asset') return
+      if (!Number.isFinite(loaded) || !Number.isFinite(total) || loaded < 0 || total <= 0) return
+      if (this.state.loadProgressLoaded === loaded && this.state.loadProgressTotal === total) return
+      this.state.loadProgressLoaded = loaded
+      this.state.loadProgressTotal = total
+      this.emit()
+    }
     try {
       const page = (await this.catalog.page(unit.copy(), index, cancellation)).copy()
       if (!this.current(epoch)) return
@@ -499,8 +518,8 @@ export class ReaderSession {
       const plan = this.originalPlan
       if (plan !== null && (!plan.page.unit.equals(page.unit) || plan.page.key !== page.key ||
         plan.page.sourceIndex !== page.sourceIndex)) throw new Error('reader_original_plan_identity_mismatch')
-      const asset = plan === null ? await this.assets.load(page.copy(), kind, cancellation, forceReload) :
-        await plan.load(cancellation, forceReload)
+      const asset = plan === null ? await this.assets.load(page.copy(), kind, cancellation, forceReload, reportProgress) :
+        await plan.load(cancellation, forceReload, reportProgress)
       if (!this.current(epoch)) {
         asset.release()
         return
