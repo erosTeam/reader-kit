@@ -810,7 +810,12 @@ export struct ReaderSurface {
   }
 
   private reportAssetPresented(slotId: number, requestId: number, success: boolean, width: number, height: number): void {
-    this.onAssetPresented(slotId, requestId, success, width, height)
+    // Host diagnostics are observational only: a host exception must never
+    // block the core presentation acknowledgement that already existed here.
+    try {
+      this.onAssetPresented(slotId, requestId, success, width, height)
+    } catch (_) {
+    }
     this.session.reportPresentation(slotId, requestId, success, width, height)
   }
 
