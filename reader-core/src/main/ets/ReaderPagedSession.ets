@@ -831,7 +831,8 @@ export class ReaderPagedSession {
    */
   /** Resolve a source page index to its display index under the current spread policy. */
   displayIndexForSource(sourceIndex: number): number | null {
-    if (this.map === null) return null
+    if (this.map === null || !Number.isSafeInteger(sourceIndex) || sourceIndex < 0 ||
+      this.state.unit === null || sourceIndex >= this.state.unit.pageCount) return null
     const count: number = this.map.count()
     for (let displayIndex = 0; displayIndex < count; displayIndex += 1) {
       const item = this.map.item(displayIndex)

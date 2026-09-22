@@ -5,7 +5,11 @@ import { ReaderBoundaryDirection, ReaderBoundarySwipe } from './ReaderBoundarySw
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { readerElementKey } from './ReaderElementKey'
 
-/** One adjacent host-requested move. The native pager consumes each serial at most once. */
+/** One host-requested pager move. The native pager consumes each serial at most once.
+ * A command may target a non-adjacent display item: the legacy readers commit an
+ * arbitrary target through the animated pager (NextE `jumpToPage`/`animateReaderPagerToIndex`
+ * -> `changeIndex(target, true)`), so the native owner animates the whole delta instead
+ * of hard-cutting or dropping the jump. */
 export class ReaderPagerCommand {
   serial: number
   targetIndex: number
@@ -198,7 +202,6 @@ struct ReaderNativePager {
     if (!this.active || this.inputLocked || this.moving || command.topologyRevision !== this.createdRevision ||
       command.topologyRevision !== this.snapshot.topologyRevision ||
       command.navigationRevision !== this.snapshot.navigationRevision ||
-      Math.abs(command.targetIndex - this.snapshot.displayIndex) !== 1 ||
       command.targetIndex < 0 || command.targetIndex >= this.snapshot.displayCount) return
     this.gestureNavigation = command.navigationRevision
     this.beginMotion()
