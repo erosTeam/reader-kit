@@ -217,7 +217,7 @@ struct ReaderNativePager {
   }
 
   private beginMotion(): void {
-    this.entryTransition?.cancel()
+    this.entryTransition?.cancel('pager-motion')
     if (this.gestureNavigation < 0) this.gestureNavigation = this.snapshot.navigationRevision
     this.moving = true
   }
@@ -287,7 +287,7 @@ struct ReaderNativePager {
     .onGestureSwipe((): void => { this.beginMotion() })
     .onAnimationStart((): void => { this.beginMotion() })
     .onScrollStateChanged((state: ScrollState): void => {
-      if (state !== ScrollState.Idle) this.entryTransition?.cancel()
+      if (state !== ScrollState.Idle) this.entryTransition?.cancel(`pager-scroll-state=${state}`)
       this.moving = state !== ScrollState.Idle
     })
     .onAnimationEnd((): void => { this.moving = false })

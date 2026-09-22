@@ -90,10 +90,10 @@ export class ReaderEntryTransition {
     if (!this.pending() || snapshot.phase === 'idle' || snapshot.phase === 'catalog') return
     const frame = snapshot.frames.find((value: ReaderPagedFrame): boolean => this.matches(value.part))
     if (snapshot.phase !== 'ready' || frame === undefined) {
-      this.cancel(); return
+      this.cancel(`snapshot-unready phase=${snapshot.phase} frame=${frame !== undefined}`); return
     }
     if (this.navigation >= 0 && this.navigation !== snapshot.navigationRevision) {
-      this.cancel(); return
+      this.cancel(`navigation-changed old=${this.navigation} new=${snapshot.navigationRevision}`); return
     }
     // Metadata and its content node can precede asset delivery. Only this exact
     // load may promote assetRequestId=0 to its own epoch without replacing the entry.
@@ -103,7 +103,9 @@ export class ReaderEntryTransition {
     if (this.phase !== 'layout' && this.slot >= 0 &&
       (this.slot !== frame.slotId || this.loadRequest !== frame.asset.requestId ||
         (this.assetRequest !== frame.asset.assetRequestId && !delivered))) {
-      this.cancel(); return
+      this.cancel(`asset-identity-changed slot=${this.slot}/${frame.slotId} ` +
+        `load=${this.loadRequest}/${frame.asset.requestId} asset=${this.assetRequest}/${frame.asset.assetRequestId}`)
+      return
     }
     if (this.selection !== snapshot.selectionId || this.topology !== snapshot.topologyRevision ||
       this.slot !== frame.slotId || this.loadRequest !== frame.asset.requestId ||
@@ -124,7 +126,7 @@ export class ReaderEntryTransition {
     const previous = this.target
     if (previous !== null && value.layoutRevision < previous.layoutRevision) return
     this.target = value.copy()
-    if (value.failed) this.cancel()
+    if (value.failed) this.cancel('target-failed')
   }
 
   opacity(part: ReaderDisplayPart): number {
@@ -156,9 +158,9 @@ export class ReaderEntryTransition {
       console.info(`[ReaderEntry] id=${this.entryId} phase=finished`)
     }
   }
-  cancel(): void {
+  cancel(reason: string = 'unattributed'): void {
     if (!this.pending()) return
-    console.info(`[ReaderEntry] id=${this.entryId} cancelled_from=${this.phase}`)
+    console.info(`[ReaderEntry] id=${this.entryId} cancelled_from=${this.phase} reason=${reason}`)
     this.phase = 'cancelled'; this.selectedOpacity = 1; this.neighborOpacity = 1
   }
 }

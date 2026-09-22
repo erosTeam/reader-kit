@@ -183,6 +183,11 @@ export struct ReaderSurface {
     }
     if (!this.active || this.closing || this.chromeDisposed || state.phase !== 'ready' ||
       state.kind !== 'original' || unit === undefined) return
+    // The entry owns the selected display item's visible composite, including
+    // both parts of a spread. Replacing either displayed asset can advance the
+    // selection/load identity during flight. Offscreen neighbor preparation is
+    // separate and remains available; resume the normal policy after finish.
+    if (this.entryVariantBlocked) return
     state.frames.forEach((frame: ReaderPagedFrame): void => {
       if (frame.asset.phase !== 'displayed') return
       const resolved = this.variantPolicy?.preference(frame.part.sourceIndex) ?? fallback
@@ -316,7 +321,7 @@ export struct ReaderSurface {
     this.temporaryVariantOverride.clear()
     this.autoReadController.close()
     this.invalidateChromeShow()
-    this.entryTransition?.cancel()
+    this.entryTransition?.cancel('surface-disappear')
     this.informationEpoch += 1
     this.shareController.close()
     this.saveController.close()
@@ -334,7 +339,7 @@ export struct ReaderSurface {
     if (!this.active) {
       this.originalFeedbackEpoch += 1
       this.invalidateChromeShow()
-      this.entryTransition?.cancel()
+      this.entryTransition?.cancel('surface-inactive')
       this.previewIndex = -1; this.tapZonePreviewVisible = false; this.touching = false
       if (!this.informationPresented) { this.informationEpoch += 1; this.informationBusy = false }
       this.variantAttemptContext = ''
@@ -363,6 +368,17 @@ export struct ReaderSurface {
   @Monitor('variantPolicy')
   onVariantPolicyChanged(): void {
     this.syncPreferredVariant(this.session.snapshot())
+  }
+
+  @Computed
+  private get entryVariantBlocked(): boolean {
+    const phase = this.entryTransition?.phase
+    return phase !== undefined && phase !== 'finished' && phase !== 'cancelled'
+  }
+
+  @Monitor('entryVariantBlocked')
+  onEntryVariantGateChanged(): void {
+    if (this.entryTransition?.phase === 'finished') this.syncPreferredVariant(this.session.snapshot())
   }
 
   @Monitor('temporaryVariantControl')

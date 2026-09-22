@@ -346,6 +346,49 @@ test('preferred host variant waits for the original asset instead of consuming i
   assert.equal(calls[0][5], 'model-a:2000')
 })
 
+test('pending spread entry defers both visible variants, resumes once after finish, and not after cancellation', () => {
+  const surface = new ReaderSurface()
+  surface.active = true; surface.closing = false; surface.chromeDisposed = false
+  surface.variantPolicy = new ReaderVariantPolicy(new core.ReaderVariantPreference('enhanced', 'model-a:2000'))
+  const key = new core.ReaderUnitKey('source', 'work', 'unit')
+  const part = new core.ReaderDisplayPart(key, 'p0', 0)
+  const state = new core.ReaderPagedSnapshot()
+  state.phase = 'ready'; state.kind = 'original'; state.navigationRevision = 4
+  state.unit = new core.ReaderUnit(key, 'Title', 2)
+  state.frames = [{ part, slotId: 7,
+    asset: { requestId: 11, assetRequestId: 11, page: new core.ReaderPage(key, 'p0', 0),
+      phase: 'displayed', variant: 'default', variantIdentity: '' } },
+    { part: new core.ReaderDisplayPart(key, 'p1', 1), slotId: 8,
+      asset: { requestId: 12, assetRequestId: 12, page: new core.ReaderPage(key, 'p1', 1),
+        phase: 'displayed', variant: 'default', variantIdentity: '' } }]
+  const calls = []
+  surface.session = { snapshot: () => state,
+    selectVariant(...args) { calls.push(args); return Promise.resolve('changed') } }
+  surface.entryTransition = new ReaderEntryTransition(1, part)
+  surface.entryTransition.phase = 'moving'
+
+  surface.syncPreferredVariant(state)
+  assert.equal(calls.length, 0)
+  assert.equal(surface.variantAttempts.size, 0)
+
+  surface.entryTransition.phase = 'finished'
+  surface.onEntryVariantGateChanged()
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0][0], 7)
+  assert.equal(calls[1][0], 8)
+  assert.equal(calls[0][4], 'enhanced')
+  surface.onEntryVariantGateChanged()
+  assert.equal(calls.length, 2)
+
+  surface.entryTransition = new ReaderEntryTransition(2, part)
+  surface.entryTransition.phase = 'moving'
+  surface.variantPolicy = new ReaderVariantPolicy(new core.ReaderVariantPreference('enhanced', 'model-b:3000'))
+  surface.syncPreferredVariant(state)
+  surface.entryTransition.cancel('back-reverse-claimed')
+  surface.onEntryVariantGateChanged()
+  assert.equal(calls.length, 2)
+})
+
 test('host interaction signal is edge-triggered and clears after the gesture', () => {
   const surface = new ReaderSurface(), events = []
   Object.assign(surface, { active: true, closing: false, chromeDisposed: false, inputLocked: false,

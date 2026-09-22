@@ -83,7 +83,7 @@ export class ReaderEntryGeometryGate {
     target.layoutRevision = ReaderEntryLayoutRevision.next(entry.target?.layoutRevision ?? 0)
     // No geometry or image failure is invented. Publication uses the existing live-identity fence.
     entry.publishTarget(target)
-    if (entry.target?.layoutRevision === target.layoutRevision) entry.cancel()
+    if (entry.target?.layoutRevision === target.layoutRevision) entry.cancel('decoded-dimensions-missing')
   }
 }
 
@@ -161,17 +161,17 @@ export struct ReaderPagedViewport {
         this.entryTransition.publishTarget(target)
       }
       // Recovery changes joined image geometry into equal failure slots.
-      this.entryTransition.cancel()
+      this.entryTransition.cancel('viewport-asset-failed')
     }
     if (this.selected && this.active && this.entryTransition?.pending() &&
       ReaderEntryGeometryGate.cancel(this.snapshot.frames, this.entryTransition.phase)) {
       // Zero metadata can be refined by the real Image while the initial layout waits.
-      this.entryTransition.cancel()
+      this.entryTransition.cancel('viewport-geometry-gate')
     }
     if (this.selected && this.active && this.entryTransition?.pending() && this.snapshot.frames.some((frame: ReaderPagedFrame) =>
       this.entryTransition?.matches(frame.part) === true && rotatedFrame(frame, this.snapshot.policy))) {
       // Preview geometry is unrotated host space. Do not morph it into a rotated leaf.
-      this.entryTransition.cancel()
+      this.entryTransition.cancel('viewport-rotated-frame')
     }
     if (failed) this.recovering = true
     else if (this.snapshot.frames.length > 0 && this.snapshot.frames.every((frame: ReaderPagedFrame) =>
@@ -204,7 +204,7 @@ export struct ReaderPagedViewport {
   @Monitor('zoomState', 'zoomAnimating', 'pinching', 'active', 'selected')
   onInputStateChanged(): void {
     if (this.selected && (this.zoomState.zoomed() || this.zoomAnimating || this.pinching ||
-      this.zoomState.x !== 0 || this.zoomState.y !== 0)) this.entryTransition?.cancel()
+      this.zoomState.x !== 0 || this.zoomState.y !== 0)) this.entryTransition?.cancel('viewport-zoom-or-pan')
     this.onInputLockChange(this.selected && this.active &&
       (this.zoomState.zoomed() || this.zoomAnimating || this.pinching))
     this.onZoomedChange(this.selected && this.active && this.zoomState.zoomed())
@@ -448,7 +448,7 @@ export struct ReaderPagedViewport {
     .onAreaChange((_old: Area, area: Area): void => {
       if (this.entryViewportLaidOut && this.entryTransition !== null && this.entryTransition.target !== null &&
         (this.viewportWidth !== Math.max(1, Number(area.width)) ||
-          this.viewportHeight !== Math.max(1, Number(area.height)))) this.entryTransition.cancel()
+          this.viewportHeight !== Math.max(1, Number(area.height)))) this.entryTransition.cancel('viewport-size-changed')
       this.cancelGesture()
       this.viewportWidth = Math.max(1, Number(area.width))
       this.viewportHeight = Math.max(1, Number(area.height))
@@ -776,9 +776,9 @@ export struct ReaderPagedImage {
     if (transition === null || !transition.pending() || !this.entryMounted ||
       (position === null ? !this.active : this.continuousEntry !== position || !position.isCurrent()) ||
       !transition.matches(this.frame.part)) return
-    if (this.rotateClockwise) { transition.cancel(); return }
+    if (this.rotateClockwise) { transition.cancel('entry-rotated-leaf'); return }
     if (position !== null && this.decoded && ReaderEntryGeometryGate.dimensions(this.decodedWidth, this.decodedHeight) !== 'ready') {
-      transition.cancel(); return
+      transition.cancel('entry-decoded-dimensions'); return
     }
     if (this.measuredEntryId !== transition.entryId) {
       this.measuredEntryId = transition.entryId
@@ -800,12 +800,12 @@ export struct ReaderPagedImage {
     // Sprite/fragment clipping and unknown original geometry need a different
     // content contract; never advertise their outer wrapper as the image bounds.
     if (this.frame.asset.kind !== 'original' || this.renderedFragment !== 'whole' || this.frame.crop.applied()) {
-      transition.cancel(); return
+      transition.cancel('entry-asset-kind-or-fragment'); return
     }
     if (page === null) return
     const dimensions = ReaderEntryGeometryGate.dimensions(page.width, page.height)
     if (dimensions === 'invalid' || (dimensions === 'unknown' && transition.phase !== 'layout')) {
-      transition.cancel(); return
+      transition.cancel('entry-page-dimensions'); return
     }
     // completed() reports into core first; the callback's old @Param may still contain zero.
     // Wait for its current snapshot and the actual fitted area, never publish the fallback ratio.
@@ -824,7 +824,7 @@ export struct ReaderPagedImage {
         if (Math.abs(image.windowOffset.x - leaf.windowOffset.x) > 1 ||
           Math.abs(image.windowOffset.y - leaf.windowOffset.y) > 1 ||
           Math.abs(image.size.width - leaf.size.width) > 1 || Math.abs(image.size.height - leaf.size.height) > 1) {
-          if (transition.phase !== 'layout') transition.cancel()
+          if (transition.phase !== 'layout') transition.cancel('image-leaf-mismatch')
           return
         }
       }
@@ -836,13 +836,13 @@ export struct ReaderPagedImage {
       // leaf has actually applied the current cell fit before publishing it.
       if (Math.abs(leaf.size.width - context.vp2px(layoutWidth)) > 1 ||
         Math.abs(leaf.size.height - context.vp2px(layoutHeight)) > 1) {
-        if (transition.phase !== 'layout') transition.cancel()
+        if (transition.phase !== 'layout') transition.cancel('image-fit-mismatch')
         return
       }
       if (position === null && (leaf.windowOffset.x < viewport.windowOffset.x - 1 || leaf.windowOffset.y < viewport.windowOffset.y - 1 ||
         leaf.windowOffset.x + leaf.size.width > viewport.windowOffset.x + viewport.size.width + 1 ||
         leaf.windowOffset.y + leaf.size.height > viewport.windowOffset.y + viewport.size.height + 1)) {
-        transition.cancel(); return
+        transition.cancel('image-outside-viewport'); return
       }
       if (position !== null) {
         const root = context.getComponentUtils().getRectangleById('rkit-entry-preview-root')
@@ -852,14 +852,14 @@ export struct ReaderPagedImage {
         const bottom = Math.min(viewport.windowOffset.y + viewport.size.height, root.windowOffset.y + root.size.height)
         const clip = new ReaderEntryRect(context.px2vp(left), context.px2vp(top), context.px2vp(right - left), context.px2vp(bottom - top))
         if (!clip.valid() || rect.x >= clip.x + clip.width || rect.y >= clip.y + clip.height ||
-          rect.x + rect.width <= clip.x || rect.y + rect.height <= clip.y) { transition.cancel(); return }
+          rect.x + rect.width <= clip.x || rect.y + rect.height <= clip.y) { transition.cancel('image-outside-clip'); return }
         target.clipRect = clip
       }
       // Contain must occupy the measured Image itself. Unexpected decoded
       // proportions are not permission to stretch a thumbnail to this box.
       if (this.decoded && this.decodedWidth > 0 && this.decodedHeight > 0 &&
         Math.abs(leaf.size.width - leaf.size.height * this.decodedWidth / this.decodedHeight) > 1) {
-        if (transition.phase !== 'layout') transition.cancel()
+        if (transition.phase !== 'layout') transition.cancel('decoded-aspect-mismatch')
         return
       }
       const previous = transition.target
@@ -873,8 +873,8 @@ export struct ReaderPagedImage {
         (oldClip !== null && target.clipRect !== null &&
         (oldClip.x !== target.clipRect.x || oldClip.y !== target.clipRect.y ||
         oldClip.width !== target.clipRect.width || oldClip.height !== target.clipRect.height)))
-      if (clipChanged && transition.phase !== 'layout') { transition.cancel(); return }
-      if (moved && transition.phase !== 'layout') { transition.cancel(); return }
+      if (clipChanged && transition.phase !== 'layout') { transition.cancel('image-clip-changed'); return }
+      if (moved && transition.phase !== 'layout') { transition.cancel('image-rect-moved'); return }
       const sameIdentity = previous !== null && previous.selectionId === target.selectionId &&
         previous.topologyRevision === target.topologyRevision && previous.navigationRevision === target.navigationRevision &&
         previous.slotId === target.slotId && previous.requestId === target.requestId &&
@@ -899,7 +899,7 @@ export struct ReaderPagedImage {
         this.entryMeasurement.contentRect = rect.copy()
       }
     } catch (_error) {
-      transition.cancel()
+      transition.cancel('entry-measure-exception')
     }
   }
 
