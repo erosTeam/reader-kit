@@ -8,6 +8,7 @@ import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
 import { ReaderTapAction } from './ReaderTapAction'
 import { ReaderBoundaryDirection, ReaderBoundarySwipe } from './ReaderBoundarySwipe'
 import { normalizedReaderPageGap } from './ReaderPageGap'
+import { ReaderLoadingStage } from './ReaderLoadingStage'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { readerElementKey } from './ReaderElementKey'
 
@@ -69,7 +70,7 @@ export struct ReaderContinuousSurface {
           })
         }, (revision: number): string => `${revision}`)
       } else if (this.snapshot.phase === 'idle' || this.snapshot.phase === 'catalog') {
-        LoadingProgress().width(32).height(32)
+        ReaderLoadingStage({ label: $r('app.string.rkit_loading_resolving') })
       }
     }.width('100%').height('100%').clip(true)
   }
@@ -586,7 +587,15 @@ struct ReaderContinuousCell {
           readerElementKey(`${frame.slotId}:${frame.asset.assetRequestId}`))
         if (this.snapshot.frames.length === 0 || this.snapshot.frames[0].asset.phase === 'idle' ||
           this.snapshot.frames[0].asset.phase === 'asset' || this.snapshot.frames[0].asset.phase === 'decoding') {
-          LoadingProgress().width(32).height(32)
+          ReaderLoadingStage({
+            label: this.snapshot.frames.length === 0 || this.snapshot.frames[0].asset.phase === 'idle'
+              ? $r('app.string.rkit_loading_resolving')
+              : this.snapshot.frames[0].asset.phase === 'decoding'
+                ? $r('app.string.rkit_loading_decoding')
+                  : $r('app.string.rkit_loading_image'),
+            loaded: this.snapshot.frames.length === 0 ? 0 : this.snapshot.frames[0].asset.loadProgressLoaded,
+            total: this.snapshot.frames.length === 0 ? 0 : this.snapshot.frames[0].asset.loadProgressTotal,
+          })
         }
       }.width('100%').aspectRatio(this.imageAspectRatio)
         .id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
