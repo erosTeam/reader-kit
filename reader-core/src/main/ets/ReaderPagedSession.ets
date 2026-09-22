@@ -804,16 +804,24 @@ export class ReaderPagedSession {
    * This is runtime alignment only, never a chapter command or saved progress.
    */
   shiftSpread(unit: ReaderUnitKey, topology: number, navigation: number): boolean {
-    if (!this.active || !this.state.unit?.key.equals(unit) || topology !== this.topologyRevision ||
-      navigation !== this.navigationRevision) return false
     const target = this.spreadShiftTarget()
     if (target === null) return false
+    const item = this.map === null ? null : this.map.item(this.state.displayIndex)
+    if (!this.active || !this.state.unit?.key.equals(unit) || topology !== this.topologyRevision ||
+      navigation !== this.navigationRevision || item === null || item.parts.length === 0) return false
     this.cancelOriginalPreparations()
     this.cancelAutoReadSourcePreparations()
     this.state.policy = this.state.policy.copy()
-    this.state.policy.firstPageAlone = target % 2 === 1
     this.navigationRevision += 1
-    this.state.anchor = new ReaderReadingAnchor(unit, this.pages.get(target)?.key ?? null, target)
+    if (item.parts.length === 1) {
+      // Single-cell (the leading alone page): step only the pairing offset and keep
+      // the current source page; rebuild() re-resolves the unchanged anchor into the
+      // new pair ([1] -> [1,2], page index 0 stays current).
+      this.state.policy.firstPageAlone = !this.state.policy.firstPageAlone
+    } else {
+      this.state.policy.firstPageAlone = target % 2 === 1
+      this.state.anchor = new ReaderReadingAnchor(unit, this.pages.get(target)?.key ?? null, target)
+    }
     this.rebuild()
     return true
   }

@@ -153,7 +153,10 @@ test('spread shift accepts final pair to singleton but never crosses unit or non
   session.setPolicy(policy({ layout: 'spread', firstPageAlone: true })); await tick()
   state = session.snapshot()
   assert.equal(session.shiftSpread(key, state.topologyRevision, state.navigationRevision), true)
-  assert.equal(session.snapshot().anchor.sourceIndexHint, 1)
+  // Single [1] cell: the shift steps the pairing offset and keeps source 0 current
+  // (2026-09-22 user-reported defect; the old expectation locked the page jump).
+  assert.equal(session.snapshot().anchor.sourceIndexHint, 0)
+  assert.equal(session.snapshot().policy.firstPageAlone, false)
   session.setPolicy(policy({ layout: 'spread' }))
   session.seekSource(2, key, session.snapshot().navigationRevision); await tick()
   state = session.snapshot()
@@ -913,5 +916,112 @@ test('paged neighbor retry retains the healthy selected original and its observe
   assert.equal(after.frames[0].asset.phase, 'displayed')
   assert.deepEqual(calls.load.filter(call => call[2]), [['A-1', 'original', true]])
   assert.equal(calls.open.length, 1)
+  session.close()
+})
+
+// User-reported defect (2026-09-22): with first-page-alone spread ([1] | [2,3] | ...),
+// tapping the shift-spread button on the single [1] cell must only step the pairing
+// offset: the current source page index stays 0 and the page joins the new pair [1,2].
+// The old behavior left firstPageAlone unchanged (target=1 is odd, so 1%2===1 was a
+// no-op) while moving the anchor to source 1 — a pure page jump, pairing unchanged.
+test('single-cell shift steps pairing offset while keeping the current source page', async () => {
+  const { session, key } = setup({ count: 6 })
+  session.setPolicy(policy({ layout: 'spread', firstPageAlone: true }))
+  await session.open(key); await tick()
+  const before = session.snapshot()
+  assert.equal(before.policy.firstPageAlone, true)
+  assert.equal(before.anchor.sourceIndexHint, 0)
+  assert.deepEqual(before.displayKeys, ['0:whole', '1:whole+2:whole', '3:whole+4:whole', '5:whole'])
+  assert.equal(session.shiftSpread(key, before.topologyRevision, before.navigationRevision), true)
+  const after = session.snapshot()
+  assert.equal(after.policy.firstPageAlone, false, 'the pairing offset must step (flip firstPageAlone)')
+  assert.equal(after.anchor.sourceIndexHint, 0, 'the current source page index must not move')
+  assert.deepEqual(after.displayKeys, ['0:whole+1:whole', '2:whole+3:whole', '4:whole+5:whole'])
+  assert.deepEqual(after.frames.map(frame => frame.part.sourceIndex), [0, 1],
+    'the unchanged current page must sit in the left slot of its new pair')
+  assert.ok(after.navigationRevision > before.navigationRevision)
+  session.close()
+})
+
+// Regression locks for the double-cell branches: these are the previously-normal
+// behaviors and must stay byte-identical. Pairing always flips; a left-slot page
+// advances to its right sibling, a right-slot page keeps its source index.
+test('double-cell shift regression: alone-pairing left slot advances to its sibling', async () => {
+  const { session, key } = setup({ count: 6 })
+  session.setPolicy(policy({ layout: 'spread', firstPageAlone: true }))
+  await session.open(key); await tick()
+  const start = session.snapshot()
+  assert.equal(session.seekSource(1, key, start.navigationRevision), true); await tick()
+  const before = session.snapshot()
+  assert.equal(before.anchor.sourceIndexHint, 1)
+  assert.equal(session.shiftSpread(key, before.topologyRevision, before.navigationRevision), true)
+  const after = session.snapshot()
+  assert.equal(after.policy.firstPageAlone, false)
+  assert.equal(after.anchor.sourceIndexHint, 2)
+  assert.deepEqual(after.displayKeys, ['0:whole+1:whole', '2:whole+3:whole', '4:whole+5:whole'])
+  session.close()
+})
+
+test('double-cell shift regression: alone-pairing right slot keeps its source index', async () => {
+  const { session, key } = setup({ count: 6 })
+  session.setPolicy(policy({ layout: 'spread', firstPageAlone: true }))
+  await session.open(key); await tick()
+  const start = session.snapshot()
+  assert.equal(session.seekSource(2, key, start.navigationRevision), true); await tick()
+  const before = session.snapshot()
+  assert.equal(before.anchor.sourceIndexHint, 2)
+  assert.equal(session.shiftSpread(key, before.topologyRevision, before.navigationRevision), true)
+  const after = session.snapshot()
+  assert.equal(after.policy.firstPageAlone, false)
+  assert.equal(after.anchor.sourceIndexHint, 2)
+  assert.deepEqual(after.displayKeys, ['0:whole+1:whole', '2:whole+3:whole', '4:whole+5:whole'])
+  session.close()
+})
+
+test('double-cell shift regression: plain-pairing left slot advances to its sibling', async () => {
+  const { session, key } = setup({ count: 6 })
+  session.setPolicy(policy({ layout: 'spread', firstPageAlone: false }))
+  await session.open(key); await tick()
+  const before = session.snapshot()
+  assert.equal(before.anchor.sourceIndexHint, 0)
+  assert.equal(session.shiftSpread(key, before.topologyRevision, before.navigationRevision), true)
+  const after = session.snapshot()
+  assert.equal(after.policy.firstPageAlone, true)
+  assert.equal(after.anchor.sourceIndexHint, 1)
+  assert.deepEqual(after.displayKeys, ['0:whole', '1:whole+2:whole', '3:whole+4:whole', '5:whole'])
+  session.close()
+})
+
+test('double-cell shift regression: plain-pairing right slot keeps its source index', async () => {
+  const { session, key } = setup({ count: 6 })
+  session.setPolicy(policy({ layout: 'spread', firstPageAlone: false }))
+  await session.open(key); await tick()
+  const start = session.snapshot()
+  assert.equal(session.seekSource(1, key, start.navigationRevision), true); await tick()
+  const before = session.snapshot()
+  assert.equal(before.anchor.sourceIndexHint, 1)
+  assert.equal(session.shiftSpread(key, before.topologyRevision, before.navigationRevision), true)
+  const after = session.snapshot()
+  assert.equal(after.policy.firstPageAlone, true)
+  assert.equal(after.anchor.sourceIndexHint, 1)
+  assert.deepEqual(after.displayKeys, ['0:whole', '1:whole+2:whole', '3:whole+4:whole', '5:whole'])
+  session.close()
+})
+
+test('shift-spread stays disabled at the single-page and stale-revision boundaries', async () => {
+  const only = setup({ count: 1 })
+  only.session.setPolicy(policy({ layout: 'spread', firstPageAlone: true }))
+  await only.session.open(only.key); await tick()
+  const single = only.session.snapshot()
+  assert.equal(single.canShiftSpread, false)
+  assert.equal(only.session.shiftSpread(only.key, single.topologyRevision, single.navigationRevision), false)
+  only.session.close()
+
+  const { session, key } = setup({ count: 6 })
+  session.setPolicy(policy({ layout: 'spread', firstPageAlone: true }))
+  await session.open(key); await tick()
+  const ready = session.snapshot()
+  assert.equal(session.shiftSpread(key, ready.topologyRevision, ready.navigationRevision + 1), false)
+  assert.equal(session.shiftSpread(key, ready.topologyRevision + 1, ready.navigationRevision), false)
   session.close()
 })
