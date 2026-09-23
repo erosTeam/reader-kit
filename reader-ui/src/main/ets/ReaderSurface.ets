@@ -112,6 +112,9 @@ export struct ReaderSurface {
   @Param contentOpacity: number = 1
   @BuilderParam openingPlaceholder: () => void = this.DefaultOpeningPlaceholder
   @Event onClose: (context: ReaderCloseContext | null) => void = () => {}
+  /** Observational host callback; it cannot block the core presentation report. */
+  @Event onAssetPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void =
+    () => {}
   /** Host-neutral UI activity signals for presentation and pausable processors. */
   @Param activitySink: ReaderActivitySink | null = null
   @Local private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
@@ -775,6 +778,16 @@ export struct ReaderSurface {
     return this.session.resolveNoticeItem(topology, navigation, key, slot, request, noticeId)
   }
 
+  private reportAssetPresented(slotId: number, requestId: number, success: boolean,
+    width: number, height: number, paged: boolean): void {
+    try {
+      this.onAssetPresented(slotId, requestId, success, width, height)
+    } catch (_) {
+      // A host observer is diagnostic only; core must still receive the result.
+    }
+    this.session.reportPresentation(slotId, requestId, success, width, height, paged)
+  }
+
   private externalMove(intent: ReaderMoveIntent): boolean {
     if (this.entryTransition?.phase === 'layout' || !this.active || this.state.phase !== 'ready' ||
       this.touching || this.menuVisible || this.shareBusy || this.saveBusy || this.informationBusy ||
@@ -909,7 +922,7 @@ export struct ReaderSurface {
               this.session.setContinuousRange(start, end, topology, navigation)
             },
             onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
-              this.session.reportPresentation(slot, request, success, width, height)
+              this.reportAssetPresented(slot, request, success, width, height, false)
             },
             onRetry: (topology: number, key: string, slot: number, request: number): void => {
               this.retry(topology, key, slot, request)
@@ -947,7 +960,7 @@ export struct ReaderSurface {
               this.session.selectDisplay(index, topology, navigation)
             },
             onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
-              this.session.reportPresentation(slot, request, success, width, height, true)
+              this.reportAssetPresented(slot, request, success, width, height, true)
             },
             onVisualClaim: (slot: number, request: number, revision: number, width: number, height: number): void => {
               this.session.reportVisualClaim(slot, request, revision, width, height)

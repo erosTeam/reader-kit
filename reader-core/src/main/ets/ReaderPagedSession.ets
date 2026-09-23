@@ -31,14 +31,18 @@ export class ReaderPagedFrame {
 export function readerPagedFrameAspectRatio(frame: ReaderPagedFrame,
   policy: ReaderDisplayPolicy | null = null): number {
   const page = frame.asset.page
-  const width = frame.asset.kind === 'thumbnail' ? page?.thumbnail.width ?? 0 : page?.width ?? 0
-  const height = frame.asset.kind === 'thumbnail' ? page?.thumbnail.height ?? 0 : page?.height ?? 0
+  const useWholePagePreview = frame.asset.kind === 'original' && frame.part.fragment === 'whole' &&
+    !frame.crop.applied() && page?.hasWholePagePreviewGeometry() === true &&
+    ((page?.width ?? 0) <= 0 || (page?.height ?? 0) <= 0)
+  const width = frame.asset.kind === 'thumbnail' ? page?.thumbnail.width ?? 0 :
+    useWholePagePreview ? page?.previewWidth ?? 0 : page?.width ?? 0
+  const height = frame.asset.kind === 'thumbnail' ? page?.thumbnail.height ?? 0 :
+    useWholePagePreview ? page?.previewHeight ?? 0 : page?.height ?? 0
   const region = frame.crop.region(frame.part)
   const fraction = frame.asset.kind === 'original' ? region.width / region.height : 1
   if (policy !== null && frame.part.fragment === 'whole' && readerPolicyRotatesPage(policy, page)) {
-    const originalRatio = page !== null && page.width > 0 && page.height > 0
-      ? page.width / page.height * region.width / region.height : 0
-    return originalRatio > 0 ? 1 / originalRatio : 0.75
+    const ratio = width > 0 && height > 0 ? width / height * fraction : 0
+    return ratio > 0 ? 1 / ratio : 0.75
   }
   return width > 0 && height > 0 ? width / height * fraction : 0.75
 }

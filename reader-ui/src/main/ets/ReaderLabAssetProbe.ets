@@ -80,7 +80,7 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
   }
 
   async load(page: ReaderPage, kind: ReaderAssetKind, cancellation: ReaderCancellation,
-    forceReload: boolean): Promise<ReaderAsset> {
+    forceReload: boolean, onProgress?: (loaded: number, total: number) => void): Promise<ReaderAsset> {
     cancellation.check()
     if (!this.injected && this.thumbnailIndex >= 0 && kind === 'thumbnail' &&
       page.sourceIndex === this.thumbnailIndex) {
@@ -95,7 +95,7 @@ export class ReaderLabAssetProbe implements ReaderAssetProvider {
       console.info(`[ReaderLabAssetProbe] native_original_decode_failure source=${page.sourceIndex}`)
       return new ReaderAsset('file:///data/storage/el2/base/cache/rkit-probe-missing-original')
     }
-    const asset = await this.provider.load(page, kind, cancellation, forceReload)
+    const asset = await this.provider.load(page, kind, cancellation, forceReload, onProgress)
     const source = asset.information
     if (kind !== 'original' || source === null ||
       (this.informationMode !== 'fail-once' && this.informationMode !== 'delay-once')) return asset

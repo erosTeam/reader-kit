@@ -61,6 +61,10 @@ export class ReaderPage {
   sourceIndex: number
   width: number = 0
   height: number = 0
+  /** Host-attested complete-preview geometry; never original-image dimensions. */
+  previewWidth: number = 0
+  previewHeight: number = 0
+  previewCoversWholePage: boolean = false
   thumbnail: ReaderThumbnail = new ReaderThumbnail()
   /**
    * Host-confirmed body-source state for automatic reading. It is deliberately
@@ -77,10 +81,18 @@ export class ReaderPage {
     this.sourceIndex = sourceIndex
   }
 
+  hasWholePagePreviewGeometry(): boolean {
+    return this.previewCoversWholePage && Number.isFinite(this.previewWidth) && Number.isFinite(this.previewHeight) &&
+      this.previewWidth > 0 && this.previewHeight > 0
+  }
+
   copy(): ReaderPage {
     const value = new ReaderPage(this.unit.copy(), this.key, this.sourceIndex)
     value.width = this.width
     value.height = this.height
+    value.previewWidth = this.previewWidth
+    value.previewHeight = this.previewHeight
+    value.previewCoversWholePage = this.previewCoversWholePage
     value.thumbnail = this.thumbnail.copy()
     value.bodySourceReady = this.bodySourceReady
     value.bodySourceFailed = this.bodySourceFailed
