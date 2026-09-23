@@ -105,6 +105,9 @@ export class ReaderCancellation {
  * Releasing a reader never deletes a host-owned download.
  */
 export class ReaderAsset {
+  private static nextReceiptId: number = 0
+  /** Process-local, non-sensitive correlation token for provider release receipts. */
+  readonly receiptId: number
   uri: string
   /** Source captured for an explicit user export. Defaults to the displayed URI. */
   saveUri: string
@@ -112,7 +115,7 @@ export class ReaderAsset {
   originalAvailable: boolean = false
   notice: ReaderAssetNotice | null = null
   private released: boolean = false
-  private releaseResource: () => void
+  private releaseResource: (receiptId: number) => void
   private presented: boolean = false
   private presentResource: () => void
   private noticeAction: (() => Promise<boolean>) | null = null
@@ -120,8 +123,9 @@ export class ReaderAsset {
 
   information: ReaderImageInformationSource | null
 
-  constructor(uri: string, releaseResource: () => void = () => {},
+  constructor(uri: string, releaseResource: (receiptId: number) => void = () => {},
     information: ReaderImageInformationSource | null = null, presentResource: () => void = () => {}) {
+    this.receiptId = ++ReaderAsset.nextReceiptId
     this.uri = uri
     this.saveUri = uri
     this.releaseResource = releaseResource
@@ -155,7 +159,8 @@ export class ReaderAsset {
   release(): void {
     if (this.released) return
     this.released = true
-    this.releaseResource()
+    this.releaseResource(this.receiptId)
+    console.info(`[ReaderAsset] release_returned asset_receipt=${this.receiptId} presented=${this.presented}`)
   }
 }
 
@@ -563,6 +568,7 @@ export class ReaderSession {
       this.state.originalAvailable = this.state.variant === 'original' || asset.originalAvailable
       this.state.assetRequestId = epoch
       this.state.phase = asset.notice === null ? 'decoding' : 'suppressed'
+      console.info(`[ReaderSession] asset_bound request=${epoch} asset_receipt=${asset.receiptId}`)
       this.emit()
     } catch (error) {
       const failure = this.classifyFailure('reader_asset_failed', error as Error)
@@ -624,8 +630,14 @@ export class ReaderSession {
     if (!this.current(requestId) || this.state.phase !== 'claiming' ||
       this.state.assetRequestId !== requestId || this.state.visualRevision !== visualRevision ||
       this.retiredAsset === null || this.retainedState === null) return
-    this.asset?.present()
+    const retired = this.retiredAsset
+    const retiredRequestId = this.state.retainedAssetRequestId
+    const candidate = this.asset
+    candidate?.present()
     this.releaseRetiredAsset()
+    console.info('[ReaderSession] visual_claim_retired ' +
+      `old_request=${retiredRequestId} new_request=${requestId} visual_revision=${visualRevision} ` +
+      `old_asset_receipt=${retired.receiptId} new_asset_receipt=${candidate?.receiptId ?? 0}`)
     this.retainedState = null
     this.retainedOriginalPlan = null
     this.state.retainedUri = ''

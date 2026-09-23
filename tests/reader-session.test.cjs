@@ -177,19 +177,32 @@ test('file ready is not displayed; only current decode callback can confirm it',
 })
 
 test('retained candidate needs its own foreground claim before old lease retires', async () => {
-  const releases = [], presentations = []
+  const releases = [], presentations = [], issued = []
   let n = 0
   const assets = new Assets()
   assets.load = async () => {
     n++
     const name = n === 1 ? 'old' : 'new'
-    return new ReaderAsset(name, () => releases.push(name), null, () => presentations.push(name))
+    const asset = new ReaderAsset(name, receiptId => {
+      assert.equal(receiptId, asset.receiptId)
+      releases.push(name)
+    }, null, () => presentations.push(name))
+    issued.push(asset)
+    return asset
   }
   const session = new ReaderSession(new Catalog(), assets)
   await session.open(key())
   session.reportPresentation(session.snapshot().assetRequestId, true)
-  await session.show(0, 'original', true)
+  const boundReceipts = [], originalBoundInfo = console.info
+  console.info = message => boundReceipts.push(message)
+  try {
+    await session.show(0, 'original', true)
+  } finally {
+    console.info = originalBoundInfo
+  }
   const pending = session.snapshot()
+  assert.ok(boundReceipts.some(line => line.includes(`asset_bound request=${pending.assetRequestId} `) &&
+    line.includes(`asset_receipt=${issued[1].receiptId}`)))
   session.reportPresentation(pending.assetRequestId, true, true)
   const claiming = session.snapshot()
   assert.equal(claiming.phase, 'claiming')
@@ -199,7 +212,17 @@ test('retained candidate needs its own foreground claim before old lease retires
   session.reportVisualClaim(pending.assetRequestId, claiming.visualRevision - 1)
   session.reportVisualClaim(pending.assetRequestId - 1, claiming.visualRevision)
   assert.equal(session.snapshot().phase, 'claiming')
-  session.reportVisualClaim(pending.assetRequestId, claiming.visualRevision)
+  const receipts = [], originalInfo = console.info
+  console.info = message => receipts.push(message)
+  try {
+    session.reportVisualClaim(pending.assetRequestId, claiming.visualRevision)
+  } finally {
+    console.info = originalInfo
+  }
+  assert.ok(receipts.some(line => line.includes(`release_returned asset_receipt=${issued[0].receiptId}`)))
+  assert.ok(receipts.some(line => line.includes(`visual_claim_retired old_request=${claiming.retainedAssetRequestId}`) &&
+    line.includes(`new_request=${pending.assetRequestId} visual_revision=${claiming.visualRevision}`) &&
+    line.includes(`old_asset_receipt=${issued[0].receiptId} new_asset_receipt=${issued[1].receiptId}`)))
   assert.equal(session.snapshot().phase, 'displayed')
   assert.equal(session.snapshot().retainedUri, '')
   assert.deepEqual(releases, ['old'])
