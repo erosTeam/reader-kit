@@ -95,6 +95,7 @@ export struct ReaderPagedViewport {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param pageGap: number = 0
   @Param retainedProjectionDiagnostic: boolean = false
+  @Param entryOwnershipDiagnostic: boolean = false
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param entryTransition: ReaderEntryTransition | null = null
@@ -417,6 +418,7 @@ export struct ReaderPagedViewport {
             imageInterpolation: this.imageInterpolation,
             snapshot: this.snapshot, slotId: frame.slotId,
             retainedProjectionDiagnostic: this.retainedProjectionDiagnostic,
+            entryOwnershipDiagnostic: this.entryOwnershipDiagnostic,
             entryTransition: this.entryTransition,
             entryMeasurement: this.entryMeasurement,
             entryGeometryReady: this.entryViewportLaidOut && this.entryRatiosReady(),
@@ -494,6 +496,7 @@ export struct ReaderPagedViewport {
 struct ReaderPagedCell {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param retainedProjectionDiagnostic: boolean = false
+  @Param entryOwnershipDiagnostic: boolean = false
   @Require @Param snapshot: ReaderPagedSnapshot
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryMeasurement: ReaderEntryMeasurement | null = null
@@ -506,6 +509,7 @@ struct ReaderPagedCell {
   @Require @Param active: boolean
   @Local private retainedFrameValue: ReaderPagedFrame | null = null
   private lastRetainedProjectionDiagnostic: string = ''
+  private lastEntryLayerTrace: string = ''
   private lastCompositionDiagnostic: string = ''
   private scheduledVisualClaim: string = ''
   private claimWidth: number = 0
@@ -573,6 +577,36 @@ struct ReaderPagedCell {
       this.retainedFrameValue = retained
     }
     this.reportRetainedProjection()
+    this.traceEntryLayers()
+  }
+
+  /** Structural layer receipt only; a mounted Image may not yet paint pixels. */
+  private traceEntryLayers(): void {
+    if (!this.entryOwnershipDiagnostic || !this.selected || !this.active) return
+    const frame = this.frame()
+    const asset = frame.asset
+    const retained = this.retainedFrameValue
+    const terminal = asset.phase === 'failed' ||
+      (asset.phase === 'suppressed' && asset.notice !== null && retained === null)
+    const candidateMounted = !terminal && asset.uri.length > 0
+    const retainedMounted = !terminal && retained !== null
+    const loadingMounted = !terminal && retained === null &&
+      (asset.phase === 'idle' || asset.phase === 'asset' || asset.phase === 'decoding')
+    const identity = `${this.snapshot.selectionId}:${this.snapshot.navigationRevision}:` +
+      `${frame.slotId}:${asset.assetRequestId}:${asset.visualRevision}:${asset.phase}:` +
+      `${retained?.asset.assetRequestId ?? 0}:${candidateMounted}:${retainedMounted}:${loadingMounted}`
+    if (identity === this.lastEntryLayerTrace) return
+    this.lastEntryLayerTrace = identity
+    console.info(`[ReaderCell] selected_layers topology=${this.snapshot.topologyRevision} ` +
+      `navigation=${this.snapshot.navigationRevision} selection=${this.snapshot.selectionId} ` +
+      `display=${this.snapshot.displayIndex} ` +
+      `slot=${frame.slotId} fragment=${this.renderedFragment} ` +
+      `candidate=${candidateMounted}/${asset.kind}/${asset.phase}/${asset.assetRequestId}/v${asset.visualRevision} ` +
+      `retained_projection=${retainedMounted}/${retained?.asset.assetRequestId ?? 0} ` +
+      `loading=${loadingMounted} ` +
+      `z_top=${retainedMounted && asset.phase === 'decoding' ? 'retained' :
+        retainedMounted && (asset.phase === 'claiming' || asset.phase === 'displayed') ? 'candidate' :
+        candidateMounted ? 'candidate' : retainedMounted ? 'retained' : loadingMounted ? 'loading' : 'terminal'}`)
   }
 
   /** Emits only when a host explicitly enables the one-shot Debug diagnostic. */
@@ -658,6 +692,9 @@ struct ReaderPagedCell {
   }
 
   aboutToAppear(): void { this.syncRetainedFrame() }
+
+  @Monitor('selected', 'active')
+  onEntryLayerSelectionChanged(): void { this.traceEntryLayers() }
 
   @Monitor('snapshot')
   onSnapshotChanged(): void {
@@ -757,6 +794,7 @@ struct ReaderPagedCell {
         // the conditional second site below alone owns the new request.
         ReaderPagedImage({
           imageInterpolation: this.imageInterpolation,
+          entryOwnershipDiagnostic: this.entryOwnershipDiagnostic,
           frame: this.presentedFrame(), selectionId: this.snapshot.selectionId,
           topologyRevision: this.snapshot.topologyRevision, navigationRevision: this.snapshot.navigationRevision,
           entryTransition: this.retainedFrameValue === null ? this.entryTransition : null,
@@ -788,6 +826,7 @@ struct ReaderPagedCell {
         if (this.retainedFrameValue !== null && this.frame().asset.phase !== 'suppressed') {
           ReaderPagedImage({
             imageInterpolation: this.imageInterpolation,
+            entryOwnershipDiagnostic: this.entryOwnershipDiagnostic,
             frame: this.frame(), selectionId: this.snapshot.selectionId,
             topologyRevision: this.snapshot.topologyRevision, navigationRevision: this.snapshot.navigationRevision,
             entryTransition: this.entryTransition,
@@ -848,6 +887,7 @@ struct ReaderPagedCell {
 @ComponentV2
 export struct ReaderPagedImage {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
+  @Param entryOwnershipDiagnostic: boolean = false
   @Param continuousEntry: ReaderContinuousEntryPosition | null = null
   @Require @Param frame: ReaderPagedFrame
   @Require @Param slotId: number
@@ -902,6 +942,10 @@ export struct ReaderPagedImage {
     if (!this.active || !this.entryMounted || !this.decoded || this.decodedRequestId !== this.assetRequestId ||
       this.frame.asset.phase !== 'displayed' || this.selectedReplayIdentity === identity) return
     this.selectedReplayIdentity = identity
+    if (this.entryOwnershipDiagnostic) console.info(`[ReaderImage] selected_cached_replay selection=${this.selectionId} ` +
+      `topology=${this.topologyRevision} navigation=${this.navigationRevision} ` +
+      `slot=${this.slotId} request=${this.assetRequestId} v${this.frame.asset.visualRevision} ` +
+      `kind=${this.frame.asset.kind} decoded=${this.decodedWidth}x${this.decodedHeight}`)
     const width = this.decodedWidth
     const height = this.decodedHeight
     this.getUIContext().postFrameCallback(new ReaderEntryAfterLayout((): void => {
@@ -1105,6 +1149,12 @@ export struct ReaderPagedImage {
     this.decodedRequestId = this.assetRequestId
     this.decodedWidth = width
     this.decodedHeight = height
+    if (this.entryOwnershipDiagnostic && this.active) console.info(`[ReaderImage] native_complete selection=${this.selectionId} ` +
+      `topology=${this.topologyRevision} navigation=${this.navigationRevision} ` +
+      `slot=${this.slotId} request=${this.assetRequestId} v${this.frame.asset.visualRevision} ` +
+      `kind=${this.frame.asset.kind} phase=${this.frame.asset.phase} decoded=${width}x${height} ` +
+      `page=${this.frame.asset.page?.width ?? 0}x${this.frame.asset.page?.height ?? 0} ` +
+      `viewport=${this.viewportWidth}x${this.viewportHeight}`)
     this.reportInvalidDecodedMetrics()
     this.publishEntryTarget()
     const requestId: number = this.assetRequestId
@@ -1118,6 +1168,10 @@ export struct ReaderPagedImage {
       if (!this.entryMounted || !this.decoded || this.assetRequestId !== requestId ||
         this.frame.asset.assetRequestId !== requestId) return
       if (this.compositionDiagnostic) this.onCompositionDiagnostic('pre_claim_idle', requestId)
+      if (this.entryOwnershipDiagnostic && this.active) console.info(`[ReaderImage] native_present_report selection=${this.selectionId} ` +
+        `topology=${this.topologyRevision} navigation=${this.navigationRevision} ` +
+        `slot=${this.slotId} request=${requestId} v${this.frame.asset.visualRevision} ` +
+        `kind=${this.frame.asset.kind} decoded=${width}x${height}`)
       this.onPresented(this.slotId, requestId, true, width, height)
       this.reportVisible()
     }))

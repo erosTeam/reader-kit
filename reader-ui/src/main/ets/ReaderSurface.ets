@@ -103,6 +103,8 @@ export struct ReaderSurface {
   @Param temporaryVariantControl: ReaderTemporaryVariantControl | null = null
   /** Restricted Debug-only lifecycle probe; false keeps all retained-projection logging disabled. */
   @Param retainedProjectionDiagnostic: boolean = false
+  /** Opt-in entry owner timing trace; off for every host unless explicitly requested. */
+  @Param entryOwnershipDiagnostic: boolean = false
   @Param cropPolicy: ReaderCropPolicy | null = null
   @Param hostSettings: ReaderHostSettings | null = null
   @Param externalOpen: ReaderExternalOpen | null = null
@@ -181,8 +183,45 @@ export struct ReaderSurface {
   private appliedCropSourceRevision: string = ''
   private drawableScheduledKey: string = ''
   private drawableSignaledKey: string = ''
+  private liveEntryTraceKey: string = ''
   private liveSourceEntryOwner: ReaderLiveSourceEntry = new ReaderLiveSourceEntry()
   @Local private liveReaderVisible: boolean = false
+
+  private entryUnitTag(state: ReaderPagedSnapshot): string {
+    const unit = state.unit?.key
+    if (unit === null || unit === undefined) return 'none'
+    const identity = JSON.stringify([unit.scope, unit.work, unit.unit])
+    let hash = 2166136261
+    for (let index = 0; index < identity.length; index += 1) {
+      hash = Math.imul(hash ^ identity.charCodeAt(index), 16777619) >>> 0
+    }
+    return hash.toString(16)
+  }
+
+  private traceEntryClaim(stage: string, claim: ReaderSelectedDrawable, state: ReaderPagedSnapshot): void {
+    if (!this.entryOwnershipDiagnostic) return
+    const parts = state.frames.map(frame => `${frame.part.sourceIndex}/${frame.part.fragment}/` +
+      `${frame.slotId}/${frame.asset.assetRequestId}/v${frame.asset.visualRevision}`).join(',')
+    console.info(`[ReaderEntry] ${stage} unit_tag=${this.entryUnitTag(state)} ` +
+      `topology=${claim.topologyRevision} navigation=${claim.navigationRevision} ` +
+      `selection=${claim.selectionId} display=${claim.displayIndex} parts=${parts}`)
+  }
+
+  private traceLiveEntry(state: ReaderPagedSnapshot): void {
+    if (!this.entryOwnershipDiagnostic) return
+    const parts = state.frames.map(frame => `${frame.slotId}/${frame.part.fragment}/` +
+      `${frame.asset.kind}/${frame.asset.phase}/${frame.asset.assetRequestId}/v${frame.asset.visualRevision}/` +
+      `${frame.asset.page?.width ?? 0}x${frame.asset.page?.height ?? 0}`).join(',')
+    const key = `${state.topologyRevision}:${state.navigationRevision}:${state.selectionId}:` +
+      `${state.displayIndex}:${this.liveReaderVisible}:${parts}`
+    if (key === this.liveEntryTraceKey) return
+    this.liveEntryTraceKey = key
+    console.info(`[ReaderEntry] state unit_tag=${this.entryUnitTag(state)} ` +
+      `topology=${state.topologyRevision} navigation=${state.navigationRevision} ` +
+      `selection=${state.selectionId} display=${state.displayIndex} ` +
+      `live_source=${this.liveSourceEntry} reader_visible=${this.liveReaderVisible} ` +
+      `parts=${parts}`)
+  }
 
   private scheduleSelectedDrawable(state: ReaderPagedSnapshot): void {
     if ((!this.selectedDrawableSignals && !this.liveSourceEntry) || !this.active || this.closing ||
@@ -193,6 +232,7 @@ export struct ReaderSurface {
     if (claim === null || claim.key() === this.drawableScheduledKey ||
       claim.key() === this.drawableSignaledKey) return
     this.drawableScheduledKey = claim.key()
+    if (this.liveSourceEntry && this.entryOwnershipDiagnostic) this.traceEntryClaim('claim_scheduled', claim, state)
     this.getUIContext().postFrameCallback(new ReaderSelectedDrawableAfterFrame((): void => {
       if (this.drawableScheduledKey !== claim.key()) return
       this.drawableScheduledKey = ''
@@ -200,10 +240,12 @@ export struct ReaderSurface {
         !claim.current(this.session.snapshot())) return
       this.drawableSignaledKey = claim.key()
       if (this.liveSourceEntry && this.liveSourceEntryOwner.reveal(claim, this.session.snapshot())) {
+        if (this.entryOwnershipDiagnostic) this.traceEntryClaim('reader_reveal_submitted', claim, this.session.snapshot())
         this.liveReaderVisible = true
         this.getUIContext().postFrameCallback(new ReaderSelectedDrawableAfterFrame((): void => {
           if (!this.active || this.closing || this.chromeDisposed || !this.liveSourceEntry ||
             !this.liveSourceEntryOwner.observedRevealFrame(claim, this.session.snapshot())) return
+          if (this.entryOwnershipDiagnostic) this.traceEntryClaim('host_release_callback', claim, this.session.snapshot())
           this.onLiveSourceEntryRevealFrame(claim)
         }))
       }
@@ -316,6 +358,8 @@ export struct ReaderSurface {
   }
 
   aboutToAppear(): void {
+    if (this.entryOwnershipDiagnostic) console.info(`[ReaderEntry] surface_mounted ` +
+      `live_source=${this.liveSourceEntry} selected_signals=${this.selectedDrawableSignals}`)
     this.chromeDisposed = false
     this.chromeCloseRequested = false
     // Enter exactly as the host asked. Every legacy reader opens with chrome
@@ -346,6 +390,7 @@ export struct ReaderSurface {
         this.informationEpoch += 1; this.informationBusy = false
       }
       this.state = state
+      this.traceLiveEntry(state)
       if (this.liveSourceEntry && this.liveSourceEntryOwner.reconcile(state)) {
         this.liveReaderVisible = false
         this.drawableSignaledKey = ''
@@ -434,8 +479,11 @@ export struct ReaderSurface {
 
   @Monitor('liveSourceEntry')
   onLiveSourceEntryChanged(): void {
+    if (this.entryOwnershipDiagnostic) console.info(`[ReaderEntry] live_source_changed ` +
+      `live_source=${this.liveSourceEntry}`)
     this.liveSourceEntryOwner = new ReaderLiveSourceEntry()
     this.liveReaderVisible = false
+    this.liveEntryTraceKey = ''
     if (this.liveSourceEntry) this.scheduleSelectedDrawable(this.session.snapshot())
   }
 
@@ -1022,6 +1070,7 @@ export struct ReaderSurface {
             canvasBackground: this.canvasBackground,
             snapshot: this.state, active: this.active,
             retainedProjectionDiagnostic: this.retainedProjectionDiagnostic,
+            entryOwnershipDiagnostic: this.entryOwnershipDiagnostic,
             zoomResetCommand: this.zoomResetCommand,
             command: this.pagerCommand,
             onPositionHandoff: (claim: ReaderPositionHandoff | null): void => {

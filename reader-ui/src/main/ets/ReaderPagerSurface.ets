@@ -50,6 +50,7 @@ export struct ReaderPagerSurface {
   @Param pageGap: number = 0
   @Param canvasBackground: ResourceColor = Color.Black
   @Param retainedProjectionDiagnostic: boolean = false
+  @Param entryOwnershipDiagnostic: boolean = false
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param command: ReaderPagerCommand | null = null
@@ -83,6 +84,7 @@ export struct ReaderPagerSurface {
             pageGap: this.pageGap,
             canvasBackground: this.canvasBackground,
             retainedProjectionDiagnostic: this.retainedProjectionDiagnostic,
+            entryOwnershipDiagnostic: this.entryOwnershipDiagnostic,
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
             command: this.command,
             zoomResetCommand: this.zoomResetCommand,
@@ -112,6 +114,7 @@ struct ReaderNativePager {
   @Param pageGap: number = 0
   @Param canvasBackground: ResourceColor = Color.Black
   @Param retainedProjectionDiagnostic: boolean = false
+  @Param entryOwnershipDiagnostic: boolean = false
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param command: ReaderPagerCommand | null = null
@@ -616,6 +619,7 @@ struct ReaderNativePager {
           imageInterpolation: this.imageInterpolation,
           pageGap: this.pageGap,
           retainedProjectionDiagnostic: this.retainedProjectionDiagnostic,
+          entryOwnershipDiagnostic: this.entryOwnershipDiagnostic,
           snapshot: this.snapshot.forItem(key),
           entryTransition: key === this.snapshot.displayKeys[this.snapshot.displayIndex] ? this.entryTransition : null,
           selected: key === this.snapshot.displayKeys[this.snapshot.displayIndex],
