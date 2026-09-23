@@ -17,8 +17,8 @@ function evaluate(source) {
     exports, require: name => {
       if (name === '@reader-kit/core') return core
       if (name === './ReaderPagerSurface') return { ReaderPagerCommand: class ReaderPagerCommand {
-        constructor(serial, targetIndex, topologyRevision, navigationRevision) {
-          Object.assign(this, { serial, targetIndex, topologyRevision, navigationRevision })
+        constructor(serial, targetIndex, topologyRevision, navigationRevision, animated = true) {
+          Object.assign(this, { serial, targetIndex, topologyRevision, navigationRevision, animated })
         }
       } }
       if (name === './ReaderZoomResetCommand') return { ReaderZoomResetCommand: class ReaderZoomResetCommand {
@@ -166,7 +166,7 @@ test('enabled page-turn animation emits one adjacent native pager command before
   assert.equal(value.surface.pagerCommand.serial, 1)
 })
 
-test('disabled animation and continuous reading retain direct session-owned movement', () => {
+test('incoherent paged snapshots and continuous reading retain direct session-owned fallback', () => {
   for (const [enabled, layout] of [[false, 'single'], [true, 'continuous']]) {
     const value = scenario()
     value.surface.pageTurnAnimation = enabled
@@ -499,6 +499,11 @@ test('optional automatic advance consumes actual session readiness and Surface i
   surface.active = false; surface.onActiveChanged(); assert.equal(timers.size, 0)
   surface.active = true; surface.onActiveChanged(); assert.equal(timers.size, 1)
   const [id, timer] = [...timers][0]; timers.delete(id); timer.callback()
+  assert.equal(session.snapshot().displayIndex, 0, 'pager command must not pre-commit the position')
+  assert.equal(surface.pagerCommand.targetIndex, 1)
+  assert.equal(surface.pagerCommand.animated, false)
+  assert.equal(session.selectDisplay(1, surface.pagerCommand.topologyRevision,
+    surface.pagerCommand.navigationRevision), true)
   assert.equal(session.snapshot().displayIndex, 1); assert.equal(timers.size, 0, 'new current image must be displayed')
   surface.requestClose(); assert.equal(surface.autoReadController.isEnabled(), false)
   surface.syncAutoRead(); assert.equal(timers.size, 0)

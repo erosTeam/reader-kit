@@ -767,38 +767,37 @@ export struct ReaderSurface {
     return this.requestMove(intent)
   }
 
-  /** Animated seek for chrome-initiated jumps: keep the pager animation path
-   * when the target display item is adjacent or any finite distance (Swiper
-   * animates arbitrary deltas), falling back to a raw seek when the session
-   * cannot own the transition (continuous, missing metadata, wrong unit). */
-  private seekWithAnimation(index: number, unit: ReaderUnitKey, navigation: number): void {
+  /** Keep paged position ownership in the native pager for both animated and
+   * non-animated chrome seeks; the session advances only on native onChange. */
+  private seekWithPager(index: number, unit: ReaderUnitKey, navigation: number): void {
     const session: ReaderPagedSession | null = this.session
     if (session === null || this.state.policy.layout === 'continuous') {
       session.seekSource(index, unit, navigation)
       return
     }
     const target: number | null = session.displayIndexForSource(index)
-    if (target === null || target === this.state.displayIndex) {
-      session.seekSource(index, unit, navigation)
-      return
-    }
-    if (!this.pageTurnAnimation) {
+    if (target === null || (target === this.state.displayIndex &&
+      !(this.pagerCommand?.topologyRevision === this.state.topologyRevision &&
+        this.pagerCommand?.navigationRevision === this.state.navigationRevision &&
+        this.pagerCommand.targetIndex !== target))) {
       session.seekSource(index, unit, navigation)
       return
     }
     const before: ReaderPagedSnapshot = session.snapshot()
     if (before.topologyRevision !== this.state.topologyRevision ||
-      before.navigationRevision !== this.state.navigationRevision) {
+      before.navigationRevision !== this.state.navigationRevision ||
+      before.navigationRevision !== navigation || before.unit?.key.equals(unit) !== true) {
       session.seekSource(index, unit, navigation)
       return
     }
     this.pagerCommand = new ReaderPagerCommand(
-      ++this.pagerCommandSerial, target, before.topologyRevision, before.navigationRevision)
+      ++this.pagerCommandSerial, target, before.topologyRevision, before.navigationRevision,
+      this.pageTurnAnimation)
   }
 
   private requestMove(intent: ReaderMoveIntent): boolean {
     const before = this.session.snapshot()
-    if (this.pageTurnAnimation && before.policy.layout !== 'continuous' &&
+    if (before.policy.layout !== 'continuous' &&
       before.topologyRevision === this.state.topologyRevision &&
       before.navigationRevision === this.state.navigationRevision &&
       before.displayIndex === this.state.displayIndex) {
@@ -809,6 +808,7 @@ export struct ReaderSurface {
         target,
         before.topologyRevision,
         before.navigationRevision,
+        this.pageTurnAnimation,
       )
       return true
     }
@@ -992,7 +992,7 @@ export struct ReaderSurface {
             ReaderThumbnailRail({ session: this.session, snapshot: this.state, accent: this.accent,
               previewIndex: this.previewIndex,
               onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
-                this.seekWithAnimation(index, unit, navigation)
+                this.seekWithPager(index, unit, navigation)
               },
             })
           }, (identity: string): string => readerElementKey(identity))
@@ -1071,7 +1071,7 @@ export struct ReaderSurface {
             console.info(`[ReaderSurface] preview_source=${this.previewIndex} reading_source=${this.state.anchor?.sourceIndexHint ?? -1}`)
           },
           onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
-            this.seekWithAnimation(index, unit, navigation)
+            this.seekWithPager(index, unit, navigation)
             console.info(`[ReaderSurface] seek_source=${index}`)
           },
         })

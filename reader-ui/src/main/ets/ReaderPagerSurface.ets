@@ -4,6 +4,14 @@ import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderBoundaryDirection, ReaderBoundarySwipe } from './ReaderBoundarySwipe'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { readerElementKey } from './ReaderElementKey'
+import { ReaderPositionHandoff } from './ReaderPositionHandoff'
+import { FrameCallback } from '@kit.ArkUI'
+
+class ReaderPagerAfterFrame extends FrameCallback {
+  private action: () => void
+  constructor(action: () => void) { super(); this.action = action }
+  onIdle(_remaining: number): void { this.action() }
+}
 
 /** One host-requested pager move. The native pager consumes each serial at most once.
  * A command may target a non-adjacent display item: the legacy readers commit an
@@ -15,12 +23,15 @@ export class ReaderPagerCommand {
   targetIndex: number
   topologyRevision: number
   navigationRevision: number
+  animated: boolean
 
-  constructor(serial: number, targetIndex: number, topologyRevision: number, navigationRevision: number) {
+  constructor(serial: number, targetIndex: number, topologyRevision: number, navigationRevision: number,
+    animated: boolean = true) {
     this.serial = serial
     this.targetIndex = targetIndex
     this.topologyRevision = topologyRevision
     this.navigationRevision = navigationRevision
+    this.animated = animated
   }
 }
 
@@ -125,6 +136,13 @@ struct ReaderNativePager {
   private gestureNavigation: number = -1
   private lastNavigation: number = -1
   private lastCommandSerial: number = 0
+  // Keep the newest native command's target until a real swipe starts. A delayed
+  // onChange from an older changeIndex must never commit a different page.
+  private commandTarget: number = -1
+  private commandNavigation: number = -1
+  @Local private positionHandoff: ReaderPositionHandoff | null = null
+  private pendingOffCommand: ReaderPagerCommand | null = null
+  private oldVisualMounted: boolean = false
   private pendingChange: number = 0
   private boundarySwipe: ReaderBoundarySwipe = new ReaderBoundarySwipe()
   private boundaryTopology: number = -1
@@ -172,11 +190,16 @@ struct ReaderNativePager {
   aboutToDisappear(): void {
     if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
     this.pendingChange = 0
+    this.commandTarget = -1
+    this.pendingOffCommand = null
+    this.positionHandoff = null
+    this.oldVisualMounted = false
   }
 
-  @Monitor('inputLocked', 'moving', 'active')
+  @Monitor('inputLocked', 'moving', 'active', 'positionHandoff')
   reportExternalLock(): void {
-    this.onInputLockChange(!this.active || this.inputLocked || this.moving, this.createdRevision)
+    this.onInputLockChange(!this.active || this.inputLocked || this.moving ||
+      this.positionHandoff !== null, this.createdRevision)
   }
 
   @Monitor('snapshot')
@@ -196,6 +219,10 @@ struct ReaderNativePager {
       this.gestureNavigation = -1
       if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
       this.pendingChange = 0
+      this.commandTarget = -1
+      this.pendingOffCommand = null
+      this.positionHandoff = null
+      this.oldVisualMounted = false
     }
   }
 
@@ -203,22 +230,91 @@ struct ReaderNativePager {
   onCommandChanged(): void {
     const command = this.command
     if (command === null || command.serial <= this.lastCommandSerial) return
-    this.lastCommandSerial = command.serial
-    if (!this.active || this.inputLocked || this.moving || command.topologyRevision !== this.createdRevision ||
+    if (!this.active || this.inputLocked || (command.animated && this.moving) ||
+      command.topologyRevision !== this.createdRevision ||
       command.topologyRevision !== this.snapshot.topologyRevision ||
       command.navigationRevision !== this.snapshot.navigationRevision ||
       command.targetIndex < 0 || command.targetIndex >= this.snapshot.displayCount) return
+    this.lastCommandSerial = command.serial
+    this.commandTarget = command.targetIndex
+    this.commandNavigation = command.navigationRevision
+    if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
+    this.pendingChange = 0
     this.gestureNavigation = command.navigationRevision
+    if (!command.animated) {
+      this.positionHandoff = new ReaderPositionHandoff(command.serial, command.targetIndex,
+        command.topologyRevision, command.navigationRevision, this.snapshot, this.positionHandoff)
+      this.pendingOffCommand = command
+      if (this.oldVisualMounted) this.startOffCommandAfterFrame(command)
+      return
+    }
+    this.positionHandoff = null
+    this.pendingOffCommand = null
     this.beginMotion()
     try {
-      this.controller.changeIndex(command.targetIndex, true)
+      this.controller.changeIndex(command.targetIndex, command.animated)
       console.info(`[ReaderPager] command=${command.serial} target=${command.targetIndex} ` +
-        `topology=${command.topologyRevision} navigation=${command.navigationRevision}`)
+        `topology=${command.topologyRevision} navigation=${command.navigationRevision} animated=${command.animated}`)
     } catch (error) {
       this.moving = false
       this.gestureNavigation = -1
+      this.commandTarget = -1
       console.warn(`[ReaderPager] command_failed=${command.serial} ${(error as Error).message}`)
     }
+  }
+
+  private startOffCommandAfterFrame(command: ReaderPagerCommand): void {
+    this.getUIContext().postFrameCallback(new ReaderPagerAfterFrame((): void => {
+      if (!this.active || !this.oldVisualMounted || this.pendingOffCommand?.serial !== command.serial ||
+        this.positionHandoff?.current(command.serial, this.snapshot) !== true) return
+      this.pendingOffCommand = null
+      try {
+        this.controller.changeIndex(command.targetIndex, false)
+        console.info(`[ReaderPager] command=${command.serial} target=${command.targetIndex} ` +
+          `topology=${command.topologyRevision} navigation=${command.navigationRevision} animated=false old_visual_held=true`)
+        // A superseding seek back to the still-current old item need not emit
+        // onChange/onVisible. Let the native pager reclaim that item for a frame,
+        // then retire the duplicate old visual without changing session state.
+        const handoff = this.positionHandoff
+        if (handoff !== null && command.targetIndex === this.snapshot.displayIndex &&
+          handoff.targetKey === handoff.oldKey) {
+          this.getUIContext().postFrameCallback(new ReaderPagerAfterFrame((): void => {
+            if (this.positionHandoff?.serial !== command.serial ||
+              this.snapshot.displayIndex !== command.targetIndex ||
+              this.snapshot.displayKeys[command.targetIndex] !== handoff.oldKey) return
+            this.positionHandoff = null
+            this.oldVisualMounted = false
+            this.commandTarget = -1
+            this.commandNavigation = -1
+            console.info(`[ReaderPager] old_visual_restored=${command.serial} target=${command.targetIndex}`)
+          }))
+        }
+      } catch (error) {
+        this.positionHandoff = null
+        this.commandTarget = -1
+        console.warn(`[ReaderPager] command_failed=${command.serial} ${(error as Error).message}`)
+      }
+    }))
+  }
+
+  private visibleAfterHandoff(key: string, selectionId: number, slotId: number, requestId: number,
+    fragment: ReaderFragment): void {
+    const handoff = this.positionHandoff
+    if (handoff === null) {
+      this.onVisible(selectionId, slotId, requestId, fragment)
+      return
+    }
+    if (!handoff.targetDrawable(key, selectionId, this.snapshot)) return
+    this.positionHandoff = null
+    this.oldVisualMounted = false
+    this.getUIContext().postFrameCallback(new ReaderPagerAfterFrame((): void => {
+      if (!this.active || this.lastCommandSerial !== handoff.serial ||
+        this.snapshot.topologyRevision !== handoff.topologyRevision ||
+        this.snapshot.displayKeys[this.snapshot.displayIndex] !== handoff.targetKey ||
+        this.snapshot.selectionId !== selectionId) return
+      this.onVisible(selectionId, slotId, requestId, fragment)
+      console.info(`[ReaderPager] old_visual_retired=${handoff.serial} target=${handoff.targetIndex}`)
+    }))
   }
 
   private beginMotion(): void {
@@ -228,11 +324,13 @@ struct ReaderNativePager {
   }
 
   private queueSelection(index: number): void {
+    if (this.commandTarget >= 0 && index !== this.commandTarget) return
     if (index === this.snapshot.displayIndex) {
       this.gestureNavigation = -1
       return
     }
     const navigation = this.gestureNavigation >= 0 ? this.gestureNavigation : this.snapshot.navigationRevision
+    const commandSerial = this.commandTarget >= 0 ? this.lastCommandSerial : 0
     this.gestureNavigation = -1
     if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
     // ArkUI forbids refreshing LazyForEach child UI recursively inside onChange.
@@ -240,12 +338,15 @@ struct ReaderNativePager {
     this.pendingChange = setTimeout((): void => {
       this.pendingChange = 0
       if (!this.active) return
+      if (commandSerial !== 0 && (commandSerial !== this.lastCommandSerial ||
+        index !== this.commandTarget || navigation !== this.commandNavigation)) return
       this.onSelect(index, this.createdRevision, navigation)
       console.info(`[ReaderPager] selected=${index} topology=${this.createdRevision} navigation=${navigation}`)
     }, 0)
   }
 
   build() {
+    Stack() {
     Swiper(this.controller) {
       LazyForEach(this.source, (key: string) => {
         ReaderPagedViewport({
@@ -268,7 +369,9 @@ struct ReaderNativePager {
           onPresented: this.onPresented,
           onVisualClaim: this.onVisualClaim,
           onTap: this.onTap,
-          onVisible: this.onVisible,
+          onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {
+            this.visibleAfterHandoff(key, selectionId, slotId, requestId, fragment)
+          },
           onRetry: (slotId: number, requestId: number): void => {
             this.onRetry(this.createdRevision, key, slotId, requestId)
           },
@@ -278,6 +381,15 @@ struct ReaderNativePager {
           },
           onFailed: (_selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {
             this.onFailed(this.createdRevision, key, slotId, requestId, fragment)
+            const handoff = this.positionHandoff
+            if (handoff !== null && key === handoff.targetKey) {
+              this.getUIContext().postFrameCallback(new ReaderPagerAfterFrame((): void => {
+                if (this.positionHandoff?.serial !== handoff.serial ||
+                  this.snapshot.displayKeys[this.snapshot.displayIndex] !== key) return
+                const failed = this.snapshot.forItem(key).frames.some(frame => frame.asset.phase === 'failed')
+                if (failed) this.positionHandoff = null
+              }))
+            }
           },
         })
       }, (key: string): string => readerElementKey(key))
@@ -287,10 +399,15 @@ struct ReaderNativePager {
     .direction(this.snapshot.policy.pagingAxis !== 'vertical' && this.snapshot.policy.direction === 'rtl' ?
       Direction.Rtl : Direction.Ltr)
     .loop(false).indicator(false).cachedCount(1)
-    .disableSwipe(!this.active || this.snapshot.phase !== 'ready' || this.inputLocked)
+    .disableSwipe(!this.active || this.snapshot.phase !== 'ready' || this.inputLocked ||
+      this.positionHandoff !== null)
     .width('100%').height('100%').id('rkit-native-pager')
     .onTouch((event: TouchEvent): void => { this.handleBoundaryTouch(event) })
-    .onGestureSwipe((): void => { this.beginMotion() })
+    .onGestureSwipe((): void => {
+      this.commandTarget = -1
+      this.commandNavigation = -1
+      this.beginMotion()
+    })
     .onAnimationStart((): void => { this.beginMotion() })
     .onScrollStateChanged((state: ScrollState): void => {
       if (state !== ScrollState.Idle) this.entryTransition?.cancel(`pager-scroll-state=${state}`)
@@ -298,5 +415,23 @@ struct ReaderNativePager {
     })
     .onAnimationEnd((): void => { this.moving = false })
     .onChange((index: number): void => { this.queueSelection(index) })
+    if (this.positionHandoff !== null) {
+      ReaderPagedViewport({
+        imageInterpolation: this.imageInterpolation,
+        pageGap: this.pageGap,
+        snapshot: this.positionHandoff.oldProjection,
+        selected: false,
+        active: false,
+      })
+      .width('100%').height('100%').hitTestBehavior(HitTestMode.None)
+      .onAppear((): void => {
+        this.oldVisualMounted = true
+        const command = this.pendingOffCommand
+        if (command !== null) this.startOffCommandAfterFrame(command)
+      })
+      .onDisAppear((): void => { this.oldVisualMounted = false })
+    }
+    }
+    .width('100%').height('100%')
   }
 }
