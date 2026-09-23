@@ -33,6 +33,14 @@ import { ReaderCropPolicy } from './ReaderCropPolicy'
 import { ReaderAutoReadPolicy } from './ReaderAutoReadPolicy'
 import { ReaderTapPolicy } from './ReaderTapPolicy'
 import { ReaderTemporaryVariantControl } from './ReaderTemporaryVariantControl'
+import { ReaderSelectedDrawable } from './ReaderSelectedDrawable'
+import { FrameCallback } from '@kit.ArkUI'
+
+class ReaderSelectedDrawableAfterFrame extends FrameCallback {
+  private action: () => void
+  constructor(action: () => void) { super(); this.action = action }
+  onIdle(_remaining: number): void { this.action() }
+}
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -109,6 +117,10 @@ export struct ReaderSurface {
   @Param preferenceSink: ReaderPreferenceSink | null = null
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPreview: ReaderEntryPreviewSource | null = null
+  /** Opt-in fact for a host that keeps a real live source visible during no-thumbnail entry. */
+  @Param selectedDrawableSignals: boolean = false
+  /** Decoded selected composite only; the host still owns reveal and foreground observation. */
+  @Event onSelectedDrawable: (claim: ReaderSelectedDrawable) => void = () => {}
   @Param contentOpacity: number = 1
   @BuilderParam openingPlaceholder: () => void = this.DefaultOpeningPlaceholder
   @Event onClose: (context: ReaderCloseContext | null) => void = () => {}
@@ -160,6 +172,24 @@ export struct ReaderSurface {
   private interactionBusyReported: boolean = false
   private tapZonePreviewShownRevision: number = 0
   private appliedCropSourceRevision: string = ''
+  private drawableScheduledKey: string = ''
+  private drawableSignaledKey: string = ''
+
+  private scheduleSelectedDrawable(state: ReaderPagedSnapshot): void {
+    if (!this.selectedDrawableSignals || !this.active || this.closing || this.chromeDisposed) return
+    const claim = ReaderSelectedDrawable.from(state)
+    if (claim === null || claim.key() === this.drawableScheduledKey ||
+      claim.key() === this.drawableSignaledKey) return
+    this.drawableScheduledKey = claim.key()
+    this.getUIContext().postFrameCallback(new ReaderSelectedDrawableAfterFrame((): void => {
+      if (this.drawableScheduledKey !== claim.key()) return
+      this.drawableScheduledKey = ''
+      if (!this.selectedDrawableSignals || !this.active || this.closing || this.chromeDisposed ||
+        !claim.current(this.session.snapshot())) return
+      this.drawableSignaledKey = claim.key()
+      this.onSelectedDrawable(claim)
+    }))
+  }
 
   private reportZoomed(zoomed: boolean, topology: number, navigation: number): void {
     if (!this.active || this.closing || this.chromeDisposed || topology !== this.state.topologyRevision ||
@@ -290,6 +320,7 @@ export struct ReaderSurface {
       }
       this.state = state
       this.publishObserved(state)
+      this.scheduleSelectedDrawable(state)
       this.syncPreferredVariant(state)
       this.entryTransition?.update(state)
       this.shareController.update(ReaderImageShareTarget.from(state), this.active)
@@ -357,9 +388,15 @@ export struct ReaderSurface {
     this.saveController.update(this.session.snapshot(), this.active)
     this.flushSaveFeedback()
     this.session.setViewportActive(this.active)
+    if (this.active) this.scheduleSelectedDrawable(this.session.snapshot())
     this.reportInteractionBusy?.()
     this.syncPreferredVariant(this.session.snapshot())
     this.syncAutoRead()
+  }
+
+  @Monitor('selectedDrawableSignals')
+  onSelectedDrawableSignalsChanged(): void {
+    this.scheduleSelectedDrawable(this.session.snapshot())
   }
 
   @Monitor('temporaryVariantActive')
