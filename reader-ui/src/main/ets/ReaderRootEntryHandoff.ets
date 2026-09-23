@@ -58,8 +58,13 @@ export class ReaderRootEntryHandoff {
     if (entry.phase === 'layout') {
       if (target === null || !target.geometryReady || !target.contentRect.valid() || this.flightStarted) return
       this.flightStarted = true
-      if (!host.authorizeDeparture(entry) || !host.setOpeningTarget(target)) {
-        entry.cancel()
+      if (!host.authorizeDeparture(entry)) {
+        entry.cancel('root-departure-denied')
+        host.startOpening(null)
+        return
+      }
+      if (!host.setOpeningTarget(target)) {
+        entry.cancel('root-target-rejected')
         host.startOpening(null)
         return
       }

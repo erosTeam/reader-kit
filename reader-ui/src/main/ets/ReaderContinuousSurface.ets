@@ -173,7 +173,7 @@ struct ReaderContinuousList {
 
   aboutToDisappear(): void {
     this.disposed = true
-    this.entryTransition?.cancel()
+    this.entryTransition?.cancel('continuous-disappeared')
     this.entryPosition = null
     this.positionEpoch += 1
     if (this.positionTimer !== 0) clearTimeout(this.positionTimer)
@@ -190,7 +190,7 @@ struct ReaderContinuousList {
   onSnapshotChanged(): void {
     const entryFrame = this.snapshot.frames.find((frame: ReaderPagedFrame): boolean =>
       this.entryTransition?.matches(frame.part) === true)
-    if (entryFrame?.asset.phase === 'failed') this.entryTransition?.cancel()
+    if (entryFrame?.asset.phase === 'failed') this.entryTransition?.cancel('continuous-entry-frame-failed')
     if (this.entryPosition !== null && entryFrame !== undefined &&
       this.entryPosition.height !== this.imageHeight(entryFrame.part.sourceIndex)) this.invalidatePosition()
     let cropChanged = false
@@ -235,7 +235,7 @@ struct ReaderContinuousList {
       this.positionInFlight || this.moving || this.lockedKey.length > 0 || this.snapshot.phase !== 'ready') return
     const frame = this.snapshot.forItem(this.snapshot.displayKeys[this.snapshot.displayIndex]).frames[0]
     if (frame === undefined || !entry.matches(frame.part)) return
-    if (frame.asset.phase === 'failed') { entry.cancel(); return }
+    if (frame.asset.phase === 'failed') { entry.cancel('continuous-current-frame-failed'); return }
     const width = this.viewWidth
     const height = this.imageHeight(frame.part.sourceIndex)
     const previous = this.entryPosition
@@ -309,7 +309,7 @@ struct ReaderContinuousList {
     if (frame === undefined || identity !== this.imageIdentity(key, frame)) return
     if (locked) {
       if (frame.asset.phase !== 'displayed' || (this.lockedKey.length > 0 && this.lockedKey !== key)) return
-      this.entryTransition?.cancel()
+      this.entryTransition?.cancel('continuous-image-locked')
       this.lockedKey = key
       this.lockedIdentity = identity
     } else if (this.lockedKey === key && this.lockedIdentity === identity) {
@@ -335,7 +335,7 @@ struct ReaderContinuousList {
   }
 
   private invalidatePosition(): void {
-    if (this.entryTransition?.phase !== 'layout') this.entryTransition?.cancel()
+    if (this.entryTransition?.phase !== 'layout') this.entryTransition?.cancel('continuous-position-invalidated')
     this.entryPosition = null
     if (this.positionTimer !== 0) clearTimeout(this.positionTimer)
     if (this.measureTimer !== 0) clearTimeout(this.measureTimer)
@@ -477,7 +477,7 @@ struct ReaderContinuousList {
       const width = Math.max(1, Number(area.width))
       if (this.viewWidth !== width || (this.entryTransition?.pending() === true &&
         this.viewHeight !== Math.max(1, Number(area.height)))) {
-        if (this.viewWidth > 1 && this.entryTransition?.target !== null) this.entryTransition?.cancel()
+        if (this.viewWidth > 1 && this.entryTransition?.target !== null) this.entryTransition?.cancel('continuous-viewport-changed')
         this.invalidatePosition()
       }
       this.viewWidth = width
@@ -495,7 +495,7 @@ struct ReaderContinuousList {
       this.scheduleMeasure()
     })
     .onDidScroll((_offset: number, state: ScrollState): void => {
-      if (!this.pendingPosition && !this.positionInFlight && state !== ScrollState.Idle) this.entryTransition?.cancel()
+      if (!this.pendingPosition && !this.positionInFlight && state !== ScrollState.Idle) this.entryTransition?.cancel('continuous-user-scroll')
       this.moving = state !== ScrollState.Idle
       this.scheduleMeasure()
     })

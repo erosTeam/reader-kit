@@ -54,7 +54,7 @@ export struct ReaderEntryPreview {
   private destinationClip: ReaderEntryRect | null = null
   private epoch: number = 0
 
-  aboutToDisappear(): void { this.mounted = false; this.epoch += 1; this.entry.cancel() }
+  aboutToDisappear(): void { this.mounted = false; this.epoch += 1; this.entry.cancel('preview-disappeared') }
 
   @Monitor('entry.target', 'entry.phase')
   advance(): void {
@@ -64,14 +64,14 @@ export struct ReaderEntryPreview {
     const committed = this.destination
     if (committed !== null && (committed.x !== target.contentRect.x || committed.y !== target.contentRect.y ||
       committed.width !== target.contentRect.width || committed.height !== target.contentRect.height)) {
-      this.entry.cancel(); return
+      this.entry.cancel('preview-destination-moved'); return
     }
     const clip = target.clipRect
     const committedClip = this.destinationClip
     if (committed !== null && ((committedClip === null) !== (clip === null) ||
       (committedClip !== null && clip !== null && (committedClip.x !== clip.x || committedClip.y !== clip.y ||
       committedClip.width !== clip.width || committedClip.height !== clip.height)))) {
-      this.entry.cancel(); return
+      this.entry.cancel('preview-clip-changed'); return
     }
     if (this.entry.phase === 'layout') {
       const entry = this.entry
@@ -86,9 +86,9 @@ export struct ReaderEntryPreview {
         previewFrame = new ReaderEntryRect(x, y,
           Math.min(destination.x + destination.width, clip.x + clip.width) - x,
           Math.min(destination.y + destination.height, clip.y + clip.height) - y)
-        if (!previewFrame.valid()) { entry.cancel(); return }
+        if (!previewFrame.valid()) { entry.cancel('preview-frame-invalid'); return }
       }
-      if (!source.authorizeDeparture(entry.entryId)) { entry.cancel(); return }
+      if (!source.authorizeDeparture(entry.entryId)) { entry.cancel('preview-departure-denied'); return }
       // The host may synchronously retire this hidden trial while authorizing its source.
       if (!this.mounted || this.entry !== entry || this.source !== source || !entry.pending() ||
         entry.phase !== 'layout' || entry.target !== target) return
@@ -172,7 +172,7 @@ export struct ReaderEntryPreview {
     }.width('100%').height('100%').id('rkit-entry-preview-root')
       .hitTestBehavior(HitTestMode.None)
       .onAreaChange((): void => {
-        if (this.mounted) { this.entry.cancel(); return }
+        if (this.mounted) { this.entry.cancel('preview-root-area-changed'); return }
         const rect = this.getUIContext().getComponentUtils().getRectangleById('rkit-entry-preview-root')
         this.origin = new ReaderEntryRect(this.getUIContext().px2vp(rect.windowOffset.x),
           this.getUIContext().px2vp(rect.windowOffset.y), this.getUIContext().px2vp(rect.size.width),
