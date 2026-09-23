@@ -218,6 +218,82 @@ test('source seek rejects invalid indices and stale navigation or unit tokens wi
   assert.equal(session.seekSource(0, session.snapshot().unit.key, session.snapshot().navigationRevision), false)
 })
 
+test('paged position handoff retains the observed outgoing lease until the target is visible', async () => {
+  const { session, key, calls } = setup({ count: 4 })
+  await session.open(key, 1); await tick()
+  let old = session.snapshot()
+  decode(session, old.frames[0])
+  old = session.snapshot()
+  assert.equal(session.reportVisible(old.selectionId, old.frames[0].slotId,
+    old.frames[0].asset.assetRequestId, 'whole'), true)
+  assert.equal(session.seekSource(0, key, old.navigationRevision), true)
+  await tick()
+  let target = session.snapshot()
+  assert.equal(target.displayIndex, 0)
+  assert.equal(target.observedAnchor.sourceIndexHint, 1)
+  assert.deepEqual(target.window.map(item => item.index), [0, 1])
+  assert.equal(calls.release.includes('original:A-1'), false)
+  assert.equal(session.reportVisible(old.selectionId, old.frames[0].slotId,
+    old.frames[0].asset.assetRequestId, 'whole'), false)
+  assert.equal(calls.release.includes('original:A-1'), false)
+  decode(session, target.frames[0])
+  target = session.snapshot()
+  assert.equal(session.reportVisible(target.selectionId, target.frames[0].slotId,
+    target.frames[0].asset.assetRequestId, 'whole'), true)
+  assert.equal(calls.release.filter(value => value === 'original:A-1').length, 1)
+  assert.deepEqual(session.snapshot().window.map(item => item.index), [0])
+  session.close()
+})
+
+test('a second seek keeps the last observed body, not an unpresented intermediate', async () => {
+  const { session, key, calls } = setup({ count: 4 })
+  await session.open(key, 1); await tick()
+  let old = session.snapshot()
+  decode(session, old.frames[0])
+  old = session.snapshot()
+  assert.equal(session.reportVisible(old.selectionId, old.frames[0].slotId,
+    old.frames[0].asset.assetRequestId, 'whole'), true)
+  assert.equal(session.seekSource(0, key, old.navigationRevision), true)
+  await tick()
+  const first = session.snapshot()
+  assert.equal(session.seekSource(3, key, first.navigationRevision), true)
+  await tick()
+  let second = session.snapshot()
+  assert.deepEqual(second.window.map(item => item.index), [3, 1])
+  assert.equal(calls.release.includes('original:A-1'), false)
+  assert.equal(session.reportVisible(first.selectionId, first.frames[0].slotId,
+    first.frames[0].asset.assetRequestId, 'whole'), false)
+  decode(session, second.frames[0])
+  second = session.snapshot()
+  assert.equal(session.reportVisible(second.selectionId, second.frames[0].slotId,
+    second.frames[0].asset.assetRequestId, 'whole'), true)
+  assert.equal(calls.release.filter(value => value === 'original:A-1').length, 1)
+  session.close()
+})
+
+test('an undrawn target cannot retire the old position, including across inactivity', async () => {
+  const { session, key, calls } = setup({ count: 3, fail: [0] })
+  await session.open(key, 1); await tick()
+  let old = session.snapshot()
+  decode(session, old.frames[0])
+  old = session.snapshot()
+  assert.equal(session.reportVisible(old.selectionId, old.frames[0].slotId,
+    old.frames[0].asset.assetRequestId, 'whole'), true)
+  assert.equal(session.seekSource(0, key, old.navigationRevision), true)
+  await tick()
+  const failed = session.snapshot()
+  assert.equal(failed.frames[0].asset.phase, 'failed')
+  assert.equal(calls.release.includes('original:A-1'), false)
+  session.setViewportActive(false)
+  assert.equal(calls.release.includes('original:A-1'), false)
+  session.setViewportActive(true)
+  assert.equal(session.reportVisible(failed.selectionId, failed.frames[0].slotId,
+    failed.frames[0].asset.assetRequestId, 'whole'), false)
+  assert.equal(calls.release.includes('original:A-1'), false)
+  session.close()
+  assert.equal(calls.release.filter(value => value === 'original:A-1').length, 1)
+})
+
 test('seeking the current continuous source resets its row anchor without fabricating observation', async () => {
   const { session, key } = setup()
   session.setPolicy(policy({ layout: 'continuous' }))
