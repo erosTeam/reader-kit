@@ -51,6 +51,23 @@ export class ReaderPageCropMetadata {
   }
 }
 
+/** A live processed-plan failure, separate from failure to load the displayed asset. */
+export class ReaderVariantPreparationFailure {
+  sourceIndex: number
+  variant: ReaderProcessedAssetVariant
+  navigationRevision: number
+
+  constructor(sourceIndex: number, variant: ReaderProcessedAssetVariant, navigationRevision: number) {
+    this.sourceIndex = sourceIndex
+    this.variant = variant
+    this.navigationRevision = navigationRevision
+  }
+
+  copy(): ReaderVariantPreparationFailure {
+    return new ReaderVariantPreparationFailure(this.sourceIndex, this.variant, this.navigationRevision)
+  }
+}
+
 export class ReaderPagedItemSnapshot {
   key: string
   index: number
@@ -91,6 +108,8 @@ export class ReaderPagedSnapshot {
   variantPreparing: boolean = false
   preparingSourceIndexes: number[] = []
   preparingVariants: ReaderAssetVariant[] = []
+  /** Only failures for currently visible sources; cancellation and stale results are excluded. */
+  variantPreparationFailures: ReaderVariantPreparationFailure[] = []
   cropEnabled: boolean = false
   displayIndex: number = 0
   displayCount: number = 0
@@ -174,6 +193,9 @@ export class ReaderPagedSnapshot {
         copy.cropPending = frame.cropPending
         return copy
       })
+    value.variantPreparationFailures = this.variantPreparationFailures.filter((failure: ReaderVariantPreparationFailure): boolean =>
+      value.frames.some((frame: ReaderPagedFrame): boolean => frame.part.sourceIndex === failure.sourceIndex))
+      .map((failure: ReaderVariantPreparationFailure): ReaderVariantPreparationFailure => failure.copy())
     return value
   }
 }
@@ -219,6 +241,7 @@ export class ReaderPagedSession {
   private slots: ReaderPageSlot[] = []
   private assetPlans: Map<number, ReaderResolvedAssetPlan> = new Map()
   private originalPreparations: Map<number, ReaderCancellation> = new Map()
+  private variantPreparationFailures: Map<number, ReaderVariantPreparationFailure> = new Map()
   private preparationVariants: Map<number, ReaderAssetVariant> = new Map()
   private prefetchNeighbors: boolean = false
   private preloadDepth: number = 0
@@ -312,10 +335,11 @@ export class ReaderPagedSession {
   }
 
   cancelOriginalPreparations(): void {
-    if (this.originalPreparations.size === 0) return
+    if (this.originalPreparations.size === 0 && this.variantPreparationFailures.size === 0) return
     this.originalPreparations.forEach((cancellation: ReaderCancellation) => cancellation.cancel())
     this.originalPreparations.clear()
     this.preparationVariants.clear()
+    this.variantPreparationFailures.clear()
     this.emit()
   }
 
@@ -323,6 +347,7 @@ export class ReaderPagedSession {
   cancelProcessedVariantPreparations(sourceIndexes: number[]): void {
     let changed: boolean = false
     sourceIndexes.forEach((sourceIndex: number): void => {
+      if (this.variantPreparationFailures.delete(sourceIndex)) changed = true
       const variant = this.preparationVariants.get(sourceIndex)
       if (variant !== 'enhanced' && variant !== 'translated') return
       this.originalPreparations.get(sourceIndex)?.cancel()
@@ -340,7 +365,9 @@ export class ReaderPagedSession {
    */
   cancelRetainedProcessedVariantReplacements(sourceIndexes: number[]): void {
     let changed: boolean = false
+    let issueChanged: boolean = false
     sourceIndexes.forEach((sourceIndex: number): void => {
+      if (this.variantPreparationFailures.delete(sourceIndex)) issueChanged = true
       const slot = this.slots.find((candidate: ReaderPageSlot): boolean => candidate.index === sourceIndex)
       if (slot === undefined || !slot.session.cancelRetainedProcessedReplacement()) return
       const plan = this.assetPlans.get(sourceIndex)
@@ -349,7 +376,10 @@ export class ReaderPagedSession {
       this.cropPages.delete(sourceIndex)
       changed = true
     })
-    if (!changed) return
+    if (!changed) {
+      if (issueChanged) this.emit()
+      return
+    }
     this.state.selectionId += 1
     this.reconcile()
   }
@@ -390,6 +420,7 @@ export class ReaderPagedSession {
     if (frame.asset.phase !== 'displayed' || identity.length === 0 || this.assets.prepareVariant === undefined) {
       return 'unavailable'
     }
+    if (this.variantPreparationFailures.delete(sourceIndex)) this.emit()
     const existing = this.assetPlans.get(sourceIndex)
     if (existing?.variant === variant && (existing as ReaderVariantAssetPlan).identity === identity) return 'unchanged'
     const previous = this.originalPreparations.get(sourceIndex)
@@ -406,6 +437,7 @@ export class ReaderPagedSession {
       if (cancellation.isCancelled() || loadedFrame() === undefined) return 'stale'
       if (!plan.page.unit.equals(page.unit) || plan.page.key !== page.key ||
         plan.page.sourceIndex !== sourceIndex || plan.variant !== variant || plan.identity !== identity) {
+        this.reportVariantPreparationFailure(sourceIndex, variant, navigation)
         return 'unavailable'
       }
       this.assetPlans.set(sourceIndex, plan)
@@ -417,7 +449,9 @@ export class ReaderPagedSession {
       this.reconcile()
       return 'changed'
     } catch (_error) {
-      return cancellation.isCancelled() || loadedFrame() === undefined ? 'stale' : 'unavailable'
+      if (cancellation.isCancelled() || loadedFrame() === undefined) return 'stale'
+      this.reportVariantPreparationFailure(sourceIndex, variant, navigation)
+      return 'unavailable'
     } finally {
       if (this.originalPreparations.get(sourceIndex) === cancellation) {
         this.originalPreparations.delete(sourceIndex)
@@ -438,6 +472,7 @@ export class ReaderPagedSession {
     const frame = currentFrame()
     if (frame === undefined || frame.asset.page === null) return 'stale'
     const index = frame.part.sourceIndex
+    if (this.variantPreparationFailures.delete(index)) this.emit()
     const previous = this.originalPreparations.get(index)
     previous?.cancel()
     this.originalPreparations.delete(index)
@@ -467,6 +502,9 @@ export class ReaderPagedSession {
         plan.page.sourceIndex !== index || (plan.variant ?? 'original') !== variant ||
         ((variant === 'enhanced' || variant === 'translated') &&
           (plan as ReaderVariantAssetPlan).identity !== identity))) {
+        if (variant === 'enhanced' || variant === 'translated') {
+          this.reportVariantPreparationFailure(index, variant, navigation)
+        }
         return 'unavailable'
       }
       if (plan === null) this.assetPlans.delete(index)
@@ -476,7 +514,11 @@ export class ReaderPagedSession {
       this.reconcile()
       return 'changed'
     } catch (_error) {
-      return cancellation.isCancelled() || currentFrame() === undefined ? 'stale' : 'unavailable'
+      if (cancellation.isCancelled() || currentFrame() === undefined) return 'stale'
+      if (variant === 'enhanced' || variant === 'translated') {
+        this.reportVariantPreparationFailure(index, variant, navigation)
+      }
+      return 'unavailable'
     } finally {
       if (this.originalPreparations.get(index) === cancellation) {
         this.originalPreparations.delete(index)
@@ -484,6 +526,13 @@ export class ReaderPagedSession {
         this.emit()
       }
     }
+  }
+  private reportVariantPreparationFailure(sourceIndex: number, variant: ReaderProcessedAssetVariant,
+    navigation: number): void {
+    if (this.disposed || !this.active || this.navigationRevision !== navigation) return
+    this.variantPreparationFailures.set(sourceIndex,
+      new ReaderVariantPreparationFailure(sourceIndex, variant, navigation))
+    this.emit()
   }
   async imageInformation(slotId: number, requestId: number, unit: ReaderUnitKey,
     navigation: number): Promise<ReaderImageInformation | null> {
@@ -552,6 +601,18 @@ export class ReaderPagedSession {
     value.frames = this.framesAt(this.state.displayIndex)
     value.window = this.windowIndexes().map((index: number) =>
       new ReaderPagedItemSnapshot(this.displayKeys[index], index, this.framesAt(index)))
+    const visibleSources: number[] = []
+    value.window.forEach((item: ReaderPagedItemSnapshot): void => {
+      if (item.index < value.visibleDisplayStart || item.index > value.visibleDisplayEnd) return
+      item.frames.forEach((frame: ReaderPagedFrame): void => {
+        if (!visibleSources.includes(frame.part.sourceIndex)) visibleSources.push(frame.part.sourceIndex)
+      })
+    })
+    this.variantPreparationFailures.forEach((failure: ReaderVariantPreparationFailure, sourceIndex: number): void => {
+      if (failure.navigationRevision === this.navigationRevision && visibleSources.includes(sourceIndex)) {
+        value.variantPreparationFailures.push(failure.copy())
+      }
+    })
     return value
   }
 

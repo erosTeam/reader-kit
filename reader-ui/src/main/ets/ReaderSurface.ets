@@ -972,6 +972,14 @@ export struct ReaderSurface {
           .backgroundColor('#CC000000').borderRadius(20)
           .position({ x: 16, y: this.topInset + 72 }).hitTestBehavior(HitTestMode.None)
           .id('rkit-host-status')
+      } else if (this.state.variantPreparationFailures.length > 0) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.exclamationmark_triangle')).fontSize(18).fontColor([Color.White])
+          Text($r('app.string.rkit_variant_prepare_failed')).fontSize(12).fontColor(Color.White).maxLines(2)
+        }.padding({ left: 16, right: 16, top: 8, bottom: 8 })
+          .backgroundColor('#CC000000').borderRadius(20)
+          .position({ x: 16, y: this.topInset + 72 }).hitTestBehavior(HitTestMode.None)
+          .id('rkit-variant-preparation-failed')
       }
       if (this.tapZonePreviewVisible) {
         this.TapZonePreview()

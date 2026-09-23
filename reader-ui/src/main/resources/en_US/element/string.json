@@ -29,6 +29,7 @@
     { "name": "rkit_info_original_available", "value": "Original: available" },
     { "name": "rkit_info_original_unavailable", "value": "Original: unavailable" },
     { "name": "rkit_info_failed", "value": "Unable to read image information. Please retry." },
+    { "name": "rkit_variant_prepare_failed", "value": "Could not process image. Showing current image." },
     { "name": "rkit_ok", "value": "OK" },
     { "name": "rkit_share_image", "value": "Share current image" },
     { "name": "rkit_share_failed", "value": "Could not share. Please try again." },

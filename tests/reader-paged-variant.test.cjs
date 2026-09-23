@@ -151,6 +151,58 @@ test('wrong derivative identity or variant leaves the displayed body untouched',
   }
 })
 
+test('processed preparation failure projects a visible source-scoped fact without replacing its asset', async () => {
+  const f = await fixture(), original = f.provider.prepareVariant, before = f.frame()
+  f.provider.prepareVariant = async () => { throw new Error('processor failed') }
+  assert.equal(await f.choose('enhanced'), 'unavailable')
+  let snapshot = f.s.snapshot()
+  assert.equal(snapshot.frames[0].asset.uri, before.asset.uri)
+  assert.equal(snapshot.frames[0].asset.phase, 'displayed')
+  assert.equal(snapshot.frames[0].asset.failure, null)
+  assert.equal(snapshot.variantPreparationFailures.length, 1)
+  assert.equal(snapshot.variantPreparationFailures[0].sourceIndex, 0)
+  assert.equal(snapshot.variantPreparationFailures[0].variant, 'enhanced')
+  assert.equal(snapshot.forItem(snapshot.displayKeys[0]).variantPreparationFailures.length, 1)
+  f.provider.prepareVariant = original
+  assert.equal(await f.choose('enhanced'), 'changed')
+  snapshot = f.s.snapshot()
+  assert.equal(snapshot.variantPreparationFailures.length, 0)
+  f.s.close()
+})
+
+test('cancelled and off-screen processed preparations never project a visible failure', async () => {
+  const f = await fixture(); let reject
+  f.provider.prepareVariant = async () => new Promise((_resolve, fail) => { reject = fail })
+  const pending = f.choose('enhanced')
+  f.s.cancelProcessedVariantPreparations([0])
+  reject(new Error('late processor error'))
+  assert.equal(await pending, 'stale')
+  assert.equal(f.s.snapshot().variantPreparationFailures.length, 0)
+  f.s.setNeighborPreload(true); await tick()
+  f.s.snapshot().window.flatMap(item => item.frames).forEach(frame =>
+    f.s.reportPresentation(frame.slotId, frame.asset.assetRequestId, true))
+  f.provider.prepareVariant = async () => { throw new Error('neighbor failed') }
+  assert.equal(await f.s.prepareVariantForSource(1, f.key.copy(), f.s.snapshot().navigationRevision,
+    'translated', 'translated:v1'), 'unavailable')
+  assert.equal(f.s.snapshot().variantPreparationFailures.length, 0)
+  f.s.close()
+})
+
+test('visible automatic processed preparation failure is distinct from the retained image', async () => {
+  const f = await fixture(), before = f.frame()
+  f.provider.prepareVariant = async () => { throw new Error('processor failed once') }
+  assert.equal(await f.s.prepareVariantForSource(0, f.key.copy(), f.s.snapshot().navigationRevision,
+    'enhanced', 'enhanced:v1'), 'unavailable')
+  const snapshot = f.s.snapshot()
+  assert.equal(snapshot.frames[0].asset.assetRequestId, before.asset.assetRequestId)
+  assert.equal(snapshot.frames[0].asset.phase, 'displayed')
+  assert.equal(snapshot.variantPreparationFailures.length, 1)
+  assert.equal(snapshot.variantPreparationFailures[0].sourceIndex, 0)
+  f.s.move('next'); await tick()
+  assert.equal(f.s.snapshot().variantPreparationFailures.length, 0)
+  f.s.close()
+})
+
 test('navigation, background and close fence late host processing before its recipe loads', async () => {
   for (const action of ['next', 'background', 'close']) {
     const f = await fixture(); let resolve, cancellation, loads = 0
