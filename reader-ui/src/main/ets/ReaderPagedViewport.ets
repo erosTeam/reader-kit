@@ -6,6 +6,7 @@ import { ReaderAssetNoticePanel } from './ReaderAssetNoticePanel'
 import { ReaderTapSequence } from './ReaderTapSequence'
 import { ReaderEntryRect, ReaderEntryTarget, ReaderEntryTransition } from './ReaderEntryTransition'
 import { FrameCallback } from '@kit.ArkUI'
+import { image } from '@kit.ImageKit'
 import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { normalizedReaderPageGap } from './ReaderPageGap'
@@ -102,6 +103,8 @@ export struct ReaderPagedViewport {
   @Event onInputLockChange: (locked: boolean) => void = () => {}
   @Event onZoomedChange: (zoomed: boolean) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
+  @Event onVisualClaim: (slotId: number, requestId: number, visualRevision: number,
+    width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetry: (slotId: number, requestId: number) => void = () => {}
@@ -420,7 +423,8 @@ export struct ReaderPagedViewport {
             frameWidth: this.equalSlots() ? this.equalSlotWidth() : 0,
             frameHeight: this.equalSlots() ? this.viewportHeight : this.frameHeight(),
             active: this.selected && this.active && !this.zoomAnimating && this.zoomState.scale === 1,
-            onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
+            onPresented: this.onPresented, onVisualClaim: this.onVisualClaim,
+            onVisible: this.onVisible, onFailed: this.onFailed,
             onInvalidDecodedMetrics: (slotId: number, requestId: number, assetRequestId: number): void => {
               if (this.selected && this.active && this.entryTransition !== null) {
                 ReaderEntryGeometryGate.invalidDecoded(this.entryTransition, this.snapshot, slotId, requestId, assetRequestId)
@@ -497,7 +501,13 @@ struct ReaderPagedCell {
   @Require @Param active: boolean
   @Local private retainedFrameValue: ReaderPagedFrame | null = null
   private lastRetainedProjectionDiagnostic: string = ''
+  private lastCompositionDiagnostic: string = ''
+  private scheduledVisualClaim: string = ''
+  private claimWidth: number = 0
+  private claimHeight: number = 0
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
+  @Event onVisualClaim: (slotId: number, requestId: number, visualRevision: number,
+    width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onInvalidDecodedMetrics: (slotId: number, requestId: number, assetRequestId: number) => void = () => {}
@@ -558,10 +568,97 @@ struct ReaderPagedCell {
       `spinner=${spinner}`)
   }
 
+  /** Debug-only composition probe. It observes pixels, not a display present fence. */
+  private probeComposition(stage: string, requestId: number, oldRequestId: number): void {
+    if (!this.retainedProjectionDiagnostic || requestId <= 0 ||
+      this.frame().asset.assetRequestId !== requestId) return
+    const key = `${stage}:${this.snapshot.selectionId}:${this.slotId}:${requestId}`
+    if (key === this.lastCompositionDiagnostic) return
+    this.lastCompositionDiagnostic = key
+    const frame = this.frame()
+    const prefix = `rkit-entry-content-${this.entryTransition?.entryId ?? 0}-${this.slotId}-`
+    const ids: string[] = [
+      `rkit-part-${frame.part.sourceIndex}-${frame.part.fragment}`,
+      `${prefix}${oldRequestId}`,
+      `${prefix}${requestId}`,
+    ]
+    const captures: Array<image.PixelMap | null> = []
+    const uiContext = this.getUIContext()
+    // Capture all sites synchronously at this checkpoint; async pixel reads may finish later.
+    ids.forEach((id: string): void => {
+      try {
+        captures.push(uiContext.getComponentSnapshot().getSync(id, {
+          scale: 0.1, waitUntilRenderFinished: true,
+        }))
+      } catch (_error) {
+        captures.push(null)
+      }
+    })
+    const capturedAt = Date.now()
+    const selectionId = this.snapshot.selectionId
+    const navigationRevision = this.snapshot.navigationRevision
+    const phase = frame.asset.phase
+    const retained = this.retainedFrameValue !== null
+    void this.hashComposition(captures).then((hashes: string[]): void => {
+      console.info('[ReaderPagedCell] composition_probe ' +
+        `stage=${stage} captured_at=${capturedAt} selection=${selectionId} ` +
+        `navigation=${navigationRevision} source=${frame.part.sourceIndex} ` +
+        `fragment=${frame.part.fragment} slot=${this.slotId} old_request=${oldRequestId} ` +
+        `candidate_request=${requestId} phase=${phase} ` +
+        `retained=${retained} cell=${hashes[0]} old=${hashes[1]} candidate=${hashes[2]}`)
+    })
+  }
+
+  private async hashComposition(captures: Array<image.PixelMap | null>): Promise<string[]> {
+    const hashes: string[] = []
+    for (const pixels of captures) {
+      if (pixels === null) { hashes.push('unavailable'); continue }
+      try {
+        const info = pixels.getImageInfoSync()
+        const buffer = new ArrayBuffer(pixels.getPixelBytesNumber())
+        await pixels.readPixelsToBuffer(buffer)
+        let hash = 2166136261
+        for (const value of new Uint8Array(buffer)) hash = Math.imul(hash ^ value, 16777619) >>> 0
+        hashes.push(`${info.size.width}x${info.size.height}:${hash.toString(16)}`)
+      } catch (_error) {
+        hashes.push('read-failed')
+      } finally {
+        await pixels.release()
+      }
+    }
+    return hashes
+  }
+
   aboutToAppear(): void { this.syncRetainedFrame() }
 
   @Monitor('snapshot')
-  onSnapshotChanged(): void { this.syncRetainedFrame() }
+  onSnapshotChanged(): void {
+    const oldRequest = this.retainedFrameValue?.asset.assetRequestId ?? 0
+    this.syncRetainedFrame()
+    const frame = this.frame()
+    if (oldRequest > 0 && frame.asset.phase === 'claiming' && this.active &&
+      this.retainedFrameValue !== null) {
+      const requestId = frame.asset.assetRequestId
+      const revision = frame.asset.visualRevision
+      const key = `${this.snapshot.selectionId}:${this.snapshot.navigationRevision}:${this.slotId}:${requestId}:${revision}`
+      if (key !== this.scheduledVisualClaim) {
+        this.scheduledVisualClaim = key
+        this.probeComposition('claim_state_committed', requestId, oldRequest)
+        this.getUIContext().postFrameCallback(new ReaderEntryAfterLayout((): void => {
+          const current = this.frame()
+          if (!this.active || current.asset.phase !== 'claiming' ||
+            current.asset.assetRequestId !== requestId || current.asset.visualRevision !== revision ||
+            this.retainedFrameValue?.asset.assetRequestId !== oldRequest) return
+          this.probeComposition('post_claim_idle', requestId, oldRequest)
+          this.onVisualClaim(this.slotId, requestId, revision, this.claimWidth, this.claimHeight)
+          this.onVisible(this.snapshot.selectionId, this.slotId, requestId, this.renderedFragment)
+        }))
+      }
+    }
+    if (oldRequest > 0 && frame.asset.phase === 'displayed') {
+      this.probeComposition('claim_completed', frame.asset.assetRequestId, oldRequest)
+    }
+  }
 
   private retainedFrame(): ReaderPagedFrame {
     return this.retainedFrameValue ??
@@ -605,7 +702,8 @@ struct ReaderPagedCell {
 
   build() {
     Stack() {
-      if (this.frame().asset.phase === 'suppressed' && this.frame().asset.notice !== null) {
+      if (this.frame().asset.phase === 'suppressed' && this.frame().asset.notice !== null &&
+        this.retainedFrameValue === null) {
         ReaderAssetNoticePanel({
           notice: this.frame().asset.notice as ReaderAssetNotice,
           page: this.frame().part.sourceIndex + 1,
@@ -620,7 +718,8 @@ struct ReaderPagedCell {
           retryEnabled: this.active,
           onRetry: (): void => { this.onRetry(this.slotId, this.frame().asset.requestId) },
         })
-      } else if (this.frame().asset.uri.length > 0 || this.entryContentReady()) {
+      } else if (this.frame().asset.uri.length > 0 || this.entryContentReady() ||
+        this.retainedFrameValue !== null) {
         // This first call site exists from initial decode onward. During an exact
         // replacement it keeps the same presented URI/id/native node in front;
         // the conditional second site below alone owns the new request.
@@ -654,7 +753,7 @@ struct ReaderPagedCell {
           .width(this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy))
           .height(this.imageHeight())
           .zIndex(this.retainedFrameValue !== null && this.frame().asset.phase === 'decoding' ? 1 : 0)
-        if (this.retainedFrameValue !== null) {
+        if (this.retainedFrameValue !== null && this.frame().asset.phase !== 'suppressed') {
           ReaderPagedImage({
             imageInterpolation: this.imageInterpolation,
             frame: this.frame(), selectionId: this.snapshot.selectionId,
@@ -669,11 +768,36 @@ struct ReaderPagedCell {
             renderedFragment: this.renderedFragment,
             rotateClockwise: this.rotateClockwise(),
             active: this.active && this.snapshot.phase === 'ready',
-            onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
+            compositionDiagnostic: this.retainedProjectionDiagnostic,
+            onCompositionDiagnostic: (stage: string, requestId: number): void => {
+              this.probeComposition(stage, requestId, this.retainedFrameValue?.asset.assetRequestId ?? 0)
+            },
+            onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number): void => {
+              if (success) { this.claimWidth = width; this.claimHeight = height }
+              this.onPresented(slotId, requestId, success, width, height)
+            },
+            onVisible: this.onVisible, onFailed: this.onFailed,
             onInvalidDecodedMetrics: this.onInvalidDecodedMetrics,
           }).width(this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy))
             .height(this.imageHeight())
-            .zIndex(this.frame().asset.phase === 'displayed' ? 1 : 0)
+            .zIndex(this.frame().asset.phase === 'claiming' || this.frame().asset.phase === 'displayed' ? 1 : 0)
+        }
+        if (this.frame().asset.phase === 'displayed' && this.frame().asset.failure !== null) {
+          Button($r('app.string.rkit_retry'))
+            .type(ButtonType.Capsule).width(120).height(40)
+            .position({ x: Math.max(0, (this.cellWidth() - 120) / 2), y: Math.max(0, this.frameHeight - 60) })
+            .zIndex(2).id(`rkit-retry-page-${this.frame().part.sourceIndex + 1}`)
+            .enabled(this.active)
+            .onClick((): void => { this.onRetry(this.slotId, this.frame().asset.requestId) })
+        }
+        if (this.frame().asset.phase === 'suppressed' && this.frame().asset.notice !== null) {
+          ReaderAssetNoticePanel({
+            notice: this.frame().asset.notice as ReaderAssetNotice,
+            page: this.frame().part.sourceIndex + 1,
+            compact: this.snapshot.frames.length > 1,
+            actionBusy: this.noticeActionBusy,
+            onAction: (): void => { void this.resolveNoticeAction() },
+          })
         }
       }
       if ((this.frame().asset.phase === 'idle' || this.frame().asset.phase === 'asset' || this.frame().asset.phase === 'decoding') &&
@@ -699,6 +823,7 @@ export struct ReaderPagedImage {
   @Require @Param active: boolean
   @Param rotateClockwise: boolean = false
   @Param thumbnailCover: boolean = false
+  @Param compositionDiagnostic: boolean = false
   @Param topologyRevision: number = 0
   @Param navigationRevision: number = 0
   @Param entryTransition: ReaderEntryTransition | null = null
@@ -707,6 +832,7 @@ export struct ReaderPagedImage {
   @Param entryLayoutWidth: number = 0
   @Param entryLayoutHeight: number = 0
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
+  @Event onCompositionDiagnostic: (stage: string, requestId: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onInvalidDecodedMetrics: (slotId: number, requestId: number, assetRequestId: number) => void = () => {}
@@ -925,6 +1051,7 @@ export struct ReaderPagedImage {
     this.reportInvalidDecodedMetrics()
     this.publishEntryTarget()
     const requestId: number = this.assetRequestId
+    if (this.compositionDiagnostic) this.onCompositionDiagnostic('on_complete', requestId)
     if (this.scheduledPresentationRequestId === requestId) return
     this.scheduledPresentationRequestId = requestId
     // onComplete means decoded, not that pixels reached a composed frame. Keep
@@ -933,6 +1060,7 @@ export struct ReaderPagedImage {
     this.getUIContext().postFrameCallback(new ReaderEntryAfterLayout((): void => {
       if (!this.entryMounted || !this.decoded || this.assetRequestId !== requestId ||
         this.frame.asset.assetRequestId !== requestId) return
+      if (this.compositionDiagnostic) this.onCompositionDiagnostic('pre_claim_idle', requestId)
       this.onPresented(this.slotId, requestId, true, width, height)
       this.reportVisible()
     }))

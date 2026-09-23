@@ -115,16 +115,15 @@ test('spread menu copies policy without changing direction, axis, grouping optio
   v.snapshot.policy.layout = 'continuous'; chrome.toggleSpreadLayout(); assert.equal(calls.length, 2)
 })
 
-test('same-page replacement keeps stable slot identity and promotes only a composed candidate', () => {
-  assert.match(src, /\(frame: ReaderPagedFrame\): string => readerElementKey\(`\$\{frame\.slotId\}:\$\{frame\.part\.fragment\}`\)/)
+test('same-page replacement keeps a separate old site until the candidate claim is observed', () => {
   assert.match(src, /@Local private retainedFrameValue: ReaderPagedFrame \| null = null/)
-  assert.match(src, /private presentedFrame\(\): ReaderPagedFrame \{[\s\S]*this\.retainedFrameValue \?\? this\.frame\(\)/)
-  assert.match(src, /frame: this\.presentedFrame\(\)[\s\S]*?active: this\.retainedFrameValue === null[\s\S]*?\.zIndex\(this\.retainedFrameValue !== null && this\.frame\(\)\.asset\.phase === 'decoding' \? 1 : 0\)/)
-  assert.match(src, /if \(this\.retainedFrameValue !== null\) \{[\s\S]*?frame: this\.frame\(\)[\s\S]*?onPresented: this\.onPresented[\s\S]*?\.zIndex\(this\.frame\(\)\.asset\.phase === 'displayed' \? 1 : 0\)/)
-  assert.match(src, /postFrameCallback\(new ReaderEntryAfterLayout[\s\S]*?this\.onPresented\(this\.slotId, requestId, true, width, height\)/)
+  assert.match(src, /frame: this\.presentedFrame\(\)[\s\S]*?active: this\.retainedFrameValue === null/)
+  assert.match(src, /if \(this\.retainedFrameValue !== null && this\.frame\(\)\.asset\.phase !== 'suppressed'\)/)
+  assert.match(src, /phase === 'claiming' \|\| this\.frame\(\)\.asset\.phase === 'displayed' \? 1 : 0/)
+  assert.match(src, /current\.asset\.visualRevision !== revision[\s\S]*?this\.onVisualClaim\(this\.slotId, requestId, revision/)
 })
 
-test('same-uri replacement still owns a separate candidate image site', () => {
+test('same-uri replacement still owns a distinct candidate image site', () => {
   assert.match(src, /if \(retainedUri\.length === 0 \|\| retainedRequest <= 0\)/)
   assert.doesNotMatch(src, /retainedUri === frame\.asset\.uri/)
 })

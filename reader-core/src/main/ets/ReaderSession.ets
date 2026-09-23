@@ -19,7 +19,7 @@ export class ReaderVariantPreference {
     this.identity = variant === 'default' ? '' : identity
   }
 }
-export type ReaderPhase = 'idle' | 'catalog' | 'asset' | 'decoding' | 'displayed' | 'suppressed' | 'failed' | 'closed'
+export type ReaderPhase = 'idle' | 'catalog' | 'asset' | 'decoding' | 'claiming' | 'displayed' | 'suppressed' | 'failed' | 'closed'
 
 /** Host-classified acquisition failure. Core retains the code; UI may present the optional host text. */
 export class ReaderAssetFailure {
@@ -228,6 +228,8 @@ export class ReaderSnapshot {
   /** Previous displayed pixels kept below an exact in-place replacement. */
   retainedUri: string = ''
   retainedAssetRequestId: number = 0
+  /** Increments only when a retained candidate is promoted to the foreground claim. */
+  visualRevision: number = 0
   requestId: number = 0
   /** Identity of uri/page, retained while a different unit is only being prepared. */
   assetRequestId: number = 0
@@ -255,6 +257,7 @@ export class ReaderSnapshot {
     value.saveUri = this.saveUri
     value.retainedUri = this.retainedUri
     value.retainedAssetRequestId = this.retainedAssetRequestId
+    value.visualRevision = this.visualRevision
     value.requestId = this.requestId
     value.assetRequestId = this.assetRequestId
     value.informationAvailable = this.informationAvailable
@@ -282,6 +285,10 @@ export class ReaderSession {
   private cancellation: ReaderCancellation = new ReaderCancellation()
   private asset: ReaderAsset | null = null
   private retiredAsset: ReaderAsset | null = null
+  private retainedState: ReaderSnapshot | null = null
+  private retainedOriginalPlan: ReaderResolvedAssetPlan | null = null
+  private retryReplacementPlan: ReaderResolvedAssetPlan | null = null
+  private retryReplacementPending: boolean = false
   private originalPlan: ReaderResolvedAssetPlan | null = null
   private epoch: number = 0
   private disposed: boolean = false
@@ -326,9 +333,9 @@ export class ReaderSession {
 
   async imageCrop(requestId: number): Promise<ReaderImageCropBounds | null> {
     const asset = this.asset
-    const eligible = (): boolean => this.current(requestId) && this.state.assetRequestId === requestId &&
+    const eligible = (): boolean => !this.disposed && this.state.assetRequestId === requestId &&
       this.asset === asset && this.state.kind === 'original' &&
-      (this.state.phase === 'decoding' || this.state.phase === 'displayed')
+      ((this.state.phase === 'decoding' && this.current(requestId)) || this.state.phase === 'displayed')
     if (asset === null || asset.crop === null || !eligible()) return null
     try {
       const bounds = await asset.crop.read()
@@ -339,11 +346,12 @@ export class ReaderSession {
   }
   async imageInformation(requestId: number): Promise<ReaderImageInformation | null> {
     const asset = this.asset
-    if (!this.current(requestId) || this.state.phase !== 'displayed' || this.state.kind !== 'original' ||
+    if (this.disposed || this.state.phase !== 'displayed' || this.state.kind !== 'original' ||
       this.state.assetRequestId !== requestId || asset?.information === null || asset === null) return null
     try {
       const information = await asset.information.read()
-      return this.current(requestId) && this.asset === asset && this.state.phase === 'displayed'
+      return !this.disposed && this.state.assetRequestId === requestId &&
+        this.asset === asset && this.state.phase === 'displayed'
         ? information.copy() : null
     } catch (_error) {
       // Metadata failure is not an image load failure.
@@ -380,6 +388,8 @@ export class ReaderSession {
     this.cancellation.cancel()
     this.cancellation = new ReaderCancellation()
     this.epoch += 1
+    this.retryReplacementPending = false
+    this.retryReplacementPlan = null
     this.state.requestId = this.epoch
     this.state.error = ''
     this.state.failure = null
@@ -418,6 +428,8 @@ export class ReaderSession {
   async show(index: number, kind: ReaderAssetKind = 'original', forceReload: boolean = false,
     assetPlan: ReaderResolvedAssetPlan | null = null): Promise<void> {
     if (this.disposed || this.state.unit === null) return
+    // A superseding replacement starts from the resource still visible on screen.
+    if (this.retainedState !== null) this.rollbackRetainedCandidate()
     const unit = this.state.unit
     this.pendingUnit = null
     const epoch = this.begin()
@@ -445,7 +457,8 @@ export class ReaderSession {
     if (this.pendingUnit !== null) {
       await this.open(this.pendingUnit, this.pendingIndex)
     } else {
-      await this.show(this.state.sourceIndex, this.state.kind, true, this.originalPlan)
+      await this.show(this.state.sourceIndex, this.state.kind, true,
+        this.retryReplacementPending ? this.retryReplacementPlan : this.originalPlan)
     }
   }
 
@@ -473,6 +486,13 @@ export class ReaderSession {
         `force_reload=${forceReload} replacing_variant=${isReplacingVariant} ` +
         `same_unit=${this.state.unit?.key.equals(unit.key) === true} same_source=${this.state.sourceIndex === index} ` +
         `same_kind=${this.state.kind === kind} asset_present=${this.asset !== null} retain_displayed=${retainDisplayed}`)
+    }
+    if (retainDisplayed) {
+      this.retainedState = this.state.copy()
+      this.retainedOriginalPlan = this.originalPlan
+    } else {
+      this.retainedState = null
+      this.retainedOriginalPlan = null
     }
     this.originalPlan = kind === 'original' ? assetPlan : null
     const variant: ReaderAssetVariant = this.originalPlan?.variant ?? (this.originalPlan === null ? 'default' : 'original')
@@ -543,11 +563,6 @@ export class ReaderSession {
       this.state.originalAvailable = this.state.variant === 'original' || asset.originalAvailable
       this.state.assetRequestId = epoch
       this.state.phase = asset.notice === null ? 'decoding' : 'suppressed'
-      if (asset.notice !== null) {
-        this.releaseRetiredAsset()
-        this.state.retainedUri = ''
-        this.state.retainedAssetRequestId = 0
-      }
       this.emit()
     } catch (error) {
       const failure = this.classifyFailure('reader_asset_failed', error as Error)
@@ -565,17 +580,31 @@ export class ReaderSession {
       new ReaderAssetFailure(fallbackCode)
   }
 
-  reportPresentation(requestId: number, success: boolean): void {
+  reportPresentation(requestId: number, success: boolean, requireVisualClaim: boolean = false): void {
     if (!this.current(requestId) || requestId !== this.state.assetRequestId || this.state.phase !== 'decoding') return
     if (success) {
+      if (requireVisualClaim && this.retiredAsset !== null && this.retainedState !== null) {
+        this.state.phase = 'claiming'
+        this.state.visualRevision += 1
+        this.emit()
+        return
+      }
       this.asset?.present()
-      // The candidate has survived one composed frame. Retire the fallback now
-      // so the cell returns to its single stable Image site before another
-      // exact reload; otherwise the conditional candidate site is reused and
-      // ArkUI can compose an empty second replacement for the same page.
+      // Direct-presentation consumers retain their existing one-stage behavior.
+      // Paged replacements request a separate visual claim above before the
+      // fallback may retire; continuous mode still needs that migration.
       this.releaseRetiredAsset()
       this.state.retainedUri = ''
       this.state.retainedAssetRequestId = 0
+      this.retainedState = null
+      this.retainedOriginalPlan = null
+    }
+    if (!success && this.retainedState !== null) this.rememberReplacementRetry()
+    if (!success && this.rollbackRetainedCandidate()) {
+      this.state.error = 'reader_decode_failed'
+      this.state.failure = this.classifyFailure('reader_decode_failed')
+      this.emit()
+      return
     }
     this.state.phase = success ? 'displayed' : 'failed'
     this.state.error = success ? '' : 'reader_decode_failed'
@@ -590,10 +619,32 @@ export class ReaderSession {
     this.emit()
   }
 
+  /** Commits only the foreground claim that the current viewport observed after promotion. */
+  reportVisualClaim(requestId: number, visualRevision: number): void {
+    if (!this.current(requestId) || this.state.phase !== 'claiming' ||
+      this.state.assetRequestId !== requestId || this.state.visualRevision !== visualRevision ||
+      this.retiredAsset === null || this.retainedState === null) return
+    this.asset?.present()
+    this.releaseRetiredAsset()
+    this.retainedState = null
+    this.retainedOriginalPlan = null
+    this.state.retainedUri = ''
+    this.state.retainedAssetRequestId = 0
+    this.state.phase = 'displayed'
+    this.emit()
+  }
+
   /** A current viewport node can fail while reusing an already decoded asset. */
   reportRenderFailure(requestId: number): void {
-    if (!this.current(requestId) || requestId !== this.state.assetRequestId ||
-      (this.state.phase !== 'displayed' && this.state.phase !== 'decoding')) return
+    if (this.disposed || requestId !== this.state.assetRequestId ||
+      (this.state.phase !== 'displayed' && this.state.phase !== 'decoding' && this.state.phase !== 'claiming')) return
+    if (this.retainedState !== null) this.rememberReplacementRetry()
+    if (this.rollbackRetainedCandidate()) {
+      this.state.error = 'reader_decode_failed'
+      this.state.failure = this.classifyFailure('reader_decode_failed')
+      this.emit()
+      return
+    }
     this.state.phase = 'failed'
     this.state.error = 'reader_decode_failed'
     this.state.failure = this.classifyFailure('reader_decode_failed')
@@ -610,7 +661,7 @@ export class ReaderSession {
    */
   reportVisiblePosition(requestId: number, pageKey: string, x: number, y: number): void {
     const page = this.state.page
-    if (!this.viewportActive || !this.current(requestId) || requestId !== this.state.assetRequestId ||
+    if (!this.viewportActive || this.disposed || requestId !== this.state.assetRequestId ||
       this.state.phase !== 'displayed' || this.state.kind !== 'original' ||
       page === null || page.key !== pageKey || !Number.isFinite(x) || !Number.isFinite(y) ||
       x < 0 || x > 1 || y < 0 || y > 1) return
@@ -623,6 +674,13 @@ export class ReaderSession {
 
   private fail(epoch: number, code: string, failure: ReaderAssetFailure | null = null): void {
     if (!this.current(epoch)) return
+    if (this.retainedState !== null) this.rememberReplacementRetry()
+    if (this.rollbackRetainedCandidate()) {
+      this.state.error = code
+      this.state.failure = failure === null ? null : failure.copy()
+      this.emit()
+      return
+    }
     this.state.phase = 'failed'
     this.state.error = code
     this.state.failure = failure === null ? null : failure.copy()
@@ -636,6 +694,28 @@ export class ReaderSession {
     this.state.retainedUri = ''
     this.state.retainedAssetRequestId = 0
     this.emit()
+  }
+
+  private rememberReplacementRetry(): void {
+    this.retryReplacementPlan = this.originalPlan
+    this.retryReplacementPending = true
+  }
+
+  private rollbackRetainedCandidate(): boolean {
+    const retained = this.retainedState
+    if (retained === null) return false
+    const candidate = this.asset
+    if (this.retiredAsset !== null) this.asset = this.retiredAsset
+    this.retiredAsset = null
+    if (candidate !== this.asset) candidate?.release()
+    this.originalPlan = this.retainedOriginalPlan
+    this.retainedOriginalPlan = null
+    this.retainedState = null
+    const revision = this.state.visualRevision
+    this.state = retained.copy()
+    if (revision > this.state.visualRevision) this.state.visualRevision = revision + 1
+    this.state.requestId = this.epoch
+    return true
   }
 
   private releaseAsset(): void {
@@ -656,6 +736,10 @@ export class ReaderSession {
     this.epoch += 1
     this.releaseRetiredAsset()
     this.releaseAsset()
+    this.retainedState = null
+    this.retainedOriginalPlan = null
+    this.retryReplacementPending = false
+    this.retryReplacementPlan = null
     this.originalPlan = null
     this.state.phase = 'closed'
     this.state.informationAvailable = false

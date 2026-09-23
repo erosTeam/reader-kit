@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict')
 const test = require('node:test')
-const { ReaderSession, ReaderUnitKey, ReaderUnit, ReaderPage, ReaderAsset, ReaderAssetFailure, ReaderCancellation } = require('./load-core.cjs')('ReaderSession')
+const { ReaderSession, ReaderUnitKey, ReaderUnit, ReaderPage, ReaderAsset, ReaderAssetNotice,
+  ReaderAssetFailure, ReaderCancellation } = require('./load-core.cjs')('ReaderSession')
 
 const key = (unit = 'A') => new ReaderUnitKey('test', 'work', unit)
 const deferred = () => {
@@ -173,6 +174,112 @@ test('file ready is not displayed; only current decode callback can confirm it',
   session.reportPresentation(first.requestId, false)
   assert.equal(session.snapshot().phase, 'decoding')
   session.close()
+})
+
+test('retained candidate needs its own foreground claim before old lease retires', async () => {
+  const releases = [], presentations = []
+  let n = 0
+  const assets = new Assets()
+  assets.load = async () => {
+    n++
+    const name = n === 1 ? 'old' : 'new'
+    return new ReaderAsset(name, () => releases.push(name), null, () => presentations.push(name))
+  }
+  const session = new ReaderSession(new Catalog(), assets)
+  await session.open(key())
+  session.reportPresentation(session.snapshot().assetRequestId, true)
+  await session.show(0, 'original', true)
+  const pending = session.snapshot()
+  session.reportPresentation(pending.assetRequestId, true, true)
+  const claiming = session.snapshot()
+  assert.equal(claiming.phase, 'claiming')
+  assert.equal(claiming.retainedUri, 'old')
+  assert.deepEqual(releases, [])
+  assert.deepEqual(presentations, ['old'])
+  session.reportVisualClaim(pending.assetRequestId, claiming.visualRevision - 1)
+  session.reportVisualClaim(pending.assetRequestId - 1, claiming.visualRevision)
+  assert.equal(session.snapshot().phase, 'claiming')
+  session.reportVisualClaim(pending.assetRequestId, claiming.visualRevision)
+  assert.equal(session.snapshot().phase, 'displayed')
+  assert.equal(session.snapshot().retainedUri, '')
+  assert.deepEqual(releases, ['old'])
+  assert.deepEqual(presentations, ['old', 'new'])
+  session.close()
+  assert.deepEqual(releases, ['old', 'new'])
+})
+
+test('failed and superseded visual claims roll back to the displayed lease', async () => {
+  const releases = []
+  let n = 0
+  const assets = new Assets()
+  assets.load = async () => {
+    n++
+    const name = `asset-${n}`
+    return new ReaderAsset(name, () => releases.push(name))
+  }
+  const session = new ReaderSession(new Catalog(), assets)
+  session.setViewportActive(true)
+  await session.open(key())
+  session.reportPresentation(session.snapshot().assetRequestId, true)
+  await session.show(0, 'original', true)
+  let candidate = session.snapshot()
+  session.reportPresentation(candidate.assetRequestId, true, true)
+  const failedClaim = session.snapshot()
+  session.reportRenderFailure(candidate.assetRequestId)
+  assert.equal(session.snapshot().phase, 'displayed')
+  assert.equal(session.snapshot().uri, 'asset-1')
+  assert.deepEqual(releases, ['asset-2'])
+  session.reportVisiblePosition(failedClaim.retainedAssetRequestId, 'A:0', 0.5, 0.4)
+  assert.equal(session.snapshot().presentedAnchor.y, 0.4)
+  session.reportVisualClaim(candidate.assetRequestId, failedClaim.visualRevision)
+  assert.equal(session.snapshot().uri, 'asset-1')
+  await session.show(0, 'original', true)
+  candidate = session.snapshot()
+  session.reportPresentation(candidate.assetRequestId, true, true)
+  const superseded = session.snapshot()
+  await session.show(0, 'original', true)
+  assert.equal(session.snapshot().uri, 'asset-4')
+  assert.equal(session.snapshot().retainedUri, 'asset-1')
+  session.reportVisualClaim(candidate.assetRequestId, superseded.visualRevision)
+  assert.equal(session.snapshot().uri, 'asset-4')
+  assert.deepEqual(releases, ['asset-2', 'asset-3'])
+  session.close()
+  assert.deepEqual(releases, ['asset-2', 'asset-3', 'asset-1', 'asset-4'])
+})
+
+test('suppressed replacement retains old lease and its provider action can reload', async () => {
+  const released = []
+  let n = 0
+  const assets = new Assets()
+  assets.load = async () => {
+    n++
+    if (n === 2) {
+      const notice = new ReaderAsset('', () => released.push('notice'))
+      notice.setNotice(new ReaderAssetNotice('blocked', 'Blocked', 'Resolve first', 'Resolve'), async () => true)
+      return notice
+    }
+    const name = n === 1 ? 'old' : 'recovered'
+    return new ReaderAsset(name, () => released.push(name))
+  }
+  const session = new ReaderSession(new Catalog(), assets)
+  await session.open(key())
+  session.reportPresentation(session.snapshot().assetRequestId, true)
+  await session.show(0, 'original', true)
+  const suppressed = session.snapshot()
+  assert.equal(suppressed.phase, 'suppressed')
+  assert.equal(suppressed.retainedUri, 'old')
+  assert.equal(suppressed.notice.id, 'blocked')
+  assert.deepEqual(released, [])
+  assert.equal(await session.resolveNotice(suppressed.assetRequestId, 'blocked'), true)
+  const pending = session.snapshot()
+  assert.equal(pending.phase, 'decoding')
+  assert.equal(pending.retainedUri, 'old')
+  assert.deepEqual(released, ['notice'])
+  session.reportPresentation(pending.assetRequestId, true, true)
+  session.reportVisualClaim(pending.assetRequestId, session.snapshot().visualRevision)
+  assert.deepEqual(released, ['notice', 'old'])
+  session.close()
+  assert.deepEqual(released, ['notice', 'old', 'recovered'])
 })
 
 test('late asset after navigation is released and cannot replace the new page', async () => {

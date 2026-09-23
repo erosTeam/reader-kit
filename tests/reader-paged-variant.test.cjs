@@ -70,6 +70,26 @@ test('resolved host variant preserves page identity and changes only after prepa
   f.s.close()
 })
 
+test('paged slot publishes replacement only after its matching visual revision', async () => {
+  const f = await fixture()
+  assert.equal(await f.choose('enhanced'), 'changed'); await tick()
+  const pending = f.frame()
+  assert.equal(pending.asset.phase, 'decoding')
+  assert.equal(pending.asset.retainedUri, 'default-0')
+  f.s.reportPresentation(pending.slotId, pending.asset.assetRequestId, true, 800, 1200, true)
+  const claiming = f.frame()
+  assert.equal(claiming.asset.phase, 'claiming')
+  assert.equal(claiming.asset.retainedUri, 'default-0')
+  assert.deepEqual(f.releases, [])
+  f.s.reportVisualClaim(claiming.slotId, claiming.asset.assetRequestId, claiming.asset.visualRevision - 1, 800, 1200)
+  assert.equal(f.frame().asset.phase, 'claiming')
+  f.s.reportVisualClaim(claiming.slotId, claiming.asset.assetRequestId, claiming.asset.visualRevision, 800, 1200)
+  assert.equal(f.frame().asset.phase, 'displayed')
+  assert.equal(f.frame().asset.retainedUri, '')
+  assert.deepEqual(f.releases, [0])
+  f.s.close()
+})
+
 test('host can warm a loaded neighbor variant without moving or replacing the current source', async () => {
   const f = await fixture()
   f.s.setNeighborPreload(true); await tick()
@@ -221,7 +241,7 @@ test('one source can replace enhanced with translated then reveal its default ag
   f.s.close()
 })
 
-test('processed load failure stays explicit, retries the same recipe, and may return to default', async () => {
+test('processed load failure keeps the old body readable and retries the failed recipe', async () => {
   const f = await fixture(), forces = []
   f.provider.prepareVariant = async (page, variant, identity) => ({ page, variant, identity, async load(_c, force) {
     forces.push(force)
@@ -229,7 +249,9 @@ test('processed load failure stays explicit, retries the same recipe, and may re
     return new ReaderAsset('translated-recovered')
   } })
   assert.equal(await f.choose('translated'), 'changed'); await tick()
-  assert.equal(f.frame().asset.phase, 'failed'); assert.equal(f.frame().asset.variant, 'translated')
+  assert.equal(f.frame().asset.phase, 'displayed'); assert.equal(f.frame().asset.variant, 'default')
+  assert.equal(f.frame().asset.uri, 'default-0')
+  assert.equal(f.frame().asset.error, 'reader_asset_failed')
   await f.s.retry(); f.decode()
   assert.deepEqual(forces, [false, true])
   assert.equal(f.frame().asset.uri, 'translated-recovered')

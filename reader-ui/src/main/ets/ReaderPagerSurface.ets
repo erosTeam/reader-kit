@@ -52,6 +52,8 @@ export struct ReaderPagerSurface {
     navigationRevision: number) => void = () => {}
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
+  @Event onVisualClaim: (slotId: number, requestId: number, visualRevision: number,
+    width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetry: (topologyRevision: number, itemKey: string, slotId: number, requestId: number) => void = () => {}
@@ -75,7 +77,8 @@ export struct ReaderPagerSurface {
             onInputLockChange: this.onInputLockChange,
             onZoomedChange: this.onZoomedChange,
             onBoundary: this.onBoundary,
-            onSelect: this.onSelect, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
+            onSelect: this.onSelect, onPresented: this.onPresented, onVisualClaim: this.onVisualClaim,
+            onVisible: this.onVisible, onFailed: this.onFailed,
             onRetry: this.onRetry, onNoticeAction: this.onNoticeAction,
             onTap: this.onTap,
           })
@@ -106,6 +109,8 @@ struct ReaderNativePager {
   @Require @Param createdRevision: number
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
+  @Event onVisualClaim: (slotId: number, requestId: number, visualRevision: number,
+    width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetry: (topologyRevision: number, itemKey: string, slotId: number, requestId: number) => void = () => {}
@@ -261,6 +266,7 @@ struct ReaderNativePager {
             }
           },
           onPresented: this.onPresented,
+          onVisualClaim: this.onVisualClaim,
           onTap: this.onTap,
           onVisible: this.onVisible,
           onRetry: (slotId: number, requestId: number): void => {

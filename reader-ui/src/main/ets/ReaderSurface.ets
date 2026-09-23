@@ -930,7 +930,10 @@ export struct ReaderSurface {
               this.session.selectDisplay(index, topology, navigation)
             },
             onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
-              this.session.reportPresentation(slot, request, success, width, height)
+              this.session.reportPresentation(slot, request, success, width, height, true)
+            },
+            onVisualClaim: (slot: number, request: number, revision: number, width: number, height: number): void => {
+              this.session.reportVisualClaim(slot, request, revision, width, height)
             },
             onRetry: (topology: number, key: string, slot: number, request: number): void => {
               this.retry(topology, key, slot, request)

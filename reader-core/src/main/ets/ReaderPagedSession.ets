@@ -443,7 +443,9 @@ export class ReaderPagedSession {
     this.originalPreparations.delete(index)
     this.preparationVariants.delete(index)
     if (previous !== undefined) this.emit()
-    if (frame.asset.variant === variant &&
+    // A failed replacement may leave a requested plan while its fallback is
+    // displayed. Explicitly choosing that fallback must clear the stale plan.
+    if (frame.asset.variant === variant && !(variant === 'default' && this.assetPlans.has(index)) &&
       (variant === 'default' || variant === 'original' || frame.asset.variantIdentity === identity)) return 'unchanged'
     if (variant === 'original' && (frame.asset.phase !== 'displayed' || !frame.asset.originalAvailable ||
       this.assets.prepareOriginal === undefined)) return 'unavailable'
@@ -900,9 +902,12 @@ export class ReaderPagedSession {
     if (this.pendingUnit !== null) await this.open(this.pendingUnit, this.pendingIndex)
     else {
       this.cancelAutoReadSourcePreparations()
-      await Promise.all(this.slots.filter((slot: ReaderPageSlot) => slot.session.snapshot().phase === 'failed' &&
-        this.map?.item(this.state.displayIndex)?.parts.some((part: ReaderDisplayPart) => part.sourceIndex === slot.index))
-        .map((slot: ReaderPageSlot) => slot.session.retry()))
+      await Promise.all(this.slots.filter((slot: ReaderPageSlot) => {
+        const asset = slot.session.snapshot()
+        return (asset.phase === 'failed' || (asset.phase === 'displayed' && asset.failure !== null)) &&
+          (this.map?.item(this.state.displayIndex)?.parts.some((part: ReaderDisplayPart) =>
+            part.sourceIndex === slot.index) ?? false)
+      }).map((slot: ReaderPageSlot) => slot.session.retry()))
     }
   }
 
@@ -915,7 +920,8 @@ export class ReaderPagedSession {
       : index === this.state.displayIndex
     if (!visible) return false
     const frame = this.framesAt(index).find((candidate: ReaderPagedFrame) => candidate.slotId === slotId &&
-      candidate.asset.requestId === requestId && candidate.asset.phase === 'failed')
+      candidate.asset.requestId === requestId && (candidate.asset.phase === 'failed' ||
+      (candidate.asset.phase === 'displayed' && candidate.asset.failure !== null)))
     const slot = frame === undefined ? undefined : this.slots.find((candidate: ReaderPageSlot) => candidate.id === slotId)
     if (slot === undefined) return false
     this.cancelAutoReadSourcePreparations()
@@ -1086,13 +1092,30 @@ export class ReaderPagedSession {
       previous.sourceIndex !== current.sourceIndex || previous.width !== current.width || previous.height !== current.height
   }
 
-  reportPresentation(slotId: number, requestId: number, success: boolean, width: number = 0, height: number = 0): void {
+  reportPresentation(slotId: number, requestId: number, success: boolean, width: number = 0, height: number = 0,
+    requireVisualClaim: boolean = false): void {
     const slot = this.slots.find((candidate: ReaderPageSlot) => candidate.id === slotId)
     if (this.disposed || slot === undefined) return
     const before = slot.session.snapshot()
     if (before.assetRequestId !== requestId || requestId === 0) return
-    slot.session.reportPresentation(requestId, success)
+    slot.session.reportPresentation(requestId, success, requireVisualClaim)
     const rendered = slot.session.snapshot()
+    this.recordPresentedSource(before, rendered, width, height, success)
+  }
+
+  reportVisualClaim(slotId: number, requestId: number, visualRevision: number,
+    width: number = 0, height: number = 0): void {
+    const slot = this.slots.find((candidate: ReaderPageSlot) => candidate.id === slotId)
+    if (this.disposed || slot === undefined) return
+    const before = slot.session.snapshot()
+    if (before.assetRequestId !== requestId || before.phase !== 'claiming' ||
+      before.visualRevision !== visualRevision) return
+    slot.session.reportVisualClaim(requestId, visualRevision)
+    this.recordPresentedSource(before, slot.session.snapshot(), width, height, true)
+  }
+
+  private recordPresentedSource(before: ReaderSnapshot, rendered: ReaderSnapshot,
+    width: number, height: number, success: boolean): void {
     // A successfully presented ORIGINAL proves a current body source. It
     // clears an earlier target-preheat failure and may refine native geometry;
     // thumbnail presentation never changes either source fact.

@@ -99,13 +99,15 @@ test('a newer default choice cancels pending original without releasing the curr
   resolve(); assert.equal(await pending, 'stale'); assert.equal(f.frame(0).slotId, old.slotId)
   assert.equal(f.releases.length, 0); f.s.close()
 })
-test('original load failure remains original, may retry or explicitly return to default', async () => {
+test('original load failure keeps the displayed default, may retry or explicitly return to default', async () => {
   const f = await fixture(), forces = []
   f.provider.prepareOriginal = async p => ({ page: p, async load(c, force) {
     forces.push(force); throw new Error('download failed')
   } })
   assert.equal(await f.choose(f.frame(0)), 'changed'); await tick()
-  assert.equal(f.frame(0).asset.phase, 'failed'); assert.equal(f.frame(0).asset.variant, 'original')
+  assert.equal(f.frame(0).asset.phase, 'displayed'); assert.equal(f.frame(0).asset.variant, 'default')
+  assert.equal(f.frame(0).asset.uri, 'default-0')
+  assert.equal(f.frame(0).asset.failure?.code, 'reader_asset_failed')
   await f.s.retry(); assert.deepEqual(forces, [false, true])
   assert.equal(await f.choose(f.frame(0), false), 'changed'); await tick(); f.decode()
   assert.equal(f.frame(0).asset.variant, 'default'); assert.equal(f.frame(0).asset.uri, 'default-0')

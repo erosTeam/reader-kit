@@ -67,7 +67,7 @@ test('paged rendering swaps fitted geometry, rotates clockwise, resets zoom and 
   assert.match(paged, /private renderWidth\(\): number \{ return this\.rotateClockwise \? this\.viewportHeight : this\.viewportWidth \}/)
   assert.match(paged, /private renderHeight\(\): number \{ return this\.rotateClockwise \? this\.viewportWidth : this\.viewportHeight \}/)
   assert.match(paged, /\.rotate\(\{ angle: this\.rotateClockwise \? 90 : 0 \}\)/)
-  assert.match(paged, /if \(this\.rotateClockwise\) \{ transition\.cancel\(\); return \}/)
+  assert.match(paged, /if \(this\.rotateClockwise\) \{ transition\.cancel\('entry-rotated-leaf'\); return \}/)
 })
 
 test('continuous rotation swaps row ratio, zoom pixels and original-coordinate progress axes', () => {

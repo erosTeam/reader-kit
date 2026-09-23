@@ -59,7 +59,8 @@ export struct ReaderLabSurface {
     return this.state.error
   }
 
-  private presented(slot: number, request: number, success: boolean, width: number, height: number): void {
+  private presented(slot: number, request: number, success: boolean, width: number, height: number,
+    requireVisualClaim: boolean = false): void {
     if (success && !this.metricsReleased && this.delayedMetricsPage >= 0 && width > 0 && height > 0 &&
       this.state.window.some((item) => item.frames.some((frame: ReaderPagedFrame) =>
         frame.slotId === slot && frame.asset.assetRequestId === request && frame.asset.kind === 'original' &&
@@ -69,7 +70,7 @@ export struct ReaderLabSurface {
       width = 0
       height = 0
     }
-    this.session.reportPresentation(slot, request, success, width, height)
+    this.session.reportPresentation(slot, request, success, width, height, requireVisualClaim)
     if (!success || this.failureInjected || this.failurePage < 0 || this.state.policy.layout !== this.failureLayout) return
     const state = this.session.snapshot()
     const item = state.window.find((value) => value.frames.some((frame: ReaderPagedFrame) =>
@@ -190,7 +191,14 @@ export struct ReaderLabSurface {
             console.info(`[ReaderLab] pager_selection index=${index} accepted=${accepted}`)
           },
           onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number): void => {
-            this.presented(slotId, requestId, success, width, height)
+            this.presented(slotId, requestId, success, width, height, true)
+          },
+          onVisualClaim: (slotId: number, requestId: number, revision: number,
+            width: number, height: number): void => {
+            if (this.heldMetrics?.slot === slotId && this.heldMetrics.request === requestId) {
+              width = 0; height = 0
+            }
+            this.session.reportVisualClaim(slotId, requestId, revision, width, height)
           },
           onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment): void => {
             this.session.reportCachedRenderFailure(topologyRevision, itemKey, slotId, requestId, fragment)
