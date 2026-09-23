@@ -13,21 +13,26 @@ export class ReaderLiveSourceEntry {
   private epoch(snapshot: ReaderPagedSnapshot): string {
     return `${snapshot.unit?.key.scope ?? ''}:${snapshot.unit?.key.work ?? ''}:` +
       `${snapshot.unit?.key.unit ?? ''}:${snapshot.topologyRevision}:${snapshot.navigationRevision}:` +
-      `${snapshot.displayIndex}:${snapshot.displayKeys[snapshot.displayIndex] ?? ''}`
+      `${snapshot.selectionId}:${snapshot.displayIndex}:${snapshot.displayKeys[snapshot.displayIndex] ?? ''}`
   }
 
-  private part(slotId: number, requestId: number, sourceIndex: number, fragment: string): string {
-    return `${slotId}:${requestId}:${sourceIndex}:${fragment}`
+  private part(slotId: number, requestId: number, sourceIndex: number,
+    fragment: string, visualRevision: number): string {
+    return `${slotId}:${requestId}:${sourceIndex}:${fragment}:${visualRevision}`
   }
 
   /** A current native Image finished again with the decoded page's real geometry. */
-  recordNativeReady(snapshot: ReaderPagedSnapshot, slotId: number, requestId: number,
-    sourceIndex: number, fragment: string, width: number, height: number): boolean {
-    if (this.phase !== 'holding' || width <= 0 || height <= 0) return false
+  recordNativeReady(snapshot: ReaderPagedSnapshot, topologyRevision: number,
+    navigationRevision: number, selectionId: number, slotId: number, requestId: number,
+    sourceIndex: number, fragment: string, visualRevision: number, width: number, height: number): boolean {
+    if (this.phase !== 'holding' || width <= 0 || height <= 0 ||
+      snapshot.topologyRevision !== topologyRevision || snapshot.navigationRevision !== navigationRevision ||
+      snapshot.selectionId !== selectionId) return false
     const frame = snapshot.frames.find(candidate => candidate.slotId === slotId &&
       candidate.asset.assetRequestId === requestId && candidate.part.sourceIndex === sourceIndex &&
       candidate.part.fragment === fragment && candidate.asset.kind === 'original' &&
-      candidate.asset.phase === 'displayed' && candidate.asset.page?.width === width &&
+      candidate.asset.phase === 'displayed' && candidate.asset.visualRevision === visualRevision &&
+      candidate.asset.page?.width === width &&
       candidate.asset.page?.height === height)
     if (frame === undefined) return false
     const epoch = this.epoch(snapshot)
@@ -35,7 +40,7 @@ export class ReaderLiveSourceEntry {
       this.nativeEpoch = epoch
       this.nativeParts.clear()
     }
-    this.nativeParts.add(this.part(slotId, requestId, sourceIndex, fragment))
+    this.nativeParts.add(this.part(slotId, requestId, sourceIndex, fragment, visualRevision))
     return true
   }
 
@@ -44,7 +49,8 @@ export class ReaderLiveSourceEntry {
     const claim = ReaderSelectedDrawable.from(snapshot)
     if (claim === null || this.nativeEpoch !== this.epoch(snapshot) ||
       !snapshot.frames.every(frame => this.nativeParts.has(this.part(frame.slotId,
-        frame.asset.assetRequestId, frame.part.sourceIndex, frame.part.fragment)))) return null
+        frame.asset.assetRequestId, frame.part.sourceIndex, frame.part.fragment,
+        frame.asset.visualRevision)))) return null
     return claim
   }
 

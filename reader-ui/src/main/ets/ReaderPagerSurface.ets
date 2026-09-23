@@ -64,8 +64,9 @@ export struct ReaderPagerSurface {
     navigationRevision: number) => void = () => {}
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
-  @Event onStableNative: (slotId: number, requestId: number, sourceIndex: number,
-    fragment: ReaderFragment, width: number, height: number) => void = () => {}
+  @Event onStableNative: (topologyRevision: number, navigationRevision: number, selectionId: number,
+    slotId: number, requestId: number, sourceIndex: number,
+    fragment: ReaderFragment, visualRevision: number, width: number, height: number) => void = () => {}
   @Event onVisualClaim: (slotId: number, requestId: number, visualRevision: number,
     width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -134,8 +135,9 @@ struct ReaderNativePager {
   @Require @Param createdRevision: number
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
-  @Event onStableNative: (slotId: number, requestId: number, sourceIndex: number,
-    fragment: ReaderFragment, width: number, height: number) => void = () => {}
+  @Event onStableNative: (topologyRevision: number, navigationRevision: number, selectionId: number,
+    slotId: number, requestId: number, sourceIndex: number,
+    fragment: ReaderFragment, visualRevision: number, width: number, height: number) => void = () => {}
   @Event onVisualClaim: (slotId: number, requestId: number, visualRevision: number,
     width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}

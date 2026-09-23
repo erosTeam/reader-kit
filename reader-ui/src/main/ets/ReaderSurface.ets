@@ -1099,10 +1099,12 @@ export struct ReaderSurface {
             onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
               this.reportAssetPresented(slot, request, success, width, height, true)
             },
-            onStableNative: (slot: number, request: number, sourceIndex: number, fragment: ReaderFragment,
-              width: number, height: number): void => {
+            onStableNative: (topology: number, navigation: number, selection: number,
+              slot: number, request: number, sourceIndex: number, fragment: ReaderFragment,
+              visualRevision: number, width: number, height: number): void => {
               if (!this.liveSourceEntry || !this.liveSourceEntryOwner.recordNativeReady(this.session.snapshot(),
-                slot, request, sourceIndex, fragment, width, height)) return
+                topology, navigation, selection, slot, request, sourceIndex, fragment,
+                visualRevision, width, height)) return
               this.scheduleSelectedDrawable(this.session.snapshot())
             },
             onVisualClaim: (slot: number, request: number, revision: number, width: number, height: number): void => {

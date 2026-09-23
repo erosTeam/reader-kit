@@ -106,8 +106,9 @@ export struct ReaderPagedViewport {
   @Event onInputLockChange: (locked: boolean) => void = () => {}
   @Event onZoomedChange: (zoomed: boolean) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
-  @Event onStableNative: (slotId: number, requestId: number, sourceIndex: number,
-    fragment: ReaderFragment, width: number, height: number) => void = () => {}
+  @Event onStableNative: (topologyRevision: number, navigationRevision: number, selectionId: number,
+    slotId: number, requestId: number, sourceIndex: number,
+    fragment: ReaderFragment, visualRevision: number, width: number, height: number) => void = () => {}
   @Event onVisualClaim: (slotId: number, requestId: number, visualRevision: number,
     width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -522,8 +523,9 @@ struct ReaderPagedCell {
   private claimHeight: number = 0
   private terminalMountIdentity: string = ''
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
-  @Event onStableNative: (slotId: number, requestId: number, sourceIndex: number,
-    fragment: ReaderFragment, width: number, height: number) => void = () => {}
+  @Event onStableNative: (topologyRevision: number, navigationRevision: number, selectionId: number,
+    slotId: number, requestId: number, sourceIndex: number,
+    fragment: ReaderFragment, visualRevision: number, width: number, height: number) => void = () => {}
   @Event onVisualClaim: (slotId: number, requestId: number, visualRevision: number,
     width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -819,10 +821,11 @@ struct ReaderPagedCell {
           onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number): void => {
             if (this.retainedFrameValue === null) this.onPresented(slotId, requestId, success, width, height)
           },
-          onStableNative: (slotId: number, requestId: number, sourceIndex: number,
-            fragment: ReaderFragment, width: number, height: number): void => {
-            if (this.retainedFrameValue === null) this.onStableNative(slotId, requestId,
-              sourceIndex, fragment, width, height)
+          onStableNative: (topologyRevision: number, navigationRevision: number, selectionId: number,
+            slotId: number, requestId: number, sourceIndex: number,
+            fragment: ReaderFragment, visualRevision: number, width: number, height: number): void => {
+            if (this.retainedFrameValue === null) this.onStableNative(topologyRevision, navigationRevision,
+              selectionId, slotId, requestId, sourceIndex, fragment, visualRevision, width, height)
           },
           onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {
             if (this.retainedFrameValue === null) this.onVisible(selectionId, slotId, requestId, fragment)
@@ -923,8 +926,9 @@ export struct ReaderPagedImage {
   @Param entryLayoutWidth: number = 0
   @Param entryLayoutHeight: number = 0
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
-  @Event onStableNative: (slotId: number, requestId: number, sourceIndex: number,
-    fragment: ReaderFragment, width: number, height: number) => void = () => {}
+  @Event onStableNative: (topologyRevision: number, navigationRevision: number, selectionId: number,
+    slotId: number, requestId: number, sourceIndex: number,
+    fragment: ReaderFragment, visualRevision: number, width: number, height: number) => void = () => {}
   @Event onCompositionDiagnostic: (stage: string, requestId: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -936,7 +940,8 @@ export struct ReaderPagedImage {
   private fullyVisible: boolean = false
   private decoded: boolean = false
   private decodedRequestId: number = 0
-  @Local private stableNativeRequestId: number = 0
+  @Local private stableNativeIdentity: string = ''
+  private scheduledNativeIdentity: string = ''
   private selectedReplayIdentity: string = ''
   private entryContentLaidOut: boolean = false
   private entryLeafLaidOut: boolean = false
@@ -955,6 +960,7 @@ export struct ReaderPagedImage {
   onSelectionChanged(): void {
     this.publishEntryTarget()
     this.reportVisible()
+    this.scheduleNativeStability()
     // A cached Swiper neighbor may have completed before the command claim
     // existed. Re-publish only that same mounted Image's decode when it becomes
     // the selected native cell; a displayed URI alone cannot create a receipt.
@@ -979,7 +985,45 @@ export struct ReaderPagedImage {
   }
 
   @Monitor('frame', 'entryTransition', 'entryLayoutWidth', 'entryLayoutHeight', 'topologyRevision', 'navigationRevision', 'continuousEntry')
-  onEntryLayoutChanged(): void { this.publishEntryTarget() }
+  onEntryLayoutChanged(): void {
+    this.publishEntryTarget()
+    this.scheduleNativeStability()
+  }
+
+  private nativeIdentity(): string {
+    return `${this.topologyRevision}:${this.navigationRevision}:${this.selectionId}:` +
+      `${this.slotId}:${this.assetRequestId}:` +
+      `${this.frame.part.sourceIndex}:${this.renderedFragment}:${this.frame.asset.visualRevision}`
+  }
+
+  /** Merge one native decode receipt with the later current displayed metadata. */
+  private scheduleNativeStability(): void {
+    const page = this.frame.asset.page
+    if (!this.quarantineOriginal || !this.active || !this.entryMounted || !this.decoded ||
+      this.decodedRequestId !== this.assetRequestId || this.frame.asset.kind !== 'original' ||
+      this.frame.asset.phase !== 'displayed' || this.decodedWidth <= 0 || this.decodedHeight <= 0 ||
+      page?.width !== this.decodedWidth || page?.height !== this.decodedHeight) return
+    const identity = this.nativeIdentity()
+    if (this.stableNativeIdentity === identity || this.scheduledNativeIdentity === identity) return
+    this.scheduledNativeIdentity = identity
+    this.getUIContext().postFrameCallback(new ReaderEntryAfterLayout((): void => {
+      if (this.scheduledNativeIdentity !== identity) return
+      this.scheduledNativeIdentity = ''
+      const currentPage = this.frame.asset.page
+      if (!this.quarantineOriginal || !this.active || !this.entryMounted || !this.decoded ||
+        this.decodedRequestId !== this.assetRequestId || this.nativeIdentity() !== identity ||
+        this.frame.asset.phase !== 'displayed' || currentPage?.width !== this.decodedWidth ||
+        currentPage?.height !== this.decodedHeight) return
+      this.stableNativeIdentity = identity
+      if (this.entryOwnershipDiagnostic) console.info(`[ReaderImage] native_stable selection=${this.selectionId} ` +
+        `topology=${this.topologyRevision} navigation=${this.navigationRevision} slot=${this.slotId} ` +
+        `request=${this.assetRequestId} part=${this.frame.part.sourceIndex}/${this.renderedFragment} ` +
+        `v${this.frame.asset.visualRevision} decoded=${this.decodedWidth}x${this.decodedHeight}`)
+      this.onStableNative(this.topologyRevision, this.navigationRevision, this.selectionId,
+        this.slotId, this.assetRequestId, this.frame.part.sourceIndex, this.renderedFragment,
+        this.frame.asset.visualRevision, this.decodedWidth, this.decodedHeight)
+    }))
+  }
 
   @Monitor('entryPhase')
   onEntryPhaseChanged(): void { this.reportVisible() }
@@ -1169,18 +1213,7 @@ export struct ReaderPagedImage {
     this.decodedRequestId = this.assetRequestId
     this.decodedWidth = width
     this.decodedHeight = height
-    const page = this.frame.asset.page
-    if (this.quarantineOriginal && this.active && this.frame.asset.kind === 'original' &&
-      this.frame.asset.phase === 'displayed' && page?.width === width && page?.height === height &&
-      this.frame.asset.assetRequestId === this.assetRequestId) {
-      this.stableNativeRequestId = this.assetRequestId
-      if (this.entryOwnershipDiagnostic) console.info(`[ReaderImage] native_stable selection=${this.selectionId} ` +
-        `topology=${this.topologyRevision} navigation=${this.navigationRevision} slot=${this.slotId} ` +
-        `request=${this.assetRequestId} part=${this.frame.part.sourceIndex}/${this.renderedFragment} ` +
-        `decoded=${width}x${height}`)
-      this.onStableNative(this.slotId, this.assetRequestId, this.frame.part.sourceIndex,
-        this.renderedFragment, width, height)
-    }
+    this.scheduleNativeStability()
     if (this.entryOwnershipDiagnostic && this.active) console.info(`[ReaderImage] native_complete selection=${this.selectionId} ` +
       `topology=${this.topologyRevision} navigation=${this.navigationRevision} ` +
       `slot=${this.slotId} request=${this.assetRequestId} v${this.frame.asset.visualRevision} ` +
@@ -1212,7 +1245,8 @@ export struct ReaderPagedImage {
   private failed(): void {
     this.decoded = false
     this.decodedRequestId = 0
-    this.stableNativeRequestId = 0
+    this.stableNativeIdentity = ''
+    this.scheduledNativeIdentity = ''
     this.publishEntryTarget(true)
     this.onFailed(this.selectionId, this.slotId, this.assetRequestId, this.renderedFragment)
   }
@@ -1256,7 +1290,7 @@ export struct ReaderPagedImage {
         (this.frame.part.fragment !== 'whole' || this.frame.crop.applied())) {
         Stack({ alignContent: Alignment.TopStart }) {
           Image(this.frame.asset.uri)
-            .opacity(this.quarantineOriginal && this.stableNativeRequestId !== this.assetRequestId ? 0 : 1)
+            .opacity(this.quarantineOriginal && this.stableNativeIdentity !== this.nativeIdentity() ? 0 : 1)
             .width(this.renderWidth() / this.frame.crop.region(this.frame.part).width)
             .height(this.renderHeight() / this.frame.crop.region(this.frame.part).height)
             .id(`rkit-cropped-image-${this.frame.part.sourceIndex}-${this.frame.part.fragment}`)
@@ -1276,7 +1310,7 @@ export struct ReaderPagedImage {
       } else if (this.frame.asset.uri.length > 0) {
         Image(this.frame.asset.uri)
           .opacity(this.quarantineOriginal && this.frame.asset.kind === 'original' &&
-            this.stableNativeRequestId !== this.assetRequestId ? 0 : 1)
+            this.stableNativeIdentity !== this.nativeIdentity() ? 0 : 1)
           .width(this.renderWidth()).height(this.renderHeight())
           .interpolation(this.frame.asset.kind === 'original' ? this.imageInterpolation : ImageInterpolation.Low)
           .objectFit(this.thumbnailCover && this.frame.asset.kind === 'thumbnail' ? ImageFit.Cover : ImageFit.Contain)

@@ -316,7 +316,7 @@ test('selected cached native Image replays only its own completed request', () =
     active: false, entryMounted: true, decoded: true, decodedRequestId: 30,
     selectionId: 11, slotId: 20, assetRequestId: 30, selectedReplayIdentity: '',
     decodedWidth: 1200, decodedHeight: 1800, frame: { asset: { phase: 'displayed' } },
-    publishEntryTarget() {}, reportVisible() {},
+    publishEntryTarget() {}, reportVisible() {}, scheduleNativeStability() {},
     getUIContext() { return { postFrameCallback(callback) { frames.push(callback.action) } } },
     onPresented(...args) { receipts.push(args) },
   })
