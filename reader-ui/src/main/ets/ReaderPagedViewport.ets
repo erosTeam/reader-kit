@@ -108,6 +108,7 @@ export struct ReaderPagedViewport {
     width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
+  @Event onTerminalMounted: (slotId: number, requestId: number) => void = () => {}
   @Event onRetry: (slotId: number, requestId: number) => void = () => {}
   @Event onNoticeAction: (slotId: number, requestId: number, noticeId: string) => Promise<boolean> =
     async (_slotId: number, _requestId: number, _noticeId: string): Promise<boolean> => false
@@ -423,9 +424,11 @@ export struct ReaderPagedViewport {
             // Zero leaves the fitted width to the cell's current reactive frame, not this stable-key closure.
             frameWidth: this.equalSlots() ? this.equalSlotWidth() : 0,
             frameHeight: this.equalSlots() ? this.viewportHeight : this.frameHeight(),
+            selected: this.selected,
             active: this.selected && this.active && !this.zoomAnimating && this.zoomState.scale === 1,
             onPresented: this.onPresented, onVisualClaim: this.onVisualClaim,
             onVisible: this.onVisible, onFailed: this.onFailed,
+            onTerminalMounted: this.onTerminalMounted,
             onInvalidDecodedMetrics: (slotId: number, requestId: number, assetRequestId: number): void => {
               if (this.selected && this.active && this.entryTransition !== null) {
                 ReaderEntryGeometryGate.invalidDecoded(this.entryTransition, this.snapshot, slotId, requestId, assetRequestId)
@@ -499,6 +502,7 @@ struct ReaderPagedCell {
   @Require @Param renderedFragment: ReaderFragment
   @Require @Param frameWidth: number
   @Require @Param frameHeight: number
+  @Require @Param selected: boolean
   @Require @Param active: boolean
   @Local private retainedFrameValue: ReaderPagedFrame | null = null
   private lastRetainedProjectionDiagnostic: string = ''
@@ -506,16 +510,39 @@ struct ReaderPagedCell {
   private scheduledVisualClaim: string = ''
   private claimWidth: number = 0
   private claimHeight: number = 0
+  private terminalMountIdentity: string = ''
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisualClaim: (slotId: number, requestId: number, visualRevision: number,
     width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
+  @Event onTerminalMounted: (slotId: number, requestId: number) => void = () => {}
   @Event onInvalidDecodedMetrics: (slotId: number, requestId: number, assetRequestId: number) => void = () => {}
   @Event onRetry: (slotId: number, requestId: number) => void = () => {}
   @Event onNoticeAction: (slotId: number, requestId: number, noticeId: string) => Promise<boolean> =
     async (_slotId: number, _requestId: number, _noticeId: string): Promise<boolean> => false
   @Local private noticeActionBusy: boolean = false
+
+  private terminalIdentity(): string { return `${this.slotId}:${this.frame().asset.assetRequestId}` }
+
+  private terminalMounted(): void {
+    this.terminalMountIdentity = this.terminalIdentity()
+    this.onTerminalMounted(this.slotId, this.frame().asset.assetRequestId)
+  }
+
+  private terminalDisappeared(identity: string): void {
+    if (this.terminalMountIdentity === identity) this.terminalMountIdentity = ''
+  }
+
+  @Monitor('selected')
+  onSelectedChanged(): void {
+    if (!this.selected || this.terminalMountIdentity !== this.terminalIdentity()) return
+    this.getUIContext().postFrameCallback(new ReaderEntryAfterLayout((): void => {
+      if (this.selected && this.terminalMountIdentity === this.terminalIdentity()) {
+        this.onTerminalMounted(this.slotId, this.frame().asset.assetRequestId)
+      }
+    }))
+  }
 
   private frame(): ReaderPagedFrame {
     return this.snapshot.frames.find((frame: ReaderPagedFrame) => frame.slotId === this.slotId &&
@@ -712,6 +739,8 @@ struct ReaderPagedCell {
           actionBusy: this.noticeActionBusy,
           onAction: (): void => { void this.resolveNoticeAction() },
         })
+        .onAppear((): void => { this.terminalMounted() })
+        .onDisAppear((): void => { this.terminalDisappeared(this.terminalIdentity()) })
       } else if (this.frame().asset.phase === 'failed') {
         ReaderFailurePanel({
           page: this.frame().part.sourceIndex + 1, compact: this.snapshot.frames.length > 1,
@@ -719,6 +748,8 @@ struct ReaderPagedCell {
           retryEnabled: this.active,
           onRetry: (): void => { this.onRetry(this.slotId, this.frame().asset.requestId) },
         })
+        .onAppear((): void => { this.terminalMounted() })
+        .onDisAppear((): void => { this.terminalDisappeared(this.terminalIdentity()) })
       } else if (this.frame().asset.uri.length > 0 || this.entryContentReady() ||
         this.retainedFrameValue !== null) {
         // This first call site exists from initial decode onward. During an exact
@@ -799,6 +830,8 @@ struct ReaderPagedCell {
             actionBusy: this.noticeActionBusy,
             onAction: (): void => { void this.resolveNoticeAction() },
           })
+          .onAppear((): void => { this.terminalMounted() })
+          .onDisAppear((): void => { this.terminalDisappeared(this.terminalIdentity()) })
         }
       }
       if ((this.frame().asset.phase === 'idle' || this.frame().asset.phase === 'asset' || this.frame().asset.phase === 'decoding') &&
@@ -843,6 +876,8 @@ export struct ReaderPagedImage {
   @Local private sheetHeight: number = 0
   private fullyVisible: boolean = false
   private decoded: boolean = false
+  private decodedRequestId: number = 0
+  private selectedReplayIdentity: string = ''
   private entryContentLaidOut: boolean = false
   private entryLeafLaidOut: boolean = false
   private entryLayoutRevision: number = 0
@@ -857,7 +892,27 @@ export struct ReaderPagedImage {
   aboutToDisappear(): void { this.entryMounted = false }
 
   @Monitor('active', 'selectionId', 'frame')
-  onSelectionChanged(): void { this.publishEntryTarget(); this.reportVisible() }
+  onSelectionChanged(): void {
+    this.publishEntryTarget()
+    this.reportVisible()
+    // A cached Swiper neighbor may have completed before the command claim
+    // existed. Re-publish only that same mounted Image's decode when it becomes
+    // the selected native cell; a displayed URI alone cannot create a receipt.
+    const identity = `${this.selectionId}:${this.slotId}:${this.assetRequestId}`
+    if (!this.active || !this.entryMounted || !this.decoded || this.decodedRequestId !== this.assetRequestId ||
+      this.frame.asset.phase !== 'displayed' || this.selectedReplayIdentity === identity) return
+    this.selectedReplayIdentity = identity
+    const width = this.decodedWidth
+    const height = this.decodedHeight
+    this.getUIContext().postFrameCallback(new ReaderEntryAfterLayout((): void => {
+      if (this.active && this.entryMounted && this.decoded && this.decodedRequestId === this.assetRequestId &&
+        this.frame.asset.phase === 'displayed' && this.selectedReplayIdentity === identity) {
+        this.onPresented(this.slotId, this.assetRequestId, true, width, height)
+      } else if (this.selectedReplayIdentity === identity) {
+        this.selectedReplayIdentity = ''
+      }
+    }))
+  }
 
   @Monitor('frame', 'entryTransition', 'entryLayoutWidth', 'entryLayoutHeight', 'topologyRevision', 'navigationRevision', 'continuousEntry')
   onEntryLayoutChanged(): void { this.publishEntryTarget() }
@@ -1047,6 +1102,7 @@ export struct ReaderPagedImage {
       console.info(`[ReaderViewport] sprite_pixels slot=${this.slotId} request=${this.assetRequestId} real=${width}x${height} parsed=${thumbnail.spriteWidth}x${thumbnail.spriteHeight} crop=${thumbnail.width}x${thumbnail.height}`)
     }
     this.decoded = true
+    this.decodedRequestId = this.assetRequestId
     this.decodedWidth = width
     this.decodedHeight = height
     this.reportInvalidDecodedMetrics()
@@ -1069,6 +1125,7 @@ export struct ReaderPagedImage {
 
   private failed(): void {
     this.decoded = false
+    this.decodedRequestId = 0
     this.publishEntryTarget(true)
     this.onFailed(this.selectionId, this.slotId, this.assetRequestId, this.renderedFragment)
   }

@@ -24,7 +24,8 @@ function snapshot(displayIndex, navigationRevision, selectionId, phases = ['disp
   return {
     displayIndex, navigationRevision, selectionId, topologyRevision: 7, displayKeys, kind: 'original',
     forItem(key) { return { key, frames: phases.map((phase, index) => ({ slotId: index + 1,
-      asset: { phase, assetRequestId: index + 11, uri: phase === 'displayed' ? 'image://ready' : '' } })) } },
+      asset: { phase, assetRequestId: index + 11, uri: phase === 'displayed' ? 'image://ready' : '',
+        notice: phase === 'suppressed' ? { id: 'notice' } : null } })) } },
   }
 }
 
@@ -81,4 +82,33 @@ test('L2 visual target requires exact callbacks from every mounted part', () => 
   assert.equal(claim.targetNodePresented(replaced, 2, 13, true), true)
   const stale = snapshot(1, 11, 4)
   assert.equal(claim.targetNodeReady(stale), false, 'navigation change retires visual proof')
+  assert.equal(claim.nativeNodePresented(current, 'blue', 1, 11, true), false)
+  assert.equal(claim.nativeNodePresented(current, 'red', 1, 11, true), false)
+  assert.equal(claim.nativeNodePresented(current, 'red', 2, 12, true), false,
+    'cached native receipt is not foreground proof before selection')
+  const selected = snapshot(0, 11, 4)
+  assert.equal(claim.nativeNodeReady(selected), true, 'all exact native parts and newer selected navigation are required')
+  assert.equal(claim.nativeNodeReady(current), false)
+  assert.equal(claim.nativeNodeReady(replaced), false, 'replacement request invalidates native receipt')
+})
+
+test('terminal handoff needs actual target and native failure-face receipts', () => {
+  const claim = new ReaderPositionHandoff(4, 0, 7, 10, snapshot(1, 10, 3), null, true)
+  const pending = snapshot(1, 10, 3, ['failed', 'displayed'])
+  assert.equal(claim.targetReadiness(pending), 'terminal-face')
+  assert.equal(claim.targetNodeReady(pending), false)
+  assert.equal(claim.targetTerminalMounted(pending, 1, 11), false)
+  assert.equal(claim.targetNodePresented(pending, 2, 12, true), true)
+  assert.equal(claim.nativeTerminalMounted(pending, 'red', 1, 11), false)
+  assert.equal(claim.nativeNodePresented(pending, 'red', 2, 12, true), false)
+  const selected = snapshot(0, 11, 4, ['failed', 'displayed'])
+  assert.equal(claim.targetSelected(selected), true)
+  assert.equal(claim.nativeNodeReady(selected), true)
+  const wrong = snapshot(0, 11, 4, ['suppressed', 'displayed'])
+  assert.equal(claim.nativeNodeReady(wrong), true, 'node identity is checked independently from the terminal type')
+  wrong.forItem = key => ({ key, frames: [
+    { slotId: 1, asset: { phase: 'failed', assetRequestId: 13 } },
+    { slotId: 2, asset: { phase: 'displayed', assetRequestId: 12 } },
+  ] })
+  assert.equal(claim.nativeNodeReady(wrong), false, 'new request invalidates failure-face receipt')
 })

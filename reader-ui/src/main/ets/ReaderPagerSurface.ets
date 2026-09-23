@@ -151,6 +151,7 @@ struct ReaderNativePager {
   private pendingOffCommand: ReaderPagerCommand | null = null
   private pendingAnimatedCommand: ReaderPagerCommand | null = null
   private scheduledAnimatedSerial: number = 0
+  private scheduledAnimatedRetireSerial: number = 0
   @Local private visualPhase: 'idle' | 'preparing' | 'moving' | 'settled' = 'idle'
   @Local private oldVisualX: number = 0
   @Local private oldVisualY: number = 0
@@ -210,6 +211,7 @@ struct ReaderNativePager {
     this.pendingOffCommand = null
     this.pendingAnimatedCommand = null
     this.scheduledAnimatedSerial = 0
+    this.scheduledAnimatedRetireSerial = 0
     this.positionHandoff = null
     this.onPositionHandoff(null)
     this.oldVisualMounted = false
@@ -241,7 +243,7 @@ struct ReaderNativePager {
     // image-render onFailed callback. The selected native failure panel must
     // still become visible instead of remaining behind the old-image claim.
     const handoff = this.positionHandoff
-    if (handoff !== null && this.snapshot.displayIndex === handoff.targetIndex &&
+    if (handoff !== null && !handoff.animated && this.snapshot.displayIndex === handoff.targetIndex &&
       this.snapshot.navigationRevision > handoff.navigationRevision) {
       const failed = this.snapshot.forItem(handoff.targetKey).frames.find(frame =>
         frame.asset.phase === 'failed' || frame.asset.phase === 'suppressed')
@@ -259,6 +261,9 @@ struct ReaderNativePager {
         this.scheduleAnimatedCommand(pending)
       }
     }
+    if (handoff !== null && handoff.animated && this.visualPhase === 'settled') {
+      this.scheduleAnimatedRetirement(handoff)
+    }
   }
 
   @Monitor('active')
@@ -273,6 +278,7 @@ struct ReaderNativePager {
       this.pendingOffCommand = null
       this.pendingAnimatedCommand = null
       this.scheduledAnimatedSerial = 0
+      this.scheduledAnimatedRetireSerial = 0
       this.positionHandoff = null
       this.onPositionHandoff(null)
       this.oldVisualMounted = false
@@ -297,6 +303,7 @@ struct ReaderNativePager {
     this.gestureNavigation = command.navigationRevision
     this.pendingAnimatedCommand = null
     this.scheduledAnimatedSerial = 0
+    this.scheduledAnimatedRetireSerial = 0
     this.resetVisualMotion()
     if (!command.animated) {
       this.positionHandoff = new ReaderPositionHandoff(command.serial, command.targetIndex,
@@ -350,8 +357,7 @@ struct ReaderNativePager {
 
   private readyToAnimate(claim: ReaderPositionHandoff): boolean {
     const readiness = claim.targetReadiness(this.snapshot)
-    return readiness === 'terminal-face' ||
-      (readiness === 'drawable' && claim.targetNodeReady(this.snapshot))
+    return (readiness === 'terminal-face' || readiness === 'drawable') && claim.targetNodeReady(this.snapshot)
   }
 
   private startAnimatedCommand(command: ReaderPagerCommand): void {
@@ -419,6 +425,15 @@ struct ReaderNativePager {
     }
   }
 
+  private targetVisualTerminalMounted(serial: number, slotId: number, requestId: number): void {
+    const claim = this.positionHandoff
+    if (claim === null || claim.serial !== serial || !claim.animated || this.visualPhase !== 'preparing') return
+    if (claim.targetTerminalMounted(this.snapshot, slotId, requestId) &&
+      this.pendingAnimatedCommand?.serial === serial && this.readyToAnimate(claim)) {
+      this.scheduleAnimatedCommand(this.pendingAnimatedCommand)
+    }
+  }
+
   private startOffCommandAfterFrame(command: ReaderPagerCommand): void {
     this.getUIContext().postFrameCallback(new ReaderPagerAfterFrame((): void => {
       if (!this.active || !this.oldVisualMounted || this.pendingOffCommand?.serial !== command.serial ||
@@ -455,6 +470,62 @@ struct ReaderNativePager {
     }))
   }
 
+  private nativeTargetPresented(key: string, slotId: number, requestId: number, success: boolean): void {
+    const handoff = this.positionHandoff
+    if (handoff === null || !handoff.animated) return
+    if (handoff.nativeNodePresented(this.snapshot, key, slotId, requestId, success) ||
+      handoff.nativeNodeReady(this.snapshot)) this.scheduleAnimatedRetirement(handoff)
+  }
+
+  private nativeTerminalMounted(key: string, slotId: number, requestId: number): void {
+    const handoff = this.positionHandoff
+    if (handoff === null || !handoff.animated) return
+    if (handoff.nativeTerminalMounted(this.snapshot, key, slotId, requestId) ||
+      handoff.nativeNodeReady(this.snapshot)) this.scheduleAnimatedRetirement(handoff)
+  }
+
+  private scheduleAnimatedRetirement(handoff: ReaderPositionHandoff): void {
+    if (!this.active || this.visualPhase !== 'settled' || !handoff.animated ||
+      !handoff.targetSelected(this.snapshot) ||
+      (handoff.targetReadiness(this.snapshot) !== 'drawable' &&
+        handoff.targetReadiness(this.snapshot) !== 'terminal-face') ||
+      !handoff.nativeNodeReady(this.snapshot) || this.scheduledAnimatedRetireSerial === handoff.serial) return
+    const anchor = this.snapshot.anchor
+    if (anchor === null) return
+    const frame = this.snapshot.frames.find(candidate => candidate.part.pageKey === anchor.pageKey &&
+      candidate.part.fragment === anchor.fragment)
+    if (frame === undefined) return
+    const selectionId = this.snapshot.selectionId
+    const anchorDrawable = frame.asset.phase === 'displayed'
+    const slotId = frame.slotId
+    const requestId = frame.asset.assetRequestId
+    const fragment = frame.part.fragment
+    this.scheduledAnimatedRetireSerial = handoff.serial
+    // onVisibleAreaChange ignores a sibling overlay. Native cell Image decode,
+    // native onChange/L1 selection, and exact anchor identity are separate gates.
+    // This app-frame handoff is still not a RenderService present fence; the
+    // matched-device continuous recording must judge the composed boundary.
+    this.getUIContext().postFrameCallback(new ReaderPagerAfterFrame((): void => {
+      if (this.scheduledAnimatedRetireSerial === handoff.serial) this.scheduledAnimatedRetireSerial = 0
+      if (!this.active || this.positionHandoff?.serial !== handoff.serial ||
+        this.visualPhase !== 'settled' || this.snapshot.selectionId !== selectionId ||
+        !handoff.targetSelected(this.snapshot) ||
+        (handoff.targetReadiness(this.snapshot) !== 'drawable' &&
+          handoff.targetReadiness(this.snapshot) !== 'terminal-face') ||
+        !handoff.nativeNodeReady(this.snapshot) ||
+        this.snapshot.displayKeys[this.snapshot.displayIndex] !== handoff.targetKey) return
+      this.positionHandoff = null
+      this.onPositionHandoff(null)
+      this.resetVisualMotion()
+      this.getUIContext().postFrameCallback(new ReaderPagerAfterFrame((): void => {
+        if (anchorDrawable && this.active && this.lastCommandSerial === handoff.serial &&
+          this.snapshot.selectionId === selectionId) {
+          this.onVisible(selectionId, slotId, requestId, fragment)
+        }
+      }))
+    }))
+  }
+
   private visibleAfterHandoff(key: string, selectionId: number, slotId: number, requestId: number,
     fragment: ReaderFragment): void {
     const handoff = this.positionHandoff
@@ -464,23 +535,7 @@ struct ReaderNativePager {
     }
     if (!handoff.targetDrawable(key, selectionId, this.snapshot)) return
     if (handoff.animated) {
-      if (this.visualPhase !== 'settled') return
-      // Keep the L2 target above the newly selected native cell for one more
-      // app frame; only the native cell's own visible callback can retire it.
-      this.getUIContext().postFrameCallback(new ReaderPagerAfterFrame((): void => {
-        if (!this.active || this.positionHandoff?.serial !== handoff.serial ||
-          this.snapshot.selectionId !== selectionId ||
-          this.snapshot.displayKeys[this.snapshot.displayIndex] !== handoff.targetKey) return
-        this.positionHandoff = null
-        this.onPositionHandoff(null)
-        this.resetVisualMotion()
-        this.getUIContext().postFrameCallback(new ReaderPagerAfterFrame((): void => {
-          if (this.active && this.lastCommandSerial === handoff.serial &&
-            this.snapshot.selectionId === selectionId) {
-            this.onVisible(selectionId, slotId, requestId, fragment)
-          }
-        }))
-      }))
+      this.scheduleAnimatedRetirement(handoff)
       return
     }
     this.positionHandoff = null
@@ -499,12 +554,12 @@ struct ReaderNativePager {
   private failedAfterHandoff(key: string, selectionId: number, slotId: number, requestId: number,
     fragment: ReaderFragment): void {
     this.onFailed(this.createdRevision, key, slotId, requestId, fragment)
-    this.revealFailedTarget(key, selectionId, slotId, requestId)
+    if (!this.positionHandoff?.animated) this.revealFailedTarget(key, selectionId, slotId, requestId)
   }
 
   private revealFailedTarget(key: string, selectionId: number, slotId: number, requestId: number): void {
     const handoff = this.positionHandoff
-    if (handoff === null || key !== handoff.targetKey ||
+    if (handoff === null || handoff.animated || key !== handoff.targetKey ||
       selectionId !== this.snapshot.selectionId) return
     this.getUIContext().postFrameCallback(new ReaderPagerAfterFrame((): void => {
       if (this.positionHandoff?.serial !== handoff.serial ||
@@ -574,7 +629,11 @@ struct ReaderNativePager {
               this.onZoomedChange(zoomed, this.createdRevision, this.snapshot.navigationRevision)
             }
           },
-          onPresented: this.onPresented,
+          onPresented: (slotId: number, requestId: number, success: boolean,
+            width: number, height: number): void => {
+            this.onPresented(slotId, requestId, success, width, height)
+            this.nativeTargetPresented(key, slotId, requestId, success)
+          },
           onVisualClaim: this.onVisualClaim,
           onTap: this.onTap,
           onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {
@@ -589,6 +648,9 @@ struct ReaderNativePager {
           },
           onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {
             this.failedAfterHandoff(key, selectionId, slotId, requestId, fragment)
+          },
+          onTerminalMounted: (slotId: number, requestId: number): void => {
+            this.nativeTerminalMounted(key, slotId, requestId)
           },
         })
       }, (key: string): string => readerElementKey(key))
@@ -651,6 +713,9 @@ struct ReaderNativePager {
               if (claim !== null && claim.serial === serial) {
                 this.onFailed(this.createdRevision, claim.targetKey, slotId, requestId, fragment)
               }
+            },
+            onTerminalMounted: (slotId: number, requestId: number): void => {
+              this.targetVisualTerminalMounted(serial, slotId, requestId)
             },
           })
           .width('100%').height('100%')

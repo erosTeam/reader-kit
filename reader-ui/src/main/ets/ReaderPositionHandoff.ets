@@ -17,6 +17,7 @@ export class ReaderPositionHandoff {
   readonly oldProjection: ReaderPagedSnapshot
   readonly animated: boolean
   private readonly targetNodeReceipts: Set<string> = new Set<string>()
+  private readonly nativeNodeReceipts: Set<string> = new Set<string>()
 
   constructor(serial: number, targetIndex: number, topologyRevision: number, navigationRevision: number,
     snapshot: ReaderPagedSnapshot,
@@ -44,7 +45,7 @@ export class ReaderPositionHandoff {
     if (target.frames.length === 0) return 'pending'
     if (ReaderSelectedDrawable.from(target) !== null) return 'drawable'
     if (target.frames.every(frame => frame.asset.phase === 'displayed' || frame.asset.phase === 'failed' ||
-      frame.asset.phase === 'suppressed') &&
+      (frame.asset.phase === 'suppressed' && frame.asset.notice !== null)) &&
       target.frames.some(frame => frame.asset.phase === 'failed' || frame.asset.phase === 'suppressed')) return 'terminal-face'
     return 'pending'
   }
@@ -59,11 +60,53 @@ export class ReaderPositionHandoff {
     return this.targetNodeReady(snapshot)
   }
 
+  targetTerminalMounted(snapshot: ReaderPagedSnapshot, slotId: number, requestId: number): boolean {
+    if (!this.current(this.serial, snapshot) || snapshot.navigationRevision !== this.navigationRevision) return false
+    const target = snapshot.forItem(this.targetKey)
+    if (!target.frames.some(frame => frame.slotId === slotId && frame.asset.assetRequestId === requestId &&
+      (frame.asset.phase === 'failed' ||
+        (frame.asset.phase === 'suppressed' && frame.asset.notice !== null)))) return false
+    this.targetNodeReceipts.add(`${slotId}:${requestId}`)
+    return this.targetNodeReady(snapshot)
+  }
+
   targetNodeReady(snapshot: ReaderPagedSnapshot): boolean {
     if (!this.current(this.serial, snapshot) || snapshot.navigationRevision !== this.navigationRevision) return false
     const target = snapshot.forItem(this.targetKey)
     return target.frames.length > 0 && target.frames.every(frame =>
       this.targetNodeReceipts.has(`${frame.slotId}:${frame.asset.assetRequestId}`))
+  }
+
+  /** The native Swiper child has its own decode receipts, separate from L2 preparation. */
+  nativeNodePresented(snapshot: ReaderPagedSnapshot, key: string, slotId: number,
+    requestId: number, success: boolean): boolean {
+    if (!success || key !== this.targetKey || !this.current(this.serial, snapshot)) return false
+    const target = snapshot.forItem(this.targetKey)
+    if (!target.frames.some(frame => frame.slotId === slotId && frame.asset.assetRequestId === requestId)) return false
+    this.nativeNodeReceipts.add(`${slotId}:${requestId}`)
+    return this.nativeNodeReady(snapshot)
+  }
+
+  nativeTerminalMounted(snapshot: ReaderPagedSnapshot, key: string, slotId: number, requestId: number): boolean {
+    if (key !== this.targetKey || !this.current(this.serial, snapshot)) return false
+    const target = snapshot.forItem(this.targetKey)
+    if (!target.frames.some(frame => frame.slotId === slotId && frame.asset.assetRequestId === requestId &&
+      (frame.asset.phase === 'failed' ||
+        (frame.asset.phase === 'suppressed' && frame.asset.notice !== null)))) return false
+    this.nativeNodeReceipts.add(`${slotId}:${requestId}`)
+    return this.nativeNodeReady(snapshot)
+  }
+
+  nativeNodeReady(snapshot: ReaderPagedSnapshot): boolean {
+    if (!this.targetSelected(snapshot)) return false
+    const target = snapshot.forItem(this.targetKey)
+    return target.frames.length > 0 && target.frames.every(frame =>
+      this.nativeNodeReceipts.has(`${frame.slotId}:${frame.asset.assetRequestId}`))
+  }
+
+  targetSelected(snapshot: ReaderPagedSnapshot): boolean {
+    return this.current(this.serial, snapshot) && snapshot.displayIndex === this.targetIndex &&
+      snapshot.navigationRevision > this.navigationRevision
   }
 
   /** A selected original anchor alone is insufficient for a two-part spread. */

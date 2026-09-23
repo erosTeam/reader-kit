@@ -8,6 +8,7 @@ const ts = require(process.env.READER_KIT_TYPESCRIPT ||
 
 const pager = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderPagerSurface.ets'), 'utf8')
 const surface = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderSurface.ets'), 'utf8')
+const viewport = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderPagedViewport.ets'), 'utf8')
 
 test('one-shot pager command waits for native selection before mutating the session', () => {
   const requestMove = surface.slice(surface.indexOf('  private requestMove('), surface.indexOf('  private reportInputLock('))
@@ -189,6 +190,9 @@ test('animated command waits for its mounted target node, moves L2 layers, then 
   failed.onCommandChanged()
   failed.snapshot.readiness = 'terminal-face'
   failed.onNavigationChanged()
+  assert.equal(frames.length, 0, 'terminal state alone does not prove its L2 failure panel exists')
+  failed.positionHandoff.nodeReady = true
+  failed.onNavigationChanged()
   frames.shift()()
   frames.shift()()
   finishes.shift()()
@@ -289,5 +293,90 @@ test('animated L2 target mounts below the opaque native old cell until its own d
   assert.match(build, /Swiper\(this\.controller\)[\s\S]*?\.translate\(\{ x: this\.oldVisualX, y: this\.oldVisualY \}\)/)
   assert.match(build, /ForEach\(\[this\.positionHandoff\.serial\][\s\S]*?snapshot: this\.snapshot\.forItem\(this\.positionHandoff\.targetKey\)[\s\S]*?this\.targetVisualPresented\(serial, slotId, requestId, success, width, height\)/)
   assert.match(build, /\.zIndex\(this\.visualPhase === 'moving' \|\| this\.visualPhase === 'settled' \? 1 : -2\)/)
-  assert.match(pager, /if \(handoff\.animated\)[\s\S]*?this\.visualPhase !== 'settled'[\s\S]*?this\.onVisible\(selectionId, slotId, requestId, fragment\)/)
+  assert.match(pager, /handoff\.nativeNodePresented\(this\.snapshot, key, slotId, requestId, success\)/)
+  assert.match(pager, /!handoff\.nativeNodeReady\(this\.snapshot\)[\s\S]*?this\.scheduledAnimatedRetireSerial = handoff\.serial/)
+  assert.match(pager, /if \(handoff\.animated\) \{\s+this\.scheduleAnimatedRetirement\(handoff\)/)
+  assert.equal((viewport.match(/\.onAppear\(\(\): void => \{ this\.terminalMounted\(\) \}\)/g) ?? []).length, 3,
+    'both suppressed notice branches and the failed panel report their own mounted face')
+  assert.match(viewport, /@Monitor\('selected'\)[\s\S]*?this\.terminalMountIdentity === this\.terminalIdentity\(\)[\s\S]*?this\.onTerminalMounted/)
+})
+
+test('selected cached native Image replays only its own completed request', () => {
+  const image = viewport.slice(viewport.indexOf('export struct ReaderPagedImage'))
+  const from = image.indexOf('  onSelectionChanged(): void {')
+  const to = image.indexOf("  @Monitor('frame', 'entryTransition'", from)
+  const exports = {}, frames = [], receipts = []
+  vm.runInNewContext(ts.transpileModule(`class Harness { ${image.slice(from, to)} }; exports.Harness = Harness`, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  }).outputText, {
+    exports, ReaderEntryAfterLayout: class { constructor(action) { this.action = action } },
+  })
+  const native = new exports.Harness()
+  Object.assign(native, {
+    active: false, entryMounted: true, decoded: true, decodedRequestId: 30,
+    selectionId: 11, slotId: 20, assetRequestId: 30, selectedReplayIdentity: '',
+    decodedWidth: 1200, decodedHeight: 1800, frame: { asset: { phase: 'displayed' } },
+    publishEntryTarget() {}, reportVisible() {},
+    getUIContext() { return { postFrameCallback(callback) { frames.push(callback.action) } } },
+    onPresented(...args) { receipts.push(args) },
+  })
+  native.onSelectionChanged()
+  assert.equal(frames.length, 0, 'cached but unselected does not replay')
+  native.active = true
+  native.onSelectionChanged()
+  assert.equal(frames.length, 1)
+  frames.shift()()
+  assert.deepEqual(receipts, [[20, 30, true, 1200, 1800]])
+  native.onSelectionChanged()
+  assert.equal(frames.length, 0, 'one receipt per selected request')
+  native.selectionId = 12
+  native.onSelectionChanged()
+  native.active = false
+  frames.shift()()
+  assert.equal(native.selectedReplayIdentity, '', 'an invalidated app frame does not permanently block replay')
+  native.active = true
+  native.onSelectionChanged()
+  frames.shift()()
+  assert.equal(receipts.length, 2)
+  native.assetRequestId = 31
+  native.onSelectionChanged()
+  assert.equal(frames.length, 0, 'new request cannot borrow cached decode')
+})
+
+test('animated retirement retries an invalidated app frame without exposing a stale target', () => {
+  const from = pager.indexOf('  private scheduleAnimatedRetirement(')
+  const to = pager.indexOf('  private visibleAfterHandoff(', from)
+  const exports = {}, frames = [], reported = []
+  vm.runInNewContext(ts.transpileModule(`class Harness { ${pager.slice(from, to)} }; exports.Harness = Harness`, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  }).outputText, {
+    exports, ReaderPagerAfterFrame: class { constructor(action) { this.action = action } },
+  })
+  const handoff = { serial: 8, animated: true, targetKey: 'red', ready: true,
+    targetSelected() { return true }, targetReadiness() { return 'drawable' },
+    nativeNodeReady() { return this.ready } }
+  const native = new exports.Harness()
+  Object.assign(native, {
+    active: true, visualPhase: 'settled', positionHandoff: handoff,
+    scheduledAnimatedRetireSerial: 0, lastCommandSerial: 8,
+    snapshot: { selectionId: 5, displayIndex: 0, displayKeys: ['red'],
+      anchor: { pageKey: 'p', fragment: 'whole' },
+      frames: [{ part: { pageKey: 'p', fragment: 'whole' }, slotId: 2,
+        asset: { phase: 'displayed', assetRequestId: 3 } }] },
+    getUIContext() { return { postFrameCallback(callback) { frames.push(callback.action) } } },
+    onPositionHandoff(value) { reported.push(value) }, resetVisualMotion() {},
+    onVisible(...args) { reported.push(args) },
+  })
+  native.scheduleAnimatedRetirement(handoff)
+  assert.equal(native.scheduledAnimatedRetireSerial, 8)
+  handoff.ready = false
+  frames.shift()()
+  assert.equal(native.scheduledAnimatedRetireSerial, 0)
+  assert.equal(native.positionHandoff, handoff, 'lost native receipt keeps L2 visible')
+  handoff.ready = true
+  native.scheduleAnimatedRetirement(handoff)
+  frames.shift()()
+  assert.equal(native.positionHandoff, null)
+  frames.shift()()
+  assert.deepEqual(reported[1], [5, 2, 3, 'whole'])
 })
