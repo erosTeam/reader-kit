@@ -29,7 +29,7 @@
     { "name": "rkit_info_original_available", "value": "オリジナル：利用可能" },
     { "name": "rkit_info_original_unavailable", "value": "オリジナル：利用不可" },
     { "name": "rkit_info_failed", "value": "画像情報を取得できません。再試行してください" },
-    { "name": "rkit_variant_prepare_failed", "value": "画像の処理に失敗しました。現在の画像を表示します。" },
+    { "name": "rkit_variant_prepare_failed", "value": "処理失敗。表示中の画像を保持" },
     { "name": "rkit_ok", "value": "OK" },
     { "name": "rkit_share_image", "value": "現在の画像を共有" },
     { "name": "rkit_share_failed", "value": "共有できませんでした。もう一度お試しください。" },

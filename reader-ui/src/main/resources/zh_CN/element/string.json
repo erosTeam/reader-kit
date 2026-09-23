@@ -29,7 +29,7 @@
     { "name": "rkit_info_original_available", "value": "原图：可用" },
     { "name": "rkit_info_original_unavailable", "value": "原图：不可用" },
     { "name": "rkit_info_failed", "value": "暂时无法读取图片信息，请重试" },
-    { "name": "rkit_variant_prepare_failed", "value": "图片处理失败，继续显示当前图片" },
+    { "name": "rkit_variant_prepare_failed", "value": "处理失败，保留当前图" },
     { "name": "rkit_ok", "value": "确定" },
     { "name": "rkit_share_image", "value": "分享当前图片" },
     { "name": "rkit_share_failed", "value": "暂时无法分享，请重试" },
