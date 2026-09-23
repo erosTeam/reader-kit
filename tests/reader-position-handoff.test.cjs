@@ -10,13 +10,19 @@ const source = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/R
 const moduleExports = {}
 vm.runInNewContext(ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
-}).outputText, { exports: moduleExports, require() { throw Error('unexpected runtime import') } })
+}).outputText, { exports: moduleExports, require(name) {
+  if (name === './ReaderSelectedDrawable') return { ReaderSelectedDrawable: {
+    from(value) { return value.frames.length > 0 && value.frames.every(frame =>
+      frame.asset.phase === 'displayed' && frame.asset.uri.length > 0) ? {} : null },
+  } }
+  throw Error(`unexpected runtime import: ${name}`)
+} })
 const { ReaderPositionHandoff } = moduleExports
 
 function snapshot(displayIndex, navigationRevision, selectionId, phases = ['displayed', 'displayed']) {
   const displayKeys = ['red', 'blue']
   return {
-    displayIndex, navigationRevision, selectionId, topologyRevision: 7, displayKeys,
+    displayIndex, navigationRevision, selectionId, topologyRevision: 7, displayKeys, kind: 'original',
     forItem(key) { return { key, frames: phases.map(phase => ({ asset: { phase, uri: phase === 'displayed' ? 'image://ready' : '' } })) } },
   }
 }
@@ -38,4 +44,20 @@ test('target must be selected, have newer navigation and have all spread parts d
   assert.equal(claim.targetDrawable('blue', 4, snapshot(0, 11, 4)), false)
   assert.equal(claim.targetDrawable('red', 4, snapshot(0, 11, 4, ['displayed', 'decoding'])), false)
   assert.equal(claim.targetDrawable('red', 4, snapshot(0, 11, 4)), true)
+})
+
+test('cached target readiness defers motion until every original part is decoded or failed', () => {
+  const claim = new ReaderPositionHandoff(3, 0, 7, 10, snapshot(1, 10, 3), null, true)
+  assert.equal(claim.animated, true)
+  assert.equal(claim.targetReadiness(snapshot(1, 10, 3, ['displayed', 'decoding'])), 'pending')
+  assert.equal(claim.targetReadiness(snapshot(1, 10, 3)), 'drawable')
+  assert.equal(claim.targetReadiness(snapshot(1, 10, 3, ['failed', 'decoding'])), 'pending')
+  assert.equal(claim.targetReadiness(snapshot(1, 10, 3, ['failed', 'displayed'])), 'terminal-face')
+  assert.equal(claim.targetReadiness(snapshot(1, 10, 3, ['suppressed', 'displayed'])), 'terminal-face')
+  const absent = snapshot(1, 10, 3)
+  absent.forItem = () => ({ frames: [] })
+  assert.equal(claim.targetReadiness(absent), 'outside-window')
+  const stale = snapshot(1, 10, 3)
+  stale.topologyRevision += 1
+  assert.equal(claim.targetReadiness(stale), 'outside-window')
 })

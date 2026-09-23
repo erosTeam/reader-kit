@@ -608,6 +608,8 @@ test('window projections are detached and disabling preload releases only neighb
   await session.open(key, 2); await tick()
   const state = session.snapshot(), item = state.forItem('1:whole')
   assert.equal(item.frames[0].part.sourceIndex, 1)
+  assert.deepEqual(item.displayKeys, state.displayKeys, 'cached target retains the same topology identity')
+  item.displayKeys[0] = 'detached'
   item.frames[0].asset.page.width = -20
   state.displayKeys[0] = 'changed'
   assert.equal(session.snapshot().displayKeys[0], '0:whole')

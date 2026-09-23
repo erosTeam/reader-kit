@@ -185,6 +185,7 @@ export class ReaderPagedSnapshot {
     value.cropEnabled = this.cropEnabled
     value.displayIndex = this.displayKeys.indexOf(key)
     value.displayCount = this.displayCount
+    value.displayKeys = this.displayKeys.slice()
     value.selectionId = this.selectionId
     value.anchor = this.anchor?.copy() ?? null
     value.topologyRevision = this.topologyRevision

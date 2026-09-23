@@ -145,6 +145,8 @@ struct ReaderNativePager {
   private commandNavigation: number = -1
   @Local private positionHandoff: ReaderPositionHandoff | null = null
   private pendingOffCommand: ReaderPagerCommand | null = null
+  private pendingAnimatedCommand: ReaderPagerCommand | null = null
+  private scheduledAnimatedSerial: number = 0
   private oldVisualMounted: boolean = false
   private pendingChange: number = 0
   private boundarySwipe: ReaderBoundarySwipe = new ReaderBoundarySwipe()
@@ -195,6 +197,8 @@ struct ReaderNativePager {
     this.pendingChange = 0
     this.commandTarget = -1
     this.pendingOffCommand = null
+    this.pendingAnimatedCommand = null
+    this.scheduledAnimatedSerial = 0
     this.positionHandoff = null
     this.onPositionHandoff(null)
     this.oldVisualMounted = false
@@ -219,9 +223,21 @@ struct ReaderNativePager {
     const handoff = this.positionHandoff
     if (handoff !== null && this.snapshot.displayIndex === handoff.targetIndex &&
       this.snapshot.navigationRevision > handoff.navigationRevision) {
-      const failed = this.snapshot.forItem(handoff.targetKey).frames.find(frame => frame.asset.phase === 'failed')
+      const failed = this.snapshot.forItem(handoff.targetKey).frames.find(frame =>
+        frame.asset.phase === 'failed' || frame.asset.phase === 'suppressed')
       if (failed !== undefined) this.revealFailedTarget(handoff.targetKey, this.snapshot.selectionId,
         failed.slotId, failed.asset.assetRequestId)
+    }
+    const pending = this.pendingAnimatedCommand
+    if (pending !== null) {
+      if (handoff === null || handoff.serial !== pending.serial || !handoff.current(pending.serial, this.snapshot) ||
+        pending.navigationRevision !== this.snapshot.navigationRevision) {
+        this.pendingAnimatedCommand = null
+        this.positionHandoff = null
+        this.onPositionHandoff(null)
+      } else if (handoff.targetReadiness(this.snapshot) !== 'pending') {
+        this.scheduleAnimatedCommand(pending)
+      }
     }
   }
 
@@ -235,6 +251,8 @@ struct ReaderNativePager {
       this.pendingChange = 0
       this.commandTarget = -1
       this.pendingOffCommand = null
+      this.pendingAnimatedCommand = null
+      this.scheduledAnimatedSerial = 0
       this.positionHandoff = null
       this.onPositionHandoff(null)
       this.oldVisualMounted = false
@@ -256,6 +274,8 @@ struct ReaderNativePager {
     if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
     this.pendingChange = 0
     this.gestureNavigation = command.navigationRevision
+    this.pendingAnimatedCommand = null
+    this.scheduledAnimatedSerial = 0
     if (!command.animated) {
       this.positionHandoff = new ReaderPositionHandoff(command.serial, command.targetIndex,
         command.topologyRevision, command.navigationRevision, this.snapshot, this.positionHandoff)
@@ -264,9 +284,56 @@ struct ReaderNativePager {
       if (this.oldVisualMounted) this.startOffCommandAfterFrame(command)
       return
     }
-    this.positionHandoff = null
-    this.onPositionHandoff(null)
     this.pendingOffCommand = null
+    this.positionHandoff = new ReaderPositionHandoff(command.serial, command.targetIndex,
+      command.topologyRevision, command.navigationRevision, this.snapshot, this.positionHandoff, true)
+    this.onPositionHandoff(this.positionHandoff)
+    if (command.targetIndex === this.snapshot.displayIndex &&
+      this.positionHandoff.targetKey === this.positionHandoff.oldKey) {
+      this.positionHandoff = null
+      this.onPositionHandoff(null)
+      this.commandTarget = -1
+      this.commandNavigation = -1
+      return
+    }
+    if (this.positionHandoff.targetReadiness(this.snapshot) === 'pending') {
+      this.pendingAnimatedCommand = command
+      console.info(`[ReaderPager] command_wait_drawable=${command.serial} target=${command.targetIndex}`)
+      return
+    }
+    this.startAnimatedCommand(command)
+  }
+
+  private scheduleAnimatedCommand(command: ReaderPagerCommand): void {
+    if (this.scheduledAnimatedSerial === command.serial) return
+    this.scheduledAnimatedSerial = command.serial
+    // A cached Image can complete during a snapshot monitor. Start native
+    // motion only after this rebuild, with its current target identity rechecked.
+    this.getUIContext().postFrameCallback(new ReaderPagerAfterFrame((): void => {
+      if (this.scheduledAnimatedSerial !== command.serial ||
+        this.pendingAnimatedCommand?.serial !== command.serial) return
+      this.scheduledAnimatedSerial = 0
+      this.pendingAnimatedCommand = null
+      this.startAnimatedCommand(command)
+    }))
+  }
+
+  private startAnimatedCommand(command: ReaderPagerCommand): void {
+    if (!this.active || this.lastCommandSerial !== command.serial ||
+      command.topologyRevision !== this.snapshot.topologyRevision ||
+      command.navigationRevision !== this.snapshot.navigationRevision ||
+      this.commandTarget !== command.targetIndex) return
+    const readiness = this.positionHandoff?.targetReadiness(this.snapshot)
+    if (readiness === 'pending') {
+      this.pendingAnimatedCommand = command
+      return
+    }
+    if (readiness === 'outside-window') {
+      // A distant native seek has no cached decode owner yet. Preserve its
+      // existing animated behavior rather than waiting forever on an absent slot.
+      this.positionHandoff = null
+      this.onPositionHandoff(null)
+    }
     this.beginMotion()
     try {
       this.controller.changeIndex(command.targetIndex, command.animated)
@@ -276,6 +343,8 @@ struct ReaderNativePager {
       this.moving = false
       this.gestureNavigation = -1
       this.commandTarget = -1
+      this.positionHandoff = null
+      this.onPositionHandoff(null)
       console.warn(`[ReaderPager] command_failed=${command.serial} ${(error as Error).message}`)
     }
   }
@@ -352,7 +421,8 @@ struct ReaderNativePager {
         this.snapshot.selectionId !== selectionId ||
         this.snapshot.displayKeys[this.snapshot.displayIndex] !== key) return
       const failed = this.snapshot.forItem(key).frames.some(frame => frame.slotId === slotId &&
-        frame.asset.assetRequestId === requestId && frame.asset.phase === 'failed')
+        frame.asset.assetRequestId === requestId &&
+        (frame.asset.phase === 'failed' || frame.asset.phase === 'suppressed'))
       if (failed) {
         // Reveal the target's native failure face; L1 still leases the last
         // observed body until a real target-visible report or session close.
@@ -452,7 +522,7 @@ struct ReaderNativePager {
     })
     .onAnimationEnd((): void => { this.moving = false })
     .onChange((index: number): void => { this.queueSelection(index) })
-    if (this.positionHandoff !== null) {
+    if (this.positionHandoff !== null && !this.positionHandoff.animated) {
       ReaderPagedViewport({
         imageInterpolation: this.imageInterpolation,
         pageGap: this.pageGap,

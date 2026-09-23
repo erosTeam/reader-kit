@@ -103,6 +103,89 @@ test('late OFF callbacks cannot commit the first of two native commands', () => 
   assert.equal(handoffs.filter(Boolean).length, 4)
 })
 
+test('animated cached target waits on old clear frame, then starts the native motion once drawable', () => {
+  const method = (start, end) => {
+    const from = pager.indexOf(start)
+    return pager.slice(from, pager.indexOf(end, from + start.length))
+  }
+  const exports = {}, frames = []
+  vm.runInNewContext(ts.transpileModule(`class Harness {
+    ${method('  onNavigationChanged(): void {', "  @Monitor('active')")}
+    ${method('  onCommandChanged(): void {', '  private startOffCommandAfterFrame(')}
+  }; exports.Harness = Harness`, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  }).outputText, {
+    exports, console: { info() {}, warn() {} },
+    ReaderPagerAfterFrame: class ReaderPagerAfterFrame { constructor(action) { this.action = action } },
+    ReaderPositionHandoff: class ReaderPositionHandoff {
+      constructor(serial, targetIndex, topologyRevision, navigationRevision, snapshot, prior, animated) {
+        Object.assign(this, { serial, targetIndex, topologyRevision, navigationRevision, animated,
+          targetKey: snapshot.displayKeys[targetIndex],
+          oldKey: prior?.oldKey ?? snapshot.displayKeys[snapshot.displayIndex],
+          oldProjection: prior?.oldProjection ?? snapshot.forItem(snapshot.displayKeys[snapshot.displayIndex]) })
+      }
+      current(serial, snapshot) { return this.serial === serial &&
+        this.topologyRevision === snapshot.topologyRevision &&
+        this.targetKey === snapshot.displayKeys[this.targetIndex] }
+      targetReadiness(snapshot) { return snapshot.readiness }
+    },
+  })
+  const native = new exports.Harness()
+  const changes = [], handoffs = []
+  native.snapshot = { topologyRevision: 7, navigationRevision: 10, displayIndex: 0,
+    displayCount: 2, displayKeys: ['old', 'new'], readiness: 'pending',
+    forItem(key) { return { key, frames: [] } } }
+  Object.assign(native, {
+    active: true, inputLocked: false, moving: false, createdRevision: 7,
+    lastNavigation: 10, lastCommandSerial: 0, commandTarget: -1, commandNavigation: -1,
+    pendingChange: 0, pendingOffCommand: null, pendingAnimatedCommand: null,
+    positionHandoff: null, gestureNavigation: -1,
+    controller: { changeIndex(index, animated) { changes.push([index, animated]) } },
+    onPositionHandoff(claim) { handoffs.push(claim) },
+    getUIContext() { return { postFrameCallback(callback) { frames.push(callback.action) } } },
+    beginMotion() { this.moving = true }, boundarySwipe: { cancel() {} },
+  })
+  native.command = { serial: 1, targetIndex: 1, topologyRevision: 7, navigationRevision: 10, animated: true }
+  native.onCommandChanged()
+  assert.deepEqual(changes, [])
+  assert.equal(native.pendingAnimatedCommand.serial, 1)
+  assert.equal(native.positionHandoff.oldKey, 'old')
+  native.snapshot.readiness = 'drawable'
+  native.onNavigationChanged()
+  assert.deepEqual(changes, [], 'monitor never changes the native index during a snapshot rebuild')
+  frames.shift()()
+  assert.deepEqual(changes, [[1, true]])
+  assert.equal(native.pendingAnimatedCommand, null)
+  assert.equal(native.positionHandoff.animated, true, 'claim remains until selected target reports visible')
+  assert.equal(handoffs.filter(Boolean).length, 1)
+
+  const failed = new exports.Harness()
+  Object.assign(failed, { ...native, moving: false, lastCommandSerial: 0,
+    commandTarget: -1, positionHandoff: null, pendingAnimatedCommand: null,
+    snapshot: { ...native.snapshot, readiness: 'pending' } })
+  failed.command = { ...native.command, serial: 2 }
+  failed.onCommandChanged()
+  failed.snapshot.readiness = 'terminal-face'
+  failed.onNavigationChanged()
+  frames.shift()()
+  assert.deepEqual(changes, [[1, true], [1, true]], 'explicit native failure face may be animated in')
+
+  const superseded = new exports.Harness()
+  Object.assign(superseded, { ...native, moving: false, lastCommandSerial: 0,
+    commandTarget: -1, positionHandoff: null, pendingAnimatedCommand: null,
+    scheduledAnimatedSerial: 0, snapshot: { ...native.snapshot, readiness: 'pending' } })
+  superseded.command = { ...native.command, serial: 3 }
+  superseded.onCommandChanged()
+  superseded.snapshot.readiness = 'drawable'
+  superseded.onNavigationChanged()
+  const staleStart = frames.shift()
+  superseded.snapshot.readiness = 'pending'
+  superseded.command = { ...native.command, serial: 4 }
+  superseded.onCommandChanged()
+  staleStart()
+  assert.deepEqual(changes, [[1, true], [1, true]], 'superseded frame cannot move the pager')
+})
+
 test('only the exact current failed target reveals its native failure face', () => {
   const from = pager.indexOf('  private failedAfterHandoff(')
   const nav = pager.indexOf('  onNavigationChanged(): void {')
@@ -122,6 +205,7 @@ test('only the exact current failed target reveals its native failure face', () 
     navigationRevision: 11,
     forItem() { return { frames: [asset] } } }
   native.createdRevision = 3
+  native.pendingAnimatedCommand = null
   native.positionHandoff = { serial: 8, targetKey: 'red', targetIndex: 0 }
   native.onFailed = (...args) => reports.push(args)
   native.onPositionHandoff = claim => projections.push(claim)
