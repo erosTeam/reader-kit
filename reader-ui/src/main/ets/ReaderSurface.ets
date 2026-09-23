@@ -34,6 +34,7 @@ import { ReaderAutoReadPolicy } from './ReaderAutoReadPolicy'
 import { ReaderTapPolicy } from './ReaderTapPolicy'
 import { ReaderTemporaryVariantControl } from './ReaderTemporaryVariantControl'
 import { ReaderSelectedDrawable } from './ReaderSelectedDrawable'
+import { ReaderLiveSourceEntry } from './ReaderLiveSourceEntry'
 import { FrameCallback } from '@kit.ArkUI'
 
 class ReaderSelectedDrawableAfterFrame extends FrameCallback {
@@ -121,6 +122,12 @@ export struct ReaderSurface {
   @Param selectedDrawableSignals: boolean = false
   /** Decoded selected composite only; the host still owns reveal and foreground observation. */
   @Event onSelectedDrawable: (claim: ReaderSelectedDrawable) => void = () => {}
+  /** Opt-in for an entry with a real, still-mounted host surface instead of a thumbnail proxy. */
+  @Param liveSourceEntry: boolean = false
+  /** App-side post-reveal frame; the host may now retire its live surface after its own foreground check. */
+  @Event onLiveSourceEntryRevealFrame: (claim: ReaderSelectedDrawable) => void = () => {}
+  /** Preparation failed before reveal; the host should close the transparent route to its retained source. */
+  @Event onLiveSourceEntryFailed: () => void = () => {}
   @Param contentOpacity: number = 1
   @BuilderParam openingPlaceholder: () => void = this.DefaultOpeningPlaceholder
   @Event onClose: (context: ReaderCloseContext | null) => void = () => {}
@@ -174,21 +181,41 @@ export struct ReaderSurface {
   private appliedCropSourceRevision: string = ''
   private drawableScheduledKey: string = ''
   private drawableSignaledKey: string = ''
+  private liveSourceEntryOwner: ReaderLiveSourceEntry = new ReaderLiveSourceEntry()
+  @Local private liveReaderVisible: boolean = false
 
   private scheduleSelectedDrawable(state: ReaderPagedSnapshot): void {
-    if (!this.selectedDrawableSignals || !this.active || this.closing || this.chromeDisposed) return
-    const claim = ReaderSelectedDrawable.from(state)
+    if ((!this.selectedDrawableSignals && !this.liveSourceEntry) || !this.active || this.closing ||
+      this.chromeDisposed || (this.liveSourceEntry && this.liveSourceEntryOwner.readerVisible() &&
+      !this.selectedDrawableSignals)) return
+    const claim = this.liveSourceEntry && !this.liveSourceEntryOwner.readerVisible() ?
+      this.liveSourceEntryOwner.offer(state) : ReaderSelectedDrawable.from(state)
     if (claim === null || claim.key() === this.drawableScheduledKey ||
       claim.key() === this.drawableSignaledKey) return
     this.drawableScheduledKey = claim.key()
     this.getUIContext().postFrameCallback(new ReaderSelectedDrawableAfterFrame((): void => {
       if (this.drawableScheduledKey !== claim.key()) return
       this.drawableScheduledKey = ''
-      if (!this.selectedDrawableSignals || !this.active || this.closing || this.chromeDisposed ||
+      if ((!this.selectedDrawableSignals && !this.liveSourceEntry) || !this.active || this.closing || this.chromeDisposed ||
         !claim.current(this.session.snapshot())) return
       this.drawableSignaledKey = claim.key()
-      this.onSelectedDrawable(claim)
+      if (this.liveSourceEntry && this.liveSourceEntryOwner.reveal(claim, this.session.snapshot())) {
+        this.liveReaderVisible = true
+        this.getUIContext().postFrameCallback(new ReaderSelectedDrawableAfterFrame((): void => {
+          if (!this.active || this.closing || this.chromeDisposed || !this.liveSourceEntry ||
+            !this.liveSourceEntryOwner.observedRevealFrame(claim, this.session.snapshot())) return
+          this.onLiveSourceEntryRevealFrame(claim)
+        }))
+      }
+      if (this.selectedDrawableSignals) this.onSelectedDrawable(claim)
     }))
+  }
+
+  private observeLiveSourceEntryFailure(state: ReaderPagedSnapshot): void {
+    if (!this.liveSourceEntry || !this.active || this.closing || this.chromeDisposed ||
+      (state.error.length === 0 && !state.frames.some(frame => frame.asset.phase === 'failed')) ||
+      !this.liveSourceEntryOwner.fail()) return
+    this.onLiveSourceEntryFailed()
   }
 
   private reportZoomed(zoomed: boolean, topology: number, navigation: number): void {
@@ -319,8 +346,13 @@ export struct ReaderSurface {
         this.informationEpoch += 1; this.informationBusy = false
       }
       this.state = state
+      if (this.liveSourceEntry && this.liveSourceEntryOwner.reconcile(state)) {
+        this.liveReaderVisible = false
+        this.drawableSignaledKey = ''
+      }
       this.publishObserved(state)
       this.scheduleSelectedDrawable(state)
+      this.observeLiveSourceEntryFailure(state)
       this.syncPreferredVariant(state)
       this.entryTransition?.update(state)
       this.shareController.update(ReaderImageShareTarget.from(state), this.active)
@@ -354,6 +386,7 @@ export struct ReaderSurface {
   }
 
   aboutToDisappear(): void {
+    if (this.liveSourceEntry) this.liveSourceEntryOwner.cancel()
     this.positionHandoff = null
     this.chromeDisposed = true
     this.temporaryVariantOverride.clear()
@@ -397,6 +430,13 @@ export struct ReaderSurface {
   @Monitor('selectedDrawableSignals')
   onSelectedDrawableSignalsChanged(): void {
     this.scheduleSelectedDrawable(this.session.snapshot())
+  }
+
+  @Monitor('liveSourceEntry')
+  onLiveSourceEntryChanged(): void {
+    this.liveSourceEntryOwner = new ReaderLiveSourceEntry()
+    this.liveReaderVisible = false
+    if (this.liveSourceEntry) this.scheduleSelectedDrawable(this.session.snapshot())
   }
 
   @Monitor('temporaryVariantActive')
@@ -1154,7 +1194,9 @@ export struct ReaderSurface {
           onToggleEnhancement: (): void => { this.toggleTemporaryVariant() } })
       }
       }.width('100%').height('100%').opacity(this.bodyOpacity)
-    }.width('100%').height('100%').backgroundColor(Color.Transparent).id('rkit-reading-surface')
+    }.width('100%').height('100%').backgroundColor(Color.Transparent)
+      .opacity(this.liveSourceEntry && !this.liveReaderVisible ? 0 : 1)
+      .id('rkit-reading-surface')
       .onTouch((event: TouchEvent): void => {
         this.touching = event.type !== TouchType.Up && event.type !== TouchType.Cancel
         this.reportInteractionBusy()

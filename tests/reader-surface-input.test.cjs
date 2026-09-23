@@ -23,6 +23,7 @@ function evaluate(source) {
       } }
       if (name === './ReaderPositionHandoff') return { ReaderPositionHandoff: class ReaderPositionHandoff {} }
       if (name === './ReaderSelectedDrawable') return { ReaderSelectedDrawable: class ReaderSelectedDrawable {} }
+      if (name === './ReaderLiveSourceEntry') return { ReaderLiveSourceEntry: class ReaderLiveSourceEntry {} }
       if (name === '@kit.ArkUI') return { FrameCallback: class FrameCallback {} }
       if (name === './ReaderZoomResetCommand') return { ReaderZoomResetCommand: class ReaderZoomResetCommand {
         constructor(serial, topologyRevision, navigationRevision) {

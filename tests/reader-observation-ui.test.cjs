@@ -96,7 +96,7 @@ test('surface publishes changed decoded coverage even when the reading anchor is
 })
 
 test('surface subscription forwards the observed snapshot after adopting it', () => {
-  assert.match(source, /this\.state = state\s+this\.publishObserved\(state\)/)
+  assert.match(source, /this\.state = state[\s\S]*?this\.publishObserved\(state\)/)
   assert.match(source, /@Param observation: ReaderObservationSink \| null = null/)
 })
 
