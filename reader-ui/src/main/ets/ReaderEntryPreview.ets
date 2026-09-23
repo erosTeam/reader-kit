@@ -17,11 +17,17 @@ export class ReaderEntryPreviewSource {
   }
 
   authorizeDeparture(entryId: number): boolean {
-    if (this.released) return false
+    if (this.released) {
+      console.info(`[ReaderEntryPreviewSource] departure_denied reason=released entry=${entryId}`)
+      return false
+    }
     try {
       const allowed = this.departureGuard === null || this.departureGuard(entryId)
+      if (!allowed) console.info(`[ReaderEntryPreviewSource] departure_denied reason=guard-rejected entry=${entryId}`)
+      else if (this.released) console.info(`[ReaderEntryPreviewSource] departure_denied reason=released-during-guard entry=${entryId}`)
       return allowed && !this.released
     } catch (_error) {
+      console.info(`[ReaderEntryPreviewSource] departure_denied reason=guard-threw entry=${entryId}`)
       return false
     }
   }
