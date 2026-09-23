@@ -1071,6 +1071,7 @@ export struct ReaderSurface {
             snapshot: this.state, active: this.active,
             retainedProjectionDiagnostic: this.retainedProjectionDiagnostic,
             entryOwnershipDiagnostic: this.entryOwnershipDiagnostic,
+            quarantineOriginal: this.liveSourceEntry && !this.liveReaderVisible,
             zoomResetCommand: this.zoomResetCommand,
             command: this.pagerCommand,
             onPositionHandoff: (claim: ReaderPositionHandoff | null): void => {
@@ -1097,6 +1098,12 @@ export struct ReaderSurface {
             },
             onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
               this.reportAssetPresented(slot, request, success, width, height, true)
+            },
+            onStableNative: (slot: number, request: number, sourceIndex: number, fragment: ReaderFragment,
+              width: number, height: number): void => {
+              if (!this.liveSourceEntry || !this.liveSourceEntryOwner.recordNativeReady(this.session.snapshot(),
+                slot, request, sourceIndex, fragment, width, height)) return
+              this.scheduleSelectedDrawable(this.session.snapshot())
             },
             onVisualClaim: (slot: number, request: number, revision: number, width: number, height: number): void => {
               this.session.reportVisualClaim(slot, request, revision, width, height)

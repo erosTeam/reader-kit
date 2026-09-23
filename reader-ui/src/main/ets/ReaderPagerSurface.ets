@@ -51,6 +51,7 @@ export struct ReaderPagerSurface {
   @Param canvasBackground: ResourceColor = Color.Black
   @Param retainedProjectionDiagnostic: boolean = false
   @Param entryOwnershipDiagnostic: boolean = false
+  @Param quarantineOriginal: boolean = false
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param command: ReaderPagerCommand | null = null
@@ -63,6 +64,8 @@ export struct ReaderPagerSurface {
     navigationRevision: number) => void = () => {}
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
+  @Event onStableNative: (slotId: number, requestId: number, sourceIndex: number,
+    fragment: ReaderFragment, width: number, height: number) => void = () => {}
   @Event onVisualClaim: (slotId: number, requestId: number, visualRevision: number,
     width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -85,6 +88,7 @@ export struct ReaderPagerSurface {
             canvasBackground: this.canvasBackground,
             retainedProjectionDiagnostic: this.retainedProjectionDiagnostic,
             entryOwnershipDiagnostic: this.entryOwnershipDiagnostic,
+            quarantineOriginal: this.quarantineOriginal,
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
             command: this.command,
             zoomResetCommand: this.zoomResetCommand,
@@ -92,7 +96,8 @@ export struct ReaderPagerSurface {
             onInputLockChange: this.onInputLockChange,
             onZoomedChange: this.onZoomedChange,
             onBoundary: this.onBoundary,
-            onSelect: this.onSelect, onPresented: this.onPresented, onVisualClaim: this.onVisualClaim,
+            onSelect: this.onSelect, onPresented: this.onPresented, onStableNative: this.onStableNative,
+            onVisualClaim: this.onVisualClaim,
             onVisible: this.onVisible, onFailed: this.onFailed,
             onPositionHandoff: this.onPositionHandoff,
             onPreparePositionTarget: this.onPreparePositionTarget,
@@ -115,6 +120,7 @@ struct ReaderNativePager {
   @Param canvasBackground: ResourceColor = Color.Black
   @Param retainedProjectionDiagnostic: boolean = false
   @Param entryOwnershipDiagnostic: boolean = false
+  @Param quarantineOriginal: boolean = false
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param command: ReaderPagerCommand | null = null
@@ -128,6 +134,8 @@ struct ReaderNativePager {
   @Require @Param createdRevision: number
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
+  @Event onStableNative: (slotId: number, requestId: number, sourceIndex: number,
+    fragment: ReaderFragment, width: number, height: number) => void = () => {}
   @Event onVisualClaim: (slotId: number, requestId: number, visualRevision: number,
     width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -620,6 +628,7 @@ struct ReaderNativePager {
           pageGap: this.pageGap,
           retainedProjectionDiagnostic: this.retainedProjectionDiagnostic,
           entryOwnershipDiagnostic: this.entryOwnershipDiagnostic,
+          quarantineOriginal: this.quarantineOriginal,
           snapshot: this.snapshot.forItem(key),
           entryTransition: key === this.snapshot.displayKeys[this.snapshot.displayIndex] ? this.entryTransition : null,
           selected: key === this.snapshot.displayKeys[this.snapshot.displayIndex],
@@ -638,6 +647,7 @@ struct ReaderNativePager {
             this.onPresented(slotId, requestId, success, width, height)
             this.nativeTargetPresented(key, slotId, requestId, success)
           },
+          onStableNative: this.onStableNative,
           onVisualClaim: this.onVisualClaim,
           onTap: this.onTap,
           onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {

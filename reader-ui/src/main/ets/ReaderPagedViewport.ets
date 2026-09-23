@@ -96,6 +96,7 @@ export struct ReaderPagedViewport {
   @Param pageGap: number = 0
   @Param retainedProjectionDiagnostic: boolean = false
   @Param entryOwnershipDiagnostic: boolean = false
+  @Param quarantineOriginal: boolean = false
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param entryTransition: ReaderEntryTransition | null = null
@@ -105,6 +106,8 @@ export struct ReaderPagedViewport {
   @Event onInputLockChange: (locked: boolean) => void = () => {}
   @Event onZoomedChange: (zoomed: boolean) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
+  @Event onStableNative: (slotId: number, requestId: number, sourceIndex: number,
+    fragment: ReaderFragment, width: number, height: number) => void = () => {}
   @Event onVisualClaim: (slotId: number, requestId: number, visualRevision: number,
     width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -419,6 +422,7 @@ export struct ReaderPagedViewport {
             snapshot: this.snapshot, slotId: frame.slotId,
             retainedProjectionDiagnostic: this.retainedProjectionDiagnostic,
             entryOwnershipDiagnostic: this.entryOwnershipDiagnostic,
+            quarantineOriginal: this.quarantineOriginal,
             entryTransition: this.entryTransition,
             entryMeasurement: this.entryMeasurement,
             entryGeometryReady: this.entryViewportLaidOut && this.entryRatiosReady(),
@@ -428,7 +432,8 @@ export struct ReaderPagedViewport {
             frameHeight: this.equalSlots() ? this.viewportHeight : this.frameHeight(),
             selected: this.selected,
             active: this.selected && this.active && !this.zoomAnimating && this.zoomState.scale === 1,
-            onPresented: this.onPresented, onVisualClaim: this.onVisualClaim,
+            onPresented: this.onPresented, onStableNative: this.onStableNative,
+            onVisualClaim: this.onVisualClaim,
             onVisible: this.onVisible, onFailed: this.onFailed,
             onTerminalMounted: this.onTerminalMounted,
             onInvalidDecodedMetrics: (slotId: number, requestId: number, assetRequestId: number): void => {
@@ -497,6 +502,7 @@ struct ReaderPagedCell {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param retainedProjectionDiagnostic: boolean = false
   @Param entryOwnershipDiagnostic: boolean = false
+  @Param quarantineOriginal: boolean = false
   @Require @Param snapshot: ReaderPagedSnapshot
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryMeasurement: ReaderEntryMeasurement | null = null
@@ -516,6 +522,8 @@ struct ReaderPagedCell {
   private claimHeight: number = 0
   private terminalMountIdentity: string = ''
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
+  @Event onStableNative: (slotId: number, requestId: number, sourceIndex: number,
+    fragment: ReaderFragment, width: number, height: number) => void = () => {}
   @Event onVisualClaim: (slotId: number, requestId: number, visualRevision: number,
     width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -795,6 +803,7 @@ struct ReaderPagedCell {
         ReaderPagedImage({
           imageInterpolation: this.imageInterpolation,
           entryOwnershipDiagnostic: this.entryOwnershipDiagnostic,
+          quarantineOriginal: this.quarantineOriginal,
           frame: this.presentedFrame(), selectionId: this.snapshot.selectionId,
           topologyRevision: this.snapshot.topologyRevision, navigationRevision: this.snapshot.navigationRevision,
           entryTransition: this.retainedFrameValue === null ? this.entryTransition : null,
@@ -809,6 +818,11 @@ struct ReaderPagedCell {
           active: this.retainedFrameValue === null && this.active && this.snapshot.phase === 'ready',
           onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number): void => {
             if (this.retainedFrameValue === null) this.onPresented(slotId, requestId, success, width, height)
+          },
+          onStableNative: (slotId: number, requestId: number, sourceIndex: number,
+            fragment: ReaderFragment, width: number, height: number): void => {
+            if (this.retainedFrameValue === null) this.onStableNative(slotId, requestId,
+              sourceIndex, fragment, width, height)
           },
           onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {
             if (this.retainedFrameValue === null) this.onVisible(selectionId, slotId, requestId, fragment)
@@ -827,6 +841,7 @@ struct ReaderPagedCell {
           ReaderPagedImage({
             imageInterpolation: this.imageInterpolation,
             entryOwnershipDiagnostic: this.entryOwnershipDiagnostic,
+            quarantineOriginal: this.quarantineOriginal,
             frame: this.frame(), selectionId: this.snapshot.selectionId,
             topologyRevision: this.snapshot.topologyRevision, navigationRevision: this.snapshot.navigationRevision,
             entryTransition: this.entryTransition,
@@ -847,6 +862,7 @@ struct ReaderPagedCell {
               if (success) { this.claimWidth = width; this.claimHeight = height }
               this.onPresented(slotId, requestId, success, width, height)
             },
+            onStableNative: this.onStableNative,
             onVisible: this.onVisible, onFailed: this.onFailed,
             onInvalidDecodedMetrics: this.onInvalidDecodedMetrics,
           }).width(this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy))
@@ -888,6 +904,7 @@ struct ReaderPagedCell {
 export struct ReaderPagedImage {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param entryOwnershipDiagnostic: boolean = false
+  @Param quarantineOriginal: boolean = false
   @Param continuousEntry: ReaderContinuousEntryPosition | null = null
   @Require @Param frame: ReaderPagedFrame
   @Require @Param slotId: number
@@ -906,6 +923,8 @@ export struct ReaderPagedImage {
   @Param entryLayoutWidth: number = 0
   @Param entryLayoutHeight: number = 0
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
+  @Event onStableNative: (slotId: number, requestId: number, sourceIndex: number,
+    fragment: ReaderFragment, width: number, height: number) => void = () => {}
   @Event onCompositionDiagnostic: (stage: string, requestId: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -917,6 +936,7 @@ export struct ReaderPagedImage {
   private fullyVisible: boolean = false
   private decoded: boolean = false
   private decodedRequestId: number = 0
+  @Local private stableNativeRequestId: number = 0
   private selectedReplayIdentity: string = ''
   private entryContentLaidOut: boolean = false
   private entryLeafLaidOut: boolean = false
@@ -1149,6 +1169,18 @@ export struct ReaderPagedImage {
     this.decodedRequestId = this.assetRequestId
     this.decodedWidth = width
     this.decodedHeight = height
+    const page = this.frame.asset.page
+    if (this.quarantineOriginal && this.active && this.frame.asset.kind === 'original' &&
+      this.frame.asset.phase === 'displayed' && page?.width === width && page?.height === height &&
+      this.frame.asset.assetRequestId === this.assetRequestId) {
+      this.stableNativeRequestId = this.assetRequestId
+      if (this.entryOwnershipDiagnostic) console.info(`[ReaderImage] native_stable selection=${this.selectionId} ` +
+        `topology=${this.topologyRevision} navigation=${this.navigationRevision} slot=${this.slotId} ` +
+        `request=${this.assetRequestId} part=${this.frame.part.sourceIndex}/${this.renderedFragment} ` +
+        `decoded=${width}x${height}`)
+      this.onStableNative(this.slotId, this.assetRequestId, this.frame.part.sourceIndex,
+        this.renderedFragment, width, height)
+    }
     if (this.entryOwnershipDiagnostic && this.active) console.info(`[ReaderImage] native_complete selection=${this.selectionId} ` +
       `topology=${this.topologyRevision} navigation=${this.navigationRevision} ` +
       `slot=${this.slotId} request=${this.assetRequestId} v${this.frame.asset.visualRevision} ` +
@@ -1180,6 +1212,7 @@ export struct ReaderPagedImage {
   private failed(): void {
     this.decoded = false
     this.decodedRequestId = 0
+    this.stableNativeRequestId = 0
     this.publishEntryTarget(true)
     this.onFailed(this.selectionId, this.slotId, this.assetRequestId, this.renderedFragment)
   }
@@ -1223,6 +1256,7 @@ export struct ReaderPagedImage {
         (this.frame.part.fragment !== 'whole' || this.frame.crop.applied())) {
         Stack({ alignContent: Alignment.TopStart }) {
           Image(this.frame.asset.uri)
+            .opacity(this.quarantineOriginal && this.stableNativeRequestId !== this.assetRequestId ? 0 : 1)
             .width(this.renderWidth() / this.frame.crop.region(this.frame.part).width)
             .height(this.renderHeight() / this.frame.crop.region(this.frame.part).height)
             .id(`rkit-cropped-image-${this.frame.part.sourceIndex}-${this.frame.part.fragment}`)
@@ -1241,6 +1275,8 @@ export struct ReaderPagedImage {
         .rotate({ angle: this.rotateClockwise ? 90 : 0 })
       } else if (this.frame.asset.uri.length > 0) {
         Image(this.frame.asset.uri)
+          .opacity(this.quarantineOriginal && this.frame.asset.kind === 'original' &&
+            this.stableNativeRequestId !== this.assetRequestId ? 0 : 1)
           .width(this.renderWidth()).height(this.renderHeight())
           .interpolation(this.frame.asset.kind === 'original' ? this.imageInterpolation : ImageInterpolation.Low)
           .objectFit(this.thumbnailCover && this.frame.asset.kind === 'thumbnail' ? ImageFit.Cover : ImageFit.Contain)

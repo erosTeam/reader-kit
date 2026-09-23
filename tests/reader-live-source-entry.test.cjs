@@ -27,8 +27,12 @@ function state(phase = 'displayed') {
     displayKeys: ['first'], topologyRevision: 3, navigationRevision: 7, selectionId: 11,
     frames: [{ slotId: 20, part: { sourceIndex: 44, fragment: 'whole' },
       asset: { kind: 'original', phase, uri: phase === 'displayed' ? 'file://first' : '',
-        assetRequestId: 30, visualRevision: 2 } }],
+        assetRequestId: 30, visualRevision: 2, page: { width: 1200, height: 900 } } }],
   }
+}
+
+function nativeReady(owner, snapshot = state()) {
+  return owner.recordNativeReady(snapshot, 20, 30, 44, 'whole', 1200, 900)
 }
 
 test('live source remains owner through decode, then releases only after a matching later frame', () => {
@@ -36,6 +40,10 @@ test('live source remains owner through decode, then releases only after a match
   assert.equal(owner.offer(state('decoding')), null)
   assert.equal(owner.readerVisible(), false)
   assert.equal(owner.hostRetained(), true)
+  assert.equal(owner.offer(state()), null, 'displayed alone cannot release the live source')
+  assert.equal(owner.recordNativeReady(state(), 20, 30, 44, 'whole', 1200, 901), false,
+    'native completion must match the resolved page geometry')
+  assert.equal(nativeReady(owner), true)
   const claim = owner.offer(state())
   assert.ok(claim)
   assert.equal(owner.reveal(claim, state()), true)
@@ -48,6 +56,7 @@ test('live source remains owner through decode, then releases only after a match
 
 test('live source ignores stale selected identity and failure/cancel cannot reveal', () => {
   const owner = new ReaderLiveSourceEntry()
+  nativeReady(owner)
   const claim = owner.offer(state())
   const moved = state(); moved.selectionId += 1
   assert.equal(owner.reveal(claim, moved), false)
@@ -57,7 +66,9 @@ test('live source ignores stale selected identity and failure/cancel cannot reve
   assert.equal(owner.hostRetained(), true)
   assert.equal(owner.reconcile(moved), true)
   assert.equal(owner.readerVisible(), false)
-  assert.equal(owner.reveal(claim, state()), true, 'a current source may take over after rollback')
+  assert.equal(owner.offer(state()), null, 'rollback needs a fresh native receipt')
+  nativeReady(owner)
+  assert.equal(owner.reveal(owner.offer(state()), state()), true, 'a fresh source may take over after rollback')
   owner.cancel()
   assert.equal(owner.observedRevealFrame(claim, state()), false)
 
@@ -93,6 +104,9 @@ test('surface submits reveal before notifying the host to retire its live source
   harness.scheduleSelectedDrawable(state('decoding'))
   assert.equal(frames.length, 0)
   harness.scheduleSelectedDrawable(current)
+  assert.equal(frames.length, 0, 'displayed without current native receipt stays held')
+  nativeReady(harness.liveSourceEntryOwner, current)
+  harness.scheduleSelectedDrawable(current)
   assert.equal(harness.liveReaderVisible, false)
   frames.shift()()
   assert.equal(harness.liveReaderVisible, true)
@@ -101,4 +115,19 @@ test('surface submits reveal before notifying the host to retire its live source
   frames.shift()()
   assert.equal(released.length, 1)
   assert.equal(harness.liveSourceEntryOwner.hostRetained(), false)
+})
+
+test('native receipts are bounded to the current display and every split part', () => {
+  const owner = new ReaderLiveSourceEntry()
+  const spread = state()
+  spread.frames.push({ slotId: 21, part: { sourceIndex: 45, fragment: 'whole' },
+    asset: { kind: 'original', phase: 'displayed', uri: 'file://second', assetRequestId: 31,
+      visualRevision: 1, page: { width: 800, height: 1200 } } })
+  nativeReady(owner, spread)
+  assert.equal(owner.offer(spread), null)
+  assert.equal(owner.recordNativeReady(spread, 21, 31, 45, 'whole', 800, 1200), true)
+  assert.ok(owner.offer(spread))
+  const moved = state(); moved.navigationRevision += 1
+  assert.equal(owner.offer(moved), null, 'old navigation cannot reuse ready parts')
+  assert.equal(owner.recordNativeReady(moved, 20, 999, 44, 'whole', 1200, 900), false)
 })
