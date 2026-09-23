@@ -213,6 +213,16 @@ struct ReaderNativePager {
       this.inputLocked = false
       this.boundarySwipe.cancel()
     }
+    // Provider load failures publish a failed snapshot without invoking the
+    // image-render onFailed callback. The selected native failure panel must
+    // still become visible instead of remaining behind the old-image claim.
+    const handoff = this.positionHandoff
+    if (handoff !== null && this.snapshot.displayIndex === handoff.targetIndex &&
+      this.snapshot.navigationRevision > handoff.navigationRevision) {
+      const failed = this.snapshot.forItem(handoff.targetKey).frames.find(frame => frame.asset.phase === 'failed')
+      if (failed !== undefined) this.revealFailedTarget(handoff.targetKey, this.snapshot.selectionId,
+        failed.slotId, failed.asset.assetRequestId)
+    }
   }
 
   @Monitor('active')
@@ -327,6 +337,32 @@ struct ReaderNativePager {
     }))
   }
 
+  private failedAfterHandoff(key: string, selectionId: number, slotId: number, requestId: number,
+    fragment: ReaderFragment): void {
+    this.onFailed(this.createdRevision, key, slotId, requestId, fragment)
+    this.revealFailedTarget(key, selectionId, slotId, requestId)
+  }
+
+  private revealFailedTarget(key: string, selectionId: number, slotId: number, requestId: number): void {
+    const handoff = this.positionHandoff
+    if (handoff === null || key !== handoff.targetKey ||
+      selectionId !== this.snapshot.selectionId) return
+    this.getUIContext().postFrameCallback(new ReaderPagerAfterFrame((): void => {
+      if (this.positionHandoff?.serial !== handoff.serial ||
+        this.snapshot.selectionId !== selectionId ||
+        this.snapshot.displayKeys[this.snapshot.displayIndex] !== key) return
+      const failed = this.snapshot.forItem(key).frames.some(frame => frame.slotId === slotId &&
+        frame.asset.assetRequestId === requestId && frame.asset.phase === 'failed')
+      if (failed) {
+        // Reveal the target's native failure face; L1 still leases the last
+        // observed body until a real target-visible report or session close.
+        this.positionHandoff = null
+        this.onPositionHandoff(null)
+        console.info(`[ReaderPager] old_visual_revealed_failure=${handoff.serial} target=${handoff.targetIndex}`)
+      }
+    }))
+  }
+
   private beginMotion(): void {
     this.entryTransition?.cancel('pager-motion')
     if (this.gestureNavigation < 0) this.gestureNavigation = this.snapshot.navigationRevision
@@ -389,20 +425,8 @@ struct ReaderNativePager {
             return this.onNoticeAction(this.createdRevision, this.snapshot.navigationRevision,
               key, slotId, requestId, noticeId)
           },
-          onFailed: (_selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {
-            this.onFailed(this.createdRevision, key, slotId, requestId, fragment)
-            const handoff = this.positionHandoff
-            if (handoff !== null && key === handoff.targetKey) {
-              this.getUIContext().postFrameCallback(new ReaderPagerAfterFrame((): void => {
-                if (this.positionHandoff?.serial !== handoff.serial ||
-                  this.snapshot.displayKeys[this.snapshot.displayIndex] !== key) return
-                const failed = this.snapshot.forItem(key).frames.some(frame => frame.asset.phase === 'failed')
-                if (failed) {
-                  this.positionHandoff = null
-                  this.onPositionHandoff(null)
-                }
-              }))
-            }
+          onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {
+            this.failedAfterHandoff(key, selectionId, slotId, requestId, fragment)
           },
         })
       }, (key: string): string => readerElementKey(key))

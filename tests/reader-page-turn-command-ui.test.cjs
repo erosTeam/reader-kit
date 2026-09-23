@@ -103,6 +103,50 @@ test('late OFF callbacks cannot commit the first of two native commands', () => 
   assert.equal(handoffs.filter(Boolean).length, 4)
 })
 
+test('only the exact current failed target reveals its native failure face', () => {
+  const from = pager.indexOf('  private failedAfterHandoff(')
+  const nav = pager.indexOf('  onNavigationChanged(): void {')
+  const code = `class Harness { ${pager.slice(nav, pager.indexOf("  @Monitor('active')", nav))}
+    ${pager.slice(from, pager.indexOf('  private beginMotion(): void {', from))} }
+    exports.Harness = Harness`
+  const frames = [], reports = [], projections = [], exports = {}
+  vm.runInNewContext(ts.transpileModule(code, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  }).outputText, {
+    exports, console: { info() {} },
+    ReaderPagerAfterFrame: class ReaderPagerAfterFrame { constructor(callback) { this.action = callback } },
+  })
+  const native = new exports.Harness()
+  const asset = { slotId: 7, asset: { assetRequestId: 11, phase: 'failed' } }
+  native.snapshot = { selectionId: 4, displayIndex: 0, displayKeys: ['red', 'blue'],
+    navigationRevision: 11,
+    forItem() { return { frames: [asset] } } }
+  native.createdRevision = 3
+  native.positionHandoff = { serial: 8, targetKey: 'red', targetIndex: 0 }
+  native.onFailed = (...args) => reports.push(args)
+  native.onPositionHandoff = claim => projections.push(claim)
+  native.getUIContext = () => ({ postFrameCallback(callback) { frames.push(callback.action) } })
+  native.failedAfterHandoff('red', 4, 7, 10, 'whole')
+  frames.shift()()
+  assert.equal(native.positionHandoff.serial, 8, 'stale asset receipt cannot drop the old visual')
+  native.failedAfterHandoff('red', 4, 7, 11, 'whole')
+  native.positionHandoff = { serial: 9, targetKey: 'blue', targetIndex: 1 }
+  frames.shift()()
+  assert.equal(native.positionHandoff.serial, 9, 'a superseding command fences late failure')
+  native.positionHandoff = { serial: 10, targetKey: 'red', targetIndex: 0 }
+  native.failedAfterHandoff('red', 4, 7, 11, 'whole')
+  frames.shift()()
+  assert.equal(native.positionHandoff, null)
+  assert.equal(projections.at(-1), null)
+  assert.equal(reports.length, 3, 'all failures still reach L1 before visual retirement')
+  native.positionHandoff = { serial: 11, targetKey: 'red', targetIndex: 0, navigationRevision: 10 }
+  native.lastNavigation = 11
+  native.onNavigationChanged()
+  frames.shift()()
+  assert.equal(native.positionHandoff, null, 'provider failure has no image onFailed callback but reveals its panel')
+  assert.equal(reports.length, 3, 'provider failure does not synthesize an image-render report')
+})
+
 // 2026-09-22 defect #4: both legacy readers commit an arbitrary seek target through the
 // animated pager (NextE jumpToPage -> animateReaderPagerToIndex -> changeIndex(target, true)),
 // so a chrome seek must not be limited to an adjacent step: an adjacency guard silently
