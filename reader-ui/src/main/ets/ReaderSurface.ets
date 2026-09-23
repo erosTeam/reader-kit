@@ -4,6 +4,7 @@ import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment,
   ReaderImageShareController, ReaderPagedFrame, ReaderImageInformation,
   ReaderImageSaveController, ReaderImageSaveChoice, ReaderAutoReadController } from '@reader-kit/core'
 import { ReaderPagerCommand, ReaderPagerSurface } from './ReaderPagerSurface'
+import { ReaderPositionHandoff } from './ReaderPositionHandoff'
 import { ReaderContinuousSurface } from './ReaderContinuousSurface'
 import { ReaderChrome, ReaderRuntimePolicyIntent } from './ReaderChrome'
 import { ReaderPageStatus } from './ReaderPageStatus'
@@ -122,6 +123,8 @@ export struct ReaderSurface {
   @Local private saveBusy: boolean = false
   @Local private autoReadEnabled: boolean = false
   @Local private pagerCommand: ReaderPagerCommand | null = null
+  /** A read-only L2 visual projection; L1 still owns logical navigation. */
+  @Local private positionHandoff: ReaderPositionHandoff | null = null
   @Local private zoomResetCommand: ReaderZoomResetCommand | null = null
   @Local private zoomed: boolean = false
   private pagerCommandSerial: number = 0
@@ -317,6 +320,7 @@ export struct ReaderSurface {
   }
 
   aboutToDisappear(): void {
+    this.positionHandoff = null
     this.chromeDisposed = true
     this.temporaryVariantOverride.clear()
     this.autoReadController.close()
@@ -662,6 +666,18 @@ export struct ReaderSurface {
     return JSON.stringify([unit?.key.scope, unit?.key.work, unit?.key.unit, unit?.pageCount])
   }
 
+  private presentedProjection(): ReaderPagedSnapshot | null {
+    const claim = this.positionHandoff
+    if (claim === null || this.state.policy.layout === 'continuous' ||
+      claim.topologyRevision !== this.state.topologyRevision ||
+      claim.oldProjection.unit?.key.equals(this.state.unit?.key ?? this.initialUnit) !== true) return null
+    return claim.oldProjection
+  }
+
+  private presentedSourceIndex(): number {
+    return this.presentedProjection()?.anchor?.sourceIndexHint ?? this.state.anchor?.sourceIndexHint ?? 0
+  }
+
   private thumbnailRailVisible(): boolean {
     return this.chromeVisible && this.thumbnailsVisible && this.active && this.state.phase === 'ready'
   }
@@ -917,6 +933,7 @@ export struct ReaderSurface {
             retainedProjectionDiagnostic: this.retainedProjectionDiagnostic,
             zoomResetCommand: this.zoomResetCommand,
             command: this.pagerCommand,
+            onPositionHandoff: (claim: ReaderPositionHandoff | null): void => { this.positionHandoff = claim },
             entryTransition: this.entryTransition,
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
             onZoomedChange: (zoomed: boolean, topology: number, navigation: number): void => {
@@ -989,7 +1006,8 @@ export struct ReaderSurface {
       if (this.state.unit !== null) {
         Column() {
           ForEach([this.thumbnailUnitIdentity()], (_identity: string) => {
-            ReaderThumbnailRail({ session: this.session, snapshot: this.state, accent: this.accent,
+            ReaderThumbnailRail({ session: this.session, snapshot: this.state,
+              presentedSnapshot: this.presentedProjection(), accent: this.accent,
               previewIndex: this.previewIndex,
               onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
                 this.seekWithPager(index, unit, navigation)
@@ -1003,7 +1021,8 @@ export struct ReaderSurface {
           .id('rkit-thumbnail-rail-wrapper')
       }
       if (this.chromeVisible) {
-        ReaderChrome({ snapshot: this.state, active: this.active, topInset: this.topInset,
+        ReaderChrome({ snapshot: this.state, presentedSourceIndex: this.presentedSourceIndex(),
+          active: this.active, topInset: this.topInset,
           bottomInset: this.bottomInset, accent: this.accent, onClose: (): void => this.requestClose(),
           thumbnailsVisible: this.thumbnailsVisible,
           chapterNavigationAvailable: this.chapterNavigation !== null,
@@ -1077,7 +1096,7 @@ export struct ReaderSurface {
         })
       } else if ((this.showPageNumber || this.enhancementVisible()) &&
         this.state.unit !== null && this.state.unit.pageCount > 0) {
-        ReaderPageStatus({ value: `${(this.state.anchor?.sourceIndexHint ?? 0) + 1} / ${this.state.unit.pageCount}`,
+        ReaderPageStatus({ value: `${this.presentedSourceIndex() + 1} / ${this.state.unit.pageCount}`,
           bottomMargin: this.bottomInset + 8, showPageNumber: this.showPageNumber,
           showEnhancement: this.enhancementVisible(), enhancementProcessing: this.enhancementProcessing(),
           enhancementApplied: this.enhancementApplied(), enhancementEnabled: this.enhancementEnabledForCurrentUnit(),

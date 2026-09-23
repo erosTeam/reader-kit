@@ -66,6 +66,7 @@ export struct ReaderPagerSurface {
   @Event onVisualClaim: (slotId: number, requestId: number, visualRevision: number,
     width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
+  @Event onPositionHandoff: (claim: ReaderPositionHandoff | null) => void = () => {}
   @Event onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetry: (topologyRevision: number, itemKey: string, slotId: number, requestId: number) => void = () => {}
   @Event onNoticeAction: (topologyRevision: number, navigationRevision: number, itemKey: string,
@@ -90,6 +91,7 @@ export struct ReaderPagerSurface {
             onBoundary: this.onBoundary,
             onSelect: this.onSelect, onPresented: this.onPresented, onVisualClaim: this.onVisualClaim,
             onVisible: this.onVisible, onFailed: this.onFailed,
+            onPositionHandoff: this.onPositionHandoff,
             onRetry: this.onRetry, onNoticeAction: this.onNoticeAction,
             onTap: this.onTap,
           })
@@ -123,6 +125,7 @@ struct ReaderNativePager {
   @Event onVisualClaim: (slotId: number, requestId: number, visualRevision: number,
     width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
+  @Event onPositionHandoff: (claim: ReaderPositionHandoff | null) => void = () => {}
   @Event onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetry: (topologyRevision: number, itemKey: string, slotId: number, requestId: number) => void = () => {}
   @Event onNoticeAction: (topologyRevision: number, navigationRevision: number, itemKey: string,
@@ -193,6 +196,7 @@ struct ReaderNativePager {
     this.commandTarget = -1
     this.pendingOffCommand = null
     this.positionHandoff = null
+    this.onPositionHandoff(null)
     this.oldVisualMounted = false
   }
 
@@ -222,6 +226,7 @@ struct ReaderNativePager {
       this.commandTarget = -1
       this.pendingOffCommand = null
       this.positionHandoff = null
+      this.onPositionHandoff(null)
       this.oldVisualMounted = false
     }
   }
@@ -244,11 +249,13 @@ struct ReaderNativePager {
     if (!command.animated) {
       this.positionHandoff = new ReaderPositionHandoff(command.serial, command.targetIndex,
         command.topologyRevision, command.navigationRevision, this.snapshot, this.positionHandoff)
+      this.onPositionHandoff(this.positionHandoff)
       this.pendingOffCommand = command
       if (this.oldVisualMounted) this.startOffCommandAfterFrame(command)
       return
     }
     this.positionHandoff = null
+    this.onPositionHandoff(null)
     this.pendingOffCommand = null
     this.beginMotion()
     try {
@@ -283,6 +290,7 @@ struct ReaderNativePager {
               this.snapshot.displayIndex !== command.targetIndex ||
               this.snapshot.displayKeys[command.targetIndex] !== handoff.oldKey) return
             this.positionHandoff = null
+            this.onPositionHandoff(null)
             this.oldVisualMounted = false
             this.commandTarget = -1
             this.commandNavigation = -1
@@ -291,6 +299,7 @@ struct ReaderNativePager {
         }
       } catch (error) {
         this.positionHandoff = null
+        this.onPositionHandoff(null)
         this.commandTarget = -1
         console.warn(`[ReaderPager] command_failed=${command.serial} ${(error as Error).message}`)
       }
@@ -306,6 +315,7 @@ struct ReaderNativePager {
     }
     if (!handoff.targetDrawable(key, selectionId, this.snapshot)) return
     this.positionHandoff = null
+    this.onPositionHandoff(null)
     this.oldVisualMounted = false
     this.getUIContext().postFrameCallback(new ReaderPagerAfterFrame((): void => {
       if (!this.active || this.lastCommandSerial !== handoff.serial ||
@@ -387,7 +397,10 @@ struct ReaderNativePager {
                 if (this.positionHandoff?.serial !== handoff.serial ||
                   this.snapshot.displayKeys[this.snapshot.displayIndex] !== key) return
                 const failed = this.snapshot.forItem(key).frames.some(frame => frame.asset.phase === 'failed')
-                if (failed) this.positionHandoff = null
+                if (failed) {
+                  this.positionHandoff = null
+                  this.onPositionHandoff(null)
+                }
               }))
             }
           },

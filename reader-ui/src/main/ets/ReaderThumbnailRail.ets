@@ -17,6 +17,8 @@ class ThumbnailIndexSource implements IDataSource {
 export struct ReaderThumbnailRail {
   @Require @Param session: ReaderPagedSession
   @Require @Param snapshot: ReaderPagedSnapshot
+  /** L2's visible-position claim; intents continue to use the current L1 snapshot. */
+  @Param presentedSnapshot: ReaderPagedSnapshot | null = null
   @Param accent: ResourceColor = '#D93646'
   @Param previewIndex: number = -1
   @Event onSeek: (index: number, unit: ReaderUnitKey, navigation: number) => void = () => {}
@@ -45,6 +47,11 @@ export struct ReaderThumbnailRail {
     }
   }
 
+  @Monitor('presentedSnapshot')
+  onPresentedSnapshotChanged(): void {
+    if (this.alive && this.previewIndex < 0) this.scroller.scrollToIndex(this.current(), false, ScrollAlign.START)
+  }
+
   @Monitor('previewIndex')
   onPreviewChanged(): void {
     if (!this.alive) return
@@ -54,12 +61,13 @@ export struct ReaderThumbnailRail {
     this.scroller.scrollToIndex(previewing ? this.previewIndex : this.current(), false)
   }
 
-  private current(): number { return this.snapshot.anchor?.sourceIndexHint ?? 0 }
+  private current(): number { return (this.presentedSnapshot ?? this.snapshot).anchor?.sourceIndexHint ?? 0 }
   private frame(index: number): ReaderThumbnailFrame | null {
     return this.frames.find((frame: ReaderThumbnailFrame) => frame.index === index) ?? null
   }
   private selected(index: number): boolean {
-    return this.snapshot.frames.some((frame: ReaderPagedFrame) => frame.part.sourceIndex === index)
+    return (this.presentedSnapshot ?? this.snapshot).frames.some((frame: ReaderPagedFrame) =>
+      frame.part.sourceIndex === index)
   }
   private range(start: number, end: number): void {
     if (this.alive && this.snapshot.unit !== null) {

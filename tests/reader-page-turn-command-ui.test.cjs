@@ -63,6 +63,7 @@ test('late OFF callbacks cannot commit the first of two native commands', () => 
   const native = new exports.Harness()
   const selected = []
   const changed = []
+  const handoffs = []
   Object.assign(native, {
     active: true, inputLocked: false, moving: false, createdRevision: 7,
     snapshot: { topologyRevision: 7, navigationRevision: 10, displayCount: 3, displayIndex: 0,
@@ -72,6 +73,7 @@ test('late OFF callbacks cannot commit the first of two native commands', () => 
     controller: { changeIndex(index, animated) { changed.push([index, animated]) } },
     getUIContext() { return { postFrameCallback(callback) { frames.push(callback.action) } } },
     onSelect(index, topology, navigation) { selected.push([index, topology, navigation]) },
+    onPositionHandoff(claim) { handoffs.push(claim) },
   })
   const command = (serial, targetIndex) => ({ serial, targetIndex, topologyRevision: 7,
     navigationRevision: 10, animated: false })
@@ -97,6 +99,8 @@ test('late OFF callbacks cannot commit the first of two native commands', () => 
   frames.shift()() // No native onChange is required when returning to the logical old item.
   assert.equal(native.positionHandoff, null)
   assert.equal(native.commandTarget, -1)
+  assert.equal(handoffs.at(-1), null)
+  assert.equal(handoffs.filter(Boolean).length, 4)
 })
 
 // 2026-09-22 defect #4: both legacy readers commit an arbitrary seek target through the

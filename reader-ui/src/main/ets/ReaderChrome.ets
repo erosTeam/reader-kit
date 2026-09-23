@@ -14,6 +14,8 @@ export type ReaderRuntimePolicyIntent = 'layout' | 'direction' | 'spread_layout'
 @ComponentV2
 export struct ReaderChrome {
   @Require @Param snapshot: ReaderPagedSnapshot
+  /** Page shown by L2; navigation and action validation still use the logical snapshot. */
+  @Param presentedSourceIndex: number = -1
   @Param active: boolean = true
   @Param topInset: number = 0
   @Param bottomInset: number = 0
@@ -106,7 +108,10 @@ export struct ReaderChrome {
     if (hadPreview) this.onPreview(-1, null, -1)
   }
   private count(): number { return this.snapshot.unit?.pageCount ?? 0 }
-  private page(): number { return this.count() > 0 ? (this.snapshot.anchor?.sourceIndexHint ?? 0) + 1 : 0 }
+  private page(): number {
+    return this.count() > 0 ?
+      (this.presentedSourceIndex >= 0 ? this.presentedSourceIndex : this.snapshot.anchor?.sourceIndexHint ?? 0) + 1 : 0
+  }
   private value(): number { return this.preview >= 1 ? this.preview : this.page() }
 
   private beginSeek(): void {

@@ -21,6 +21,7 @@ function evaluate(source) {
           Object.assign(this, { serial, targetIndex, topologyRevision, navigationRevision, animated })
         }
       } }
+      if (name === './ReaderPositionHandoff') return { ReaderPositionHandoff: class ReaderPositionHandoff {} }
       if (name === './ReaderZoomResetCommand') return { ReaderZoomResetCommand: class ReaderZoomResetCommand {
         constructor(serial, topologyRevision, navigationRevision) {
           Object.assign(this, { serial, topologyRevision, navigationRevision })
