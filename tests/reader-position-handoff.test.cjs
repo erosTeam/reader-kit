@@ -56,7 +56,7 @@ test('cached target readiness defers motion until every original part is decoded
   assert.equal(claim.targetReadiness(snapshot(1, 10, 3, ['suppressed', 'displayed'])), 'terminal-face')
   const absent = snapshot(1, 10, 3)
   absent.forItem = () => ({ frames: [] })
-  assert.equal(claim.targetReadiness(absent), 'outside-window')
+  assert.equal(claim.targetReadiness(absent), 'pending', 'missing L1 frame cannot expose a native target')
   const stale = snapshot(1, 10, 3)
   stale.topologyRevision += 1
   assert.equal(claim.targetReadiness(stale), 'outside-window')

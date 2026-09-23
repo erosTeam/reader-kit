@@ -620,6 +620,41 @@ test('window projections are detached and disabling preload releases only neighb
   session.close()
 })
 
+test('position target reservation prepares one exact extra slot and fences stale cancellation', async () => {
+  const { session, key, calls } = setup({ count: 6 })
+  session.setNeighborPreload(true)
+  await session.open(key, 1); await tick()
+  let state = session.snapshot()
+  decode(session, state.frames[0])
+  state = session.snapshot()
+  assert.equal(session.reportVisible(state.selectionId, state.frames[0].slotId,
+    state.frames[0].asset.assetRequestId, 'whole'), true)
+  const topology = state.topologyRevision, navigation = state.navigationRevision
+  assert.equal(session.preparePositionTarget(1, 4, topology, navigation), true)
+  await tick()
+  state = session.snapshot()
+  assert.deepEqual(state.window.map(item => item.index), [1, 0, 2, 4])
+  assert.equal(state.window.find(item => item.index === 4).frames.length, 1)
+  assert.equal(calls.release.includes('original:A-1'), false, 'observed old image stays leased')
+  assert.equal(session.preparePositionTarget(2, 5, topology, navigation), true)
+  await tick()
+  assert.equal(session.releasePositionTarget(1), false, 'old serial cannot evict newer target')
+  assert.deepEqual(session.snapshot().window.map(item => item.index), [1, 0, 2, 5])
+  assert.equal(session.preparePositionTarget(1, 4, topology, navigation), false)
+  assert.equal(session.releasePositionTarget(2), true)
+  assert.deepEqual(session.snapshot().window.map(item => item.index), [1, 0, 2])
+  assert.equal(session.preparePositionTarget(2, 5, topology, navigation), false,
+    'retired serial cannot reacquire a released target')
+  assert.equal(calls.release.includes('original:A-1'), false)
+  assert.equal(session.preparePositionTarget(3, 5, topology, navigation), true)
+  assert.equal(session.selectDisplay(0, topology, navigation), true)
+  await tick()
+  assert.equal(session.snapshot().window.some(item => item.index === 5), false,
+    'navigation revision retires unselected command target')
+  assert.equal(session.releasePositionTarget(3), false)
+  session.close()
+})
+
 test('cache preload depth warms future destinations without expanding the native render window', async () => {
   const { session, key, calls } = setup({ count: 10, preload: true })
   session.setNeighborPreload(true)

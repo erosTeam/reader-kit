@@ -1023,7 +1023,16 @@ export struct ReaderSurface {
             retainedProjectionDiagnostic: this.retainedProjectionDiagnostic,
             zoomResetCommand: this.zoomResetCommand,
             command: this.pagerCommand,
-            onPositionHandoff: (claim: ReaderPositionHandoff | null): void => { this.positionHandoff = claim },
+            onPositionHandoff: (claim: ReaderPositionHandoff | null): void => {
+              const previous = this.positionHandoff
+              this.positionHandoff = claim
+              if (previous !== null && previous.serial !== claim?.serial) {
+                this.session.releasePositionTarget(previous.serial)
+              }
+            },
+            onPreparePositionTarget: (command: ReaderPagerCommand): boolean =>
+              this.session.preparePositionTarget(command.serial, command.targetIndex,
+                command.topologyRevision, command.navigationRevision),
             entryTransition: this.entryTransition,
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
             onZoomedChange: (zoomed: boolean, topology: number, navigation: number): void => {

@@ -205,6 +205,28 @@ export class ReaderPagedSnapshot {
   }
 }
 
+/** One bounded L1 target slot requested by the current native pager command. */
+class ReaderPositionTargetReservation {
+  readonly serial: number
+  readonly index: number
+  readonly key: string
+  readonly topologyRevision: number
+  readonly navigationRevision: number
+
+  constructor(serial: number, index: number, key: string, topologyRevision: number, navigationRevision: number) {
+    this.serial = serial
+    this.index = index
+    this.key = key
+    this.topologyRevision = topologyRevision
+    this.navigationRevision = navigationRevision
+  }
+
+  current(keys: string[], topologyRevision: number, navigationRevision: number): boolean {
+    return this.topologyRevision === topologyRevision && this.navigationRevision === navigationRevision &&
+      keys[this.index] === this.key
+  }
+}
+
 class ReaderPageSlot {
   cropRequestId: number = 0
   cropRevision: number = 0
@@ -260,6 +282,9 @@ export class ReaderPagedSession {
   private displayKeys: string[] = []
   /** Last observed paged item, kept leased until the new selection is visible. */
   private outgoingPositionKey: string | null = null
+  /** At most one command target beyond the normal selected/neighbor window. */
+  private positionTarget: ReaderPositionTargetReservation | null = null
+  private lastPositionTargetSerial: number = 0
   private topologySignature: string = ''
   private topologyRevision: number = 0
   private navigationRevision: number = 0
@@ -663,7 +688,35 @@ export class ReaderPagedSession {
       const outgoing = this.displayKeys.indexOf(this.outgoingPositionKey)
       if (outgoing >= 0 && !indexes.includes(outgoing)) indexes.push(outgoing)
     }
+    const target = this.positionTarget
+    if (target !== null && target.current(this.displayKeys, this.topologyRevision, this.navigationRevision) &&
+      !indexes.includes(target.index)) indexes.push(target.index)
     return indexes
+  }
+
+  /** Reserve one exact display target before L2 waits for its original parts. */
+  preparePositionTarget(serial: number, index: number, topologyRevision: number,
+    navigationRevision: number): boolean {
+    if (this.disposed || !this.active || this.state.phase !== 'ready' || this.map === null ||
+      this.state.policy.layout === 'continuous' || !Number.isInteger(serial) || serial <= 0 ||
+      !Number.isInteger(index) || index < 0 || index >= this.map.count() ||
+      topologyRevision !== this.topologyRevision || navigationRevision !== this.navigationRevision) return false
+    const current = this.positionTarget
+    if (serial <= this.lastPositionTargetSerial) return current !== null && serial === current.serial &&
+      current.index === index && current.current(this.displayKeys, topologyRevision, navigationRevision)
+    this.positionTarget = new ReaderPositionTargetReservation(serial, index, this.displayKeys[index],
+      topologyRevision, navigationRevision)
+    this.lastPositionTargetSerial = serial
+    this.reconcile()
+    return true
+  }
+
+  /** Stale cancellation cannot evict a newer command's target or the old visible lease. */
+  releasePositionTarget(serial: number): boolean {
+    if (this.positionTarget?.serial !== serial) return false
+    this.positionTarget = null
+    if (!this.disposed && this.state.phase === 'ready') this.reconcile()
+    return true
   }
 
   setNeighborPreload(enabled: boolean): void {
@@ -1078,6 +1131,10 @@ export class ReaderPagedSession {
       this.topologyRevision += 1
       this.displayKeys = keys
     }
+    if (this.positionTarget !== null &&
+      !this.positionTarget.current(this.displayKeys, this.topologyRevision, this.navigationRevision)) {
+      this.positionTarget = null
+    }
     const resolved = this.map.resolve(this.state.anchor)
     if (!resolved.resolved()) {
       this.state.error = 'reader_anchor_unresolved'
@@ -1324,6 +1381,7 @@ export class ReaderPagedSession {
 
   close(): void {
     this.outgoingPositionKey = null
+    this.positionTarget = null
     this.cancelOriginalPreparations()
     this.cancelAutoReadSourcePreparations()
     this.assetPlans.clear()

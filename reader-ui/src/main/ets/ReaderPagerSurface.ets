@@ -67,6 +67,7 @@ export struct ReaderPagerSurface {
     width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onPositionHandoff: (claim: ReaderPositionHandoff | null) => void = () => {}
+  @Event onPreparePositionTarget: (command: ReaderPagerCommand) => boolean = () => false
   @Event onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetry: (topologyRevision: number, itemKey: string, slotId: number, requestId: number) => void = () => {}
   @Event onNoticeAction: (topologyRevision: number, navigationRevision: number, itemKey: string,
@@ -92,6 +93,7 @@ export struct ReaderPagerSurface {
             onSelect: this.onSelect, onPresented: this.onPresented, onVisualClaim: this.onVisualClaim,
             onVisible: this.onVisible, onFailed: this.onFailed,
             onPositionHandoff: this.onPositionHandoff,
+            onPreparePositionTarget: this.onPreparePositionTarget,
             onRetry: this.onRetry, onNoticeAction: this.onNoticeAction,
             onTap: this.onTap,
           })
@@ -126,6 +128,7 @@ struct ReaderNativePager {
     width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onPositionHandoff: (claim: ReaderPositionHandoff | null) => void = () => {}
+  @Event onPreparePositionTarget: (command: ReaderPagerCommand) => boolean = () => false
   @Event onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onRetry: (topologyRevision: number, itemKey: string, slotId: number, requestId: number) => void = () => {}
   @Event onNoticeAction: (topologyRevision: number, navigationRevision: number, itemKey: string,
@@ -235,7 +238,8 @@ struct ReaderNativePager {
         this.pendingAnimatedCommand = null
         this.positionHandoff = null
         this.onPositionHandoff(null)
-      } else if (handoff.targetReadiness(this.snapshot) !== 'pending') {
+      } else if (handoff.targetReadiness(this.snapshot) === 'drawable' ||
+        handoff.targetReadiness(this.snapshot) === 'terminal-face') {
         this.scheduleAnimatedCommand(pending)
       }
     }
@@ -285,6 +289,13 @@ struct ReaderNativePager {
       return
     }
     this.pendingOffCommand = null
+    if (!this.onPreparePositionTarget(command)) {
+      this.commandTarget = -1
+      this.commandNavigation = -1
+      this.gestureNavigation = -1
+      console.warn(`[ReaderPager] command_target_rejected=${command.serial} target=${command.targetIndex}`)
+      return
+    }
     this.positionHandoff = new ReaderPositionHandoff(command.serial, command.targetIndex,
       command.topologyRevision, command.navigationRevision, this.snapshot, this.positionHandoff, true)
     this.onPositionHandoff(this.positionHandoff)
@@ -296,7 +307,8 @@ struct ReaderNativePager {
       this.commandNavigation = -1
       return
     }
-    if (this.positionHandoff.targetReadiness(this.snapshot) === 'pending') {
+    if (this.positionHandoff.targetReadiness(this.snapshot) !== 'drawable' &&
+      this.positionHandoff.targetReadiness(this.snapshot) !== 'terminal-face') {
       this.pendingAnimatedCommand = command
       console.info(`[ReaderPager] command_wait_drawable=${command.serial} target=${command.targetIndex}`)
       return
@@ -324,15 +336,9 @@ struct ReaderNativePager {
       command.navigationRevision !== this.snapshot.navigationRevision ||
       this.commandTarget !== command.targetIndex) return
     const readiness = this.positionHandoff?.targetReadiness(this.snapshot)
-    if (readiness === 'pending') {
+    if (readiness !== 'drawable' && readiness !== 'terminal-face') {
       this.pendingAnimatedCommand = command
       return
-    }
-    if (readiness === 'outside-window') {
-      // A distant native seek has no cached decode owner yet. Preserve its
-      // existing animated behavior rather than waiting forever on an absent slot.
-      this.positionHandoff = null
-      this.onPositionHandoff(null)
     }
     this.beginMotion()
     try {

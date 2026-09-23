@@ -35,12 +35,12 @@ export class ReaderPositionHandoff {
       this.targetKey === snapshot.displayKeys[this.targetIndex]
   }
 
-  /** Decode readiness for a cached original target, before logical selection changes.
-   * A distant target outside L1's native window cannot be held on this signal. */
+  /** Decode readiness for the reserved original target before logical selection.
+   * A missing frame is pending, not permission to expose an unprepared native cell. */
   targetReadiness(snapshot: ReaderPagedSnapshot): ReaderPositionTargetReadiness {
     if (!this.current(this.serial, snapshot) || snapshot.kind !== 'original') return 'outside-window'
     const target = snapshot.forItem(this.targetKey)
-    if (target.frames.length === 0) return 'outside-window'
+    if (target.frames.length === 0) return 'pending'
     if (ReaderSelectedDrawable.from(target) !== null) return 'drawable'
     if (target.frames.every(frame => frame.asset.phase === 'displayed' || frame.asset.phase === 'failed' ||
       frame.asset.phase === 'suppressed') &&

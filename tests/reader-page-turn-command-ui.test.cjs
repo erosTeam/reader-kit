@@ -131,7 +131,7 @@ test('animated cached target waits on old clear frame, then starts the native mo
     },
   })
   const native = new exports.Harness()
-  const changes = [], handoffs = []
+  const changes = [], handoffs = [], preparations = []
   native.snapshot = { topologyRevision: 7, navigationRevision: 10, displayIndex: 0,
     displayCount: 2, displayKeys: ['old', 'new'], readiness: 'pending',
     forItem(key) { return { key, frames: [] } } }
@@ -142,6 +142,7 @@ test('animated cached target waits on old clear frame, then starts the native mo
     positionHandoff: null, gestureNavigation: -1,
     controller: { changeIndex(index, animated) { changes.push([index, animated]) } },
     onPositionHandoff(claim) { handoffs.push(claim) },
+    onPreparePositionTarget(command) { preparations.push(command.serial); return true },
     getUIContext() { return { postFrameCallback(callback) { frames.push(callback.action) } } },
     beginMotion() { this.moving = true }, boundarySwipe: { cancel() {} },
   })
@@ -149,6 +150,7 @@ test('animated cached target waits on old clear frame, then starts the native mo
   native.onCommandChanged()
   assert.deepEqual(changes, [])
   assert.equal(native.pendingAnimatedCommand.serial, 1)
+  assert.deepEqual(preparations, [1], 'accepted native command reserves its exact L1 target')
   assert.equal(native.positionHandoff.oldKey, 'old')
   native.snapshot.readiness = 'drawable'
   native.onNavigationChanged()
