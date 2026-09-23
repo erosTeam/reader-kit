@@ -1019,6 +1019,7 @@ export struct ReaderSurface {
           ReaderPagerSurface({
             imageInterpolation: this.imageInterpolation,
             pageGap: this.pageGap,
+            canvasBackground: this.canvasBackground,
             snapshot: this.state, active: this.active,
             retainedProjectionDiagnostic: this.retainedProjectionDiagnostic,
             zoomResetCommand: this.zoomResetCommand,

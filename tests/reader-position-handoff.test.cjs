@@ -23,7 +23,8 @@ function snapshot(displayIndex, navigationRevision, selectionId, phases = ['disp
   const displayKeys = ['red', 'blue']
   return {
     displayIndex, navigationRevision, selectionId, topologyRevision: 7, displayKeys, kind: 'original',
-    forItem(key) { return { key, frames: phases.map(phase => ({ asset: { phase, uri: phase === 'displayed' ? 'image://ready' : '' } })) } },
+    forItem(key) { return { key, frames: phases.map((phase, index) => ({ slotId: index + 1,
+      asset: { phase, assetRequestId: index + 11, uri: phase === 'displayed' ? 'image://ready' : '' } })) } },
   }
 }
 
@@ -60,4 +61,24 @@ test('cached target readiness defers motion until every original part is decoded
   const stale = snapshot(1, 10, 3)
   stale.topologyRevision += 1
   assert.equal(claim.targetReadiness(stale), 'outside-window')
+})
+
+test('L2 visual target requires exact callbacks from every mounted part', () => {
+  const claim = new ReaderPositionHandoff(3, 0, 7, 10, snapshot(1, 10, 3), null, true)
+  const current = snapshot(1, 10, 3)
+  assert.equal(claim.targetNodeReady(current), false)
+  assert.equal(claim.targetNodePresented(current, 1, 11, true), false)
+  assert.equal(claim.targetNodePresented(current, 2, 12, false), false)
+  assert.equal(claim.targetNodePresented(current, 2, 12, true), true)
+  assert.equal(claim.targetNodeReady(current), true)
+  const replaced = snapshot(1, 10, 3)
+  replaced.forItem = key => ({ key, frames: [
+    { slotId: 1, asset: { assetRequestId: 11 } },
+    { slotId: 2, asset: { assetRequestId: 13 } },
+  ] })
+  assert.equal(claim.targetNodeReady(replaced), false, 'new request retires old node receipt')
+  assert.equal(claim.targetNodePresented(replaced, 2, 12, true), false)
+  assert.equal(claim.targetNodePresented(replaced, 2, 13, true), true)
+  const stale = snapshot(1, 11, 4)
+  assert.equal(claim.targetNodeReady(stale), false, 'navigation change retires visual proof')
 })

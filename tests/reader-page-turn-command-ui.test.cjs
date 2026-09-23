@@ -15,7 +15,7 @@ test('one-shot pager command waits for native selection before mutating the sess
   assert.ok(requestMove.indexOf('this.pagerCommand = new ReaderPagerCommand(') < requestMove.indexOf('this.session.move(intent)'))
   assert.match(requestMove, /this\.pagerCommand = new ReaderPagerCommand\([\s\S]+?return true[\s\S]+?this\.session\.move\(intent\)/)
   assert.match(pager, /Swiper\(this\.controller\)/)
-  assert.match(pager, /this\.controller\.changeIndex\(command\.targetIndex, command\.animated\)/)
+  assert.match(pager, /this\.controller\.changeIndex\(command\.targetIndex, false\)/)
   assert.match(pager, /onSelect\(index, this\.createdRevision, navigation\)/)
 })
 
@@ -74,6 +74,7 @@ test('late OFF callbacks cannot commit the first of two native commands', () => 
     getUIContext() { return { postFrameCallback(callback) { frames.push(callback.action) } } },
     onSelect(index, topology, navigation) { selected.push([index, topology, navigation]) },
     onPositionHandoff(claim) { handoffs.push(claim) },
+    resetVisualMotion() {},
   })
   const command = (serial, targetIndex) => ({ serial, targetIndex, topologyRevision: 7,
     navigationRevision: 10, animated: false })
@@ -103,12 +104,12 @@ test('late OFF callbacks cannot commit the first of two native commands', () => 
   assert.equal(handoffs.filter(Boolean).length, 4)
 })
 
-test('animated cached target waits on old clear frame, then starts the native motion once drawable', () => {
+test('animated command waits for its mounted target node, moves L2 layers, then commits native index', () => {
   const method = (start, end) => {
     const from = pager.indexOf(start)
     return pager.slice(from, pager.indexOf(end, from + start.length))
   }
-  const exports = {}, frames = []
+  const exports = {}, frames = [], finishes = []
   vm.runInNewContext(ts.transpileModule(`class Harness {
     ${method('  onNavigationChanged(): void {', "  @Monitor('active')")}
     ${method('  onCommandChanged(): void {', '  private startOffCommandAfterFrame(')}
@@ -116,24 +117,28 @@ test('animated cached target waits on old clear frame, then starts the native mo
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
   }).outputText, {
     exports, console: { info() {}, warn() {} },
+    UIUtils: { applySync(action) { action() } }, Curve: { FastOutSlowIn: 'ease' },
     ReaderPagerAfterFrame: class ReaderPagerAfterFrame { constructor(action) { this.action = action } },
     ReaderPositionHandoff: class ReaderPositionHandoff {
       constructor(serial, targetIndex, topologyRevision, navigationRevision, snapshot, prior, animated) {
         Object.assign(this, { serial, targetIndex, topologyRevision, navigationRevision, animated,
           targetKey: snapshot.displayKeys[targetIndex],
           oldKey: prior?.oldKey ?? snapshot.displayKeys[snapshot.displayIndex],
-          oldProjection: prior?.oldProjection ?? snapshot.forItem(snapshot.displayKeys[snapshot.displayIndex]) })
+          oldProjection: prior?.oldProjection ?? snapshot.forItem(snapshot.displayKeys[snapshot.displayIndex]),
+          nodeReady: false })
       }
       current(serial, snapshot) { return this.serial === serial &&
         this.topologyRevision === snapshot.topologyRevision &&
         this.targetKey === snapshot.displayKeys[this.targetIndex] }
       targetReadiness(snapshot) { return snapshot.readiness }
+      targetNodeReady() { return this.nodeReady }
     },
   })
   const native = new exports.Harness()
   const changes = [], handoffs = [], preparations = []
   native.snapshot = { topologyRevision: 7, navigationRevision: 10, displayIndex: 0,
     displayCount: 2, displayKeys: ['old', 'new'], readiness: 'pending',
+    policy: { pagingAxis: 'horizontal', direction: 'ltr' },
     forItem(key) { return { key, frames: [] } } }
   Object.assign(native, {
     active: true, inputLocked: false, moving: false, createdRevision: 7,
@@ -143,7 +148,12 @@ test('animated cached target waits on old clear frame, then starts the native mo
     controller: { changeIndex(index, animated) { changes.push([index, animated]) } },
     onPositionHandoff(claim) { handoffs.push(claim) },
     onPreparePositionTarget(command) { preparations.push(command.serial); return true },
-    getUIContext() { return { postFrameCallback(callback) { frames.push(callback.action) } } },
+    resetVisualMotion() { this.visualPhase = 'idle'; this.oldVisualX = 0; this.targetVisualX = 0 },
+    viewportWidth: 100, viewportHeight: 100,
+    getUIContext() { return {
+      postFrameCallback(callback) { frames.push(callback.action) },
+      animateTo(options, action) { action(); finishes.push(options.onFinish) },
+    } },
     beginMotion() { this.moving = true }, boundarySwipe: { cancel() {} },
   })
   native.command = { serial: 1, targetIndex: 1, topologyRevision: 7, navigationRevision: 10, animated: true }
@@ -154,9 +164,19 @@ test('animated cached target waits on old clear frame, then starts the native mo
   assert.equal(native.positionHandoff.oldKey, 'old')
   native.snapshot.readiness = 'drawable'
   native.onNavigationChanged()
+  assert.equal(frames.length, 0, 'L1 displayed is not this mounted target node decode proof')
+  native.positionHandoff.nodeReady = true
+  native.onNavigationChanged()
   assert.deepEqual(changes, [], 'monitor never changes the native index during a snapshot rebuild')
   frames.shift()()
-  assert.deepEqual(changes, [[1, true]])
+  assert.deepEqual(changes, [], 'preparation frame only starts shared L2 motion')
+  assert.equal(native.visualPhase, 'moving')
+  frames.shift()()
+  assert.equal(native.targetVisualX, 0)
+  assert.equal(native.oldVisualX, -100)
+  assert.deepEqual(changes, [], 'native index stays old during the visible animation')
+  finishes.shift()()
+  assert.deepEqual(changes, [[1, false]])
   assert.equal(native.pendingAnimatedCommand, null)
   assert.equal(native.positionHandoff.animated, true, 'claim remains until selected target reports visible')
   assert.equal(handoffs.filter(Boolean).length, 1)
@@ -170,7 +190,9 @@ test('animated cached target waits on old clear frame, then starts the native mo
   failed.snapshot.readiness = 'terminal-face'
   failed.onNavigationChanged()
   frames.shift()()
-  assert.deepEqual(changes, [[1, true], [1, true]], 'explicit native failure face may be animated in')
+  frames.shift()()
+  finishes.shift()()
+  assert.deepEqual(changes, [[1, false], [1, false]], 'explicit native failure face may be moved in')
 
   const superseded = new exports.Harness()
   Object.assign(superseded, { ...native, moving: false, lastCommandSerial: 0,
@@ -179,13 +201,14 @@ test('animated cached target waits on old clear frame, then starts the native mo
   superseded.command = { ...native.command, serial: 3 }
   superseded.onCommandChanged()
   superseded.snapshot.readiness = 'drawable'
+  superseded.positionHandoff.nodeReady = true
   superseded.onNavigationChanged()
   const staleStart = frames.shift()
   superseded.snapshot.readiness = 'pending'
   superseded.command = { ...native.command, serial: 4 }
   superseded.onCommandChanged()
   staleStart()
-  assert.deepEqual(changes, [[1, true], [1, true]], 'superseded frame cannot move the pager')
+  assert.deepEqual(changes, [[1, false], [1, false]], 'superseded frame cannot move the pager')
 })
 
 test('only the exact current failed target reveals its native failure face', () => {
@@ -211,6 +234,7 @@ test('only the exact current failed target reveals its native failure face', () 
   native.positionHandoff = { serial: 8, targetKey: 'red', targetIndex: 0 }
   native.onFailed = (...args) => reports.push(args)
   native.onPositionHandoff = claim => projections.push(claim)
+  native.resetVisualMotion = () => {}
   native.getUIContext = () => ({ postFrameCallback(callback) { frames.push(callback.action) } })
   native.failedAfterHandoff('red', 4, 7, 10, 'whole')
   frames.shift()()
@@ -243,7 +267,7 @@ test('chrome seeks animate arbitrary deltas instead of being dropped by an adjac
   assert.match(seekWithPager, /session\.displayIndexForSource\(index\)/)
   assert.match(seekWithPager, /before\.navigationRevision !== navigation \|\| before\.unit\?\.key\.equals\(unit\) !== true/)
   assert.ok(!/Math\.abs\(target - /.test(seekWithPager), 'a chrome seek must not be adjacency-limited')
-  assert.match(pager, /this\.controller\.changeIndex\(command\.targetIndex, command\.animated\)/)
+  assert.match(pager, /this\.controller\.changeIndex\(command\.targetIndex, false\)/)
   assert.ok(!/Math\.abs\(command\.targetIndex/.test(pager), 'the native owner must not drop non-adjacent commands')
 })
 
@@ -252,9 +276,18 @@ test('paged moves use the same native owner with animation on or off; direct own
   assert.match(surface, /const target = before\.displayIndex \+ \(intent === 'next' \? 1 : -1\)/)
   assert.match(pager, /if \(!command\.animated\) \{/)
   assert.match(pager, /this\.beginMotion\(\)/)
-  assert.match(pager, /this\.controller\.changeIndex\(command\.targetIndex, command\.animated\)/)
+  assert.match(pager, /this\.controller\.changeIndex\(command\.targetIndex, false\)/)
   // The raw seek stays available as the fallback owner (continuous layout, unresolvable
   // target, or same-source re-seek), so it must remain reachable outside the command.
   assert.match(surface, /session\.seekSource\(index, unit, navigation\)/)
   assert.match(surface, /this\.session\.selectDisplay\(index, topology, navigation\)/)
+})
+
+test('animated L2 target mounts below the opaque native old cell until its own decode', () => {
+  const build = pager.slice(pager.indexOf('  build() {', pager.indexOf('struct ReaderNativePager')))
+  assert.match(build, /Swiper\(this\.controller\)[\s\S]*?\.backgroundColor\(this\.canvasBackground\)/)
+  assert.match(build, /Swiper\(this\.controller\)[\s\S]*?\.translate\(\{ x: this\.oldVisualX, y: this\.oldVisualY \}\)/)
+  assert.match(build, /ForEach\(\[this\.positionHandoff\.serial\][\s\S]*?snapshot: this\.snapshot\.forItem\(this\.positionHandoff\.targetKey\)[\s\S]*?this\.targetVisualPresented\(serial, slotId, requestId, success, width, height\)/)
+  assert.match(build, /\.zIndex\(this\.visualPhase === 'moving' \|\| this\.visualPhase === 'settled' \? 1 : -2\)/)
+  assert.match(pager, /if \(handoff\.animated\)[\s\S]*?this\.visualPhase !== 'settled'[\s\S]*?this\.onVisible\(selectionId, slotId, requestId, fragment\)/)
 })

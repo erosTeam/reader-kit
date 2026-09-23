@@ -16,6 +16,7 @@ export class ReaderPositionHandoff {
   readonly oldKey: string
   readonly oldProjection: ReaderPagedSnapshot
   readonly animated: boolean
+  private readonly targetNodeReceipts: Set<string> = new Set<string>()
 
   constructor(serial: number, targetIndex: number, topologyRevision: number, navigationRevision: number,
     snapshot: ReaderPagedSnapshot,
@@ -46,6 +47,23 @@ export class ReaderPositionHandoff {
       frame.asset.phase === 'suppressed') &&
       target.frames.some(frame => frame.asset.phase === 'failed' || frame.asset.phase === 'suppressed')) return 'terminal-face'
     return 'pending'
+  }
+
+  /** Only this mounted L2 target viewport's Image callback may ready its visual layer. */
+  targetNodePresented(snapshot: ReaderPagedSnapshot, slotId: number, requestId: number, success: boolean): boolean {
+    if (!success || !this.current(this.serial, snapshot) ||
+      snapshot.navigationRevision !== this.navigationRevision) return false
+    const target = snapshot.forItem(this.targetKey)
+    if (!target.frames.some(frame => frame.slotId === slotId && frame.asset.assetRequestId === requestId)) return false
+    this.targetNodeReceipts.add(`${slotId}:${requestId}`)
+    return this.targetNodeReady(snapshot)
+  }
+
+  targetNodeReady(snapshot: ReaderPagedSnapshot): boolean {
+    if (!this.current(this.serial, snapshot) || snapshot.navigationRevision !== this.navigationRevision) return false
+    const target = snapshot.forItem(this.targetKey)
+    return target.frames.length > 0 && target.frames.every(frame =>
+      this.targetNodeReceipts.has(`${frame.slotId}:${frame.asset.assetRequestId}`))
   }
 
   /** A selected original anchor alone is insufficient for a two-part spread. */
