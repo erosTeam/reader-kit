@@ -38,6 +38,10 @@ export struct ReaderSurface {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param canvasBackground: ResourceColor = Color.Black
   @Param canvasForeground: ResourceColor = Color.White
+  /** Hosts may fade the canvas independently while a root-owned transition proxy keeps the image visible. */
+  @Param canvasBackdropOpacity: number = 1
+  /** A close handoff may retire Reader controls and images without removing its canvas. */
+  @Param bodyOpacity: number = 1
   @Require @Param session: ReaderPagedSession
   @Require @Param initialUnit: ReaderUnitKey
   @Require @Param active: boolean
@@ -117,7 +121,7 @@ export struct ReaderSurface {
   private zoomResetSerial: number = 0
   private autoReadController: ReaderAutoReadController = new ReaderAutoReadController((): boolean => {
     return this.externalMove('next')
-  })
+  }, undefined, (): void => { this.session.requestAutoReadTargetSource() })
   private saveController: ReaderImageSaveController = new ReaderImageSaveController()
   private saveFeedback: ResourceStr | null = null
   @Local private informationBusy: boolean = false
@@ -234,7 +238,10 @@ export struct ReaderSurface {
     this.appliedCropSourceRevision = this.cropPolicy?.sourceRevision ?? ''
     this.session.setCropEnabled(this.cropPolicy?.enabled ?? false)
     this.session.setViewportActive(this.active)
-    this.autoReadController.subscribe((enabled: boolean): void => { this.autoReadEnabled = enabled })
+    this.autoReadController.subscribe((enabled: boolean): void => {
+      this.autoReadEnabled = enabled
+      if (!enabled) this.session.cancelAutoReadSourcePreparations()
+    })
     this.shareController.subscribe((busy: boolean): void => { this.shareBusy = busy; this.syncAutoRead() })
     this.saveController.subscribe((busy: boolean): void => { this.saveBusy = busy; this.syncAutoRead() })
     this.session.subscribe((state: ReaderPagedSnapshot): void => {
@@ -352,7 +359,7 @@ export struct ReaderSurface {
       this.touching || this.menuVisible || this.tapZonePreviewVisible || this.shareBusy || this.saveBusy ||
       this.informationBusy || this.state.originalPreparing ||
       this.previewIndex >= 0 || this.inputTopology !== this.state.topologyRevision || this.inputLocked ||
-      this.entryTransition?.phase === 'layout', this.autoReadPolicy.seconds)
+      this.entryTransition?.phase === 'layout', this.autoReadPolicy.seconds, this.autoReadPolicy.targetReadiness)
   }
 
   private toggleAutoRead(): void {
@@ -532,6 +539,7 @@ export struct ReaderSurface {
       this.variantAttempts?.clear()
     }
     this.reportInteractionBusy?.()
+    this.syncPreferredVariant(this.session.snapshot())
   }
 
   private requestClose(): void {
@@ -714,6 +722,16 @@ export struct ReaderSurface {
 
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
+      // The canvas and Reader body have distinct transition owners. A host can
+      // fade this backdrop while a root proxy owns the moving image, without
+      // exposing the destination beneath an abruptly removed Reader surface.
+      Column() {}
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.canvasBackground)
+        .opacity(this.canvasBackdropOpacity)
+        .hitTestBehavior(HitTestMode.None)
+      Stack({ alignContent: Alignment.Bottom }) {
       // The existing cell feedback stays above the optional source preview.
       // The preview's declared coverage controls its fade beneath the original image.
       this.openingPlaceholder()
@@ -855,9 +873,6 @@ export struct ReaderSurface {
           saveBusy: this.saveBusy,
           autoReadAvailable: this.autoReadPolicy?.available === true, autoReadEnabled: this.autoReadEnabled,
           cropAvailable: this.cropPolicy?.available === true,
-          enhancementVisible: this.enhancementVisible(),
-          enhancementProcessing: this.enhancementProcessing(),
-          enhancementApplied: this.enhancementApplied(),
           hostSettingsAvailable: this.hostSettings !== null,
           onHostSettings: (): void => { this.hostSettings?.request() },
           externalOpenAvailable: this.externalOpen !== null,
@@ -917,7 +932,8 @@ export struct ReaderSurface {
           showEnhancement: this.enhancementVisible(), enhancementProcessing: this.enhancementProcessing(),
           enhancementApplied: this.enhancementApplied(), accent: this.accent })
       }
-    }.width('100%').height('100%').backgroundColor(this.canvasBackground).id('rkit-reading-surface')
+      }.width('100%').height('100%').opacity(this.bodyOpacity)
+    }.width('100%').height('100%').backgroundColor(Color.Transparent).id('rkit-reading-surface')
       .onTouch((event: TouchEvent): void => {
         this.touching = event.type !== TouchType.Up && event.type !== TouchType.Cancel
         this.reportInteractionBusy()

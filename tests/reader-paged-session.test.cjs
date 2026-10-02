@@ -4,9 +4,11 @@ const load = require('./load-core.cjs')
 const { ReaderPagedSession } = load('ReaderPagedSession')
 const { ReaderUnitKey, ReaderUnit, ReaderPage, ReaderAsset } = load('ReaderSession')
 const { ReaderDisplayPolicy } = load('ReaderDisplayMap')
+const { ReaderAutoReadController } = load('ReaderAutoRead')
 const tick = () => new Promise(resolve => setImmediate(resolve))
 
-function setup({ count = 5, wide = [], fail = [], deferred = false, preload = false, preloadFailure = false } = {}) {
+function setup({ count = 5, wide = [], fail = [], deferred = false, preload = false, preloadFailure = false,
+  autoReadSource = null } = {}) {
   const key = new ReaderUnitKey('source', 'work', 'A')
   const calls = { open: [], load: [], release: [], pending: [], preload: [] }
   const catalog = {
@@ -39,7 +41,7 @@ function setup({ count = 5, wide = [], fail = [], deferred = false, preload = fa
       if (preloadFailure) throw new Error('cache unavailable')
     },
   } : null
-  const session = new ReaderPagedSession(catalog, assets, preloadHost)
+  const session = new ReaderPagedSession(catalog, assets, preloadHost, null, autoReadSource)
   session.setViewportActive(true)
   return { session, key, calls, catalog }
 }
@@ -594,6 +596,132 @@ test('cache preload failure is isolated from visible session readiness', async (
   await session.open(key); await tick()
   assert.equal(session.snapshot().phase, 'ready')
   assert.equal(session.snapshot().frames[0].part.sourceIndex, 0)
+  session.close()
+})
+
+test('automatic target source preparation works with zero normal preload and publishes resolved body metadata', async () => {
+  const preparations = []
+  const autoReadSource = {
+    async prepareAutoReadSource(page, cancellation) {
+      cancellation.check()
+      preparations.push(page.sourceIndex)
+      // Model NextE's preview/body split: the catalog gave a thumbnail-ready
+      // page, and only the host resolver proves its body source is usable.
+      assert.equal(page.thumbnail.available, true)
+      assert.equal(page.bodySourceReady, false)
+      const resolved = page.copy()
+      resolved.bodySourceReady = true
+      return resolved
+    },
+  }
+  const { session, key, calls } = setup({ count: 4, autoReadSource })
+  await session.open(key); await tick()
+  assert.equal(calls.preload.length, 0)
+  assert.equal(session.snapshot().window.some(item => item.index === 1), false)
+  session.requestAutoReadTargetSource(); await tick(); await tick()
+  assert.deepEqual(preparations, [1])
+  assert.equal(session.snapshot().pageMetadata.find(page => page.sourceIndex === 1)?.bodySourceReady, true)
+  assert.equal(session.snapshot().window.some(item => item.index === 1), false)
+  session.close()
+})
+
+test('stopping or closing fences a late automatic-target resolve', async () => {
+  for (const mode of ['stop', 'close']) {
+    const pending = []
+    const autoReadSource = {
+      prepareAutoReadSource(page, cancellation) {
+        return new Promise(resolve => pending.push({ page: page.copy(), cancellation, resolve }))
+      },
+    }
+    const { session, key } = setup({ count: 3, autoReadSource })
+    await session.open(key); await tick()
+    session.requestAutoReadTargetSource(); await tick(); await tick()
+    assert.equal(pending.length, 1)
+    if (mode === 'stop') session.cancelAutoReadSourcePreparations()
+    else session.close()
+    assert.equal(pending[0].cancellation.isCancelled(), true)
+    const resolved = pending[0].page.copy(); resolved.bodySourceReady = true
+    pending[0].resolve(resolved); await tick(); await tick()
+    if (mode === 'stop') {
+      const page = session.snapshot().pageMetadata.find(page => page.sourceIndex === 1)
+      assert.equal(page?.bodySourceReady, false)
+      session.close()
+    } else assert.equal(session.snapshot().phase, 'closed')
+  }
+})
+
+test('a target resolve retired by leave and return cannot publish at the same index', async () => {
+  const pending = []
+  const autoReadSource = {
+    prepareAutoReadSource(page, cancellation) {
+      return new Promise(resolve => pending.push({ page: page.copy(), cancellation, resolve }))
+    },
+  }
+  const { session, key } = setup({ count: 3, autoReadSource })
+  await session.open(key); await tick()
+  session.requestAutoReadTargetSource(); await tick(); await tick()
+  assert.equal(pending.length, 1)
+  session.move('next'); await tick()
+  session.move('previous'); await tick()
+  assert.equal(pending[0].cancellation.isCancelled(), true)
+  const stale = pending[0].page.copy(); stale.bodySourceReady = true
+  pending[0].resolve(stale); await tick(); await tick()
+  assert.equal(session.snapshot().pageMetadata.find(page => page.sourceIndex === 1)?.bodySourceReady, false)
+  session.requestAutoReadTargetSource(); await tick(); await tick()
+  assert.equal(pending.length, 2)
+  const current = pending[1].page.copy(); current.bodySourceReady = true
+  pending[1].resolve(current); await tick(); await tick()
+  assert.equal(session.snapshot().pageMetadata.find(page => page.sourceIndex === 1)?.bodySourceReady, true)
+  session.close()
+})
+
+test('successful manual target retry clears a preheat failure and restarts a fresh automatic dwell', async () => {
+  let sourceRequests = 0
+  const autoReadSource = {
+    async prepareAutoReadSource(page) {
+      sourceRequests += 1
+      if (sourceRequests === 1) throw new Error('temporary_source_failure')
+      const resolved = page.copy(); resolved.bodySourceReady = true
+      return resolved
+    },
+  }
+  const { session, key } = setup({ count: 3, fail: [1], autoReadSource })
+  await session.open(key); await tick()
+  decode(session, session.snapshot().frames[0])
+  session.requestAutoReadTargetSource(); await tick(); await tick(); await tick()
+  let state = session.snapshot()
+  assert.equal(sourceRequests, 1)
+  assert.equal(state.pageMetadata.find(page => page.sourceIndex === 1)?.bodySourceFailed, true)
+
+  session.move('next'); await tick()
+  state = session.snapshot()
+  const failed = state.frames[0]
+  assert.equal(failed.asset.phase, 'failed')
+  assert.equal(await session.retryItem(state.topologyRevision, state.displayKeys[state.displayIndex],
+    failed.slotId, failed.asset.requestId), true)
+  const retrying = session.snapshot().frames[0]
+  assert.equal(retrying.asset.phase, 'decoding')
+  decode(session, retrying)
+  state = session.snapshot()
+  const recovered = state.pageMetadata.find(page => page.sourceIndex === 1)
+  assert.equal(recovered?.bodySourceReady, true)
+  assert.equal(recovered?.bodySourceFailed, false)
+
+  session.move('previous'); await tick()
+  state = session.snapshot()
+  if (state.frames[0].asset.phase === 'decoding') decode(session, state.frames[0])
+  state = session.snapshot()
+  const timers = new Map(); let timerId = 0; let turns = 0
+  const controller = new ReaderAutoReadController(() => { turns += 1; return true }, {
+    set(callback, delay) { timers.set(++timerId, { callback, delay }); return timerId },
+    clear(id) { timers.delete(id) },
+  }, () => { session.requestAutoReadTargetSource() })
+  controller.update(state, true, false, 2, 'source'); controller.setEnabled(true)
+  assert.equal(timers.size, 1)
+  assert.equal([...timers.values()][0].delay, 2000)
+  const timer = [...timers.values()][0]; timers.clear(); timer.callback()
+  assert.equal(turns, 1)
+  assert.equal(sourceRequests, 1)
   session.close()
 })
 

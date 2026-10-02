@@ -1,31 +1,41 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const { readFileSync } = require('node:fs')
+const { join } = require('node:path')
 const load = require('./load-core.cjs')
 const { ReaderAutoReadController } = load('ReaderAutoRead')
 const { ReaderUnit, ReaderUnitKey, ReaderPage } = load('ReaderContent')
 const { ReaderSnapshot } = load('ReaderSession')
-const { ReaderPagedSnapshot, ReaderPagedFrame } = load('ReaderPagedSession')
+const { ReaderPagedSnapshot, ReaderPagedFrame, ReaderPagedItemSnapshot } = load('ReaderPagedSession')
 const { ReaderDisplayMap } = load('ReaderDisplayMap')
 function snapshot(index = 0, layout = 'spread', count = 6) {
   const s = new ReaderPagedSnapshot()
   s.unit = new ReaderUnit(new ReaderUnitKey('s', 'w', 'u'), 'title', count)
   s.phase = 'ready'; s.policy.layout = layout; s.policy.direction = 'rtl'; s.displayIndex = index
-  s.pageMetadata = Array.from({length: count}, (_, i) => new ReaderPage(s.unit.key, `p${i}`, i))
+  s.pageMetadata = Array.from({length: count}, (_, i) => {
+    const page = new ReaderPage(s.unit.key, `p${i}`, i)
+    page.thumbnail.available = true
+    page.bodySourceReady = true
+    return page
+  })
   const map = new ReaderDisplayMap(s.unit, s.pageMetadata, s.policy); s.displayCount = map.count()
-  s.frames = map.item(index).visualParts('rtl').map(part => {
+  const framesFor = itemIndex => map.item(itemIndex).visualParts('rtl').map(part => {
     const a = new ReaderSnapshot(); a.unit = s.unit.copy(); a.page = s.pageMetadata[part.sourceIndex].copy()
     a.sourceIndex = part.sourceIndex; a.phase = 'displayed'; a.uri = `file://${part.pageKey}`; a.assetRequestId = part.sourceIndex + 1
     return new ReaderPagedFrame(part.sourceIndex + 1, part, a)
   })
+  s.frames = framesFor(index)
+  s.window = Array.from({length: s.displayCount}, (_, itemIndex) =>
+    new ReaderPagedItemSnapshot(`item-${itemIndex}`, itemIndex, framesFor(itemIndex)))
   return s
 }
-function fixture() {
+function fixture(onTargetPending = null) {
   let id = 0, calls = 0
   const timers = new Map(), cancelled = []
   const c = new ReaderAutoReadController(() => { calls++; return true }, {
     set(callback, delay) { timers.set(++id, {callback, delay}); return id },
     clear(id) { const t = timers.get(id); if (t) cancelled.push(t.callback); timers.delete(id) }
-  })
+  }, onTargetPending)
   return { c, timers, cancelled, calls: () => calls,
     fire() { const [id, t] = [...timers][0]; timers.delete(id); t.callback() } }
 }
@@ -123,4 +133,36 @@ test('rejected callback with synchronous new-identity update preserves its singl
   const first = timers.get(1); timers.delete(1); first.cb()
   assert.equal(calls, 1); assert.equal(timers.size, 1); assert.equal(id, 2); assert.equal(timers.get(2).delay, 8000)
   first.cb(); assert.equal(calls, 1); assert.equal(timers.size, 1)
+})
+test('target-source requires body-source readiness rather than thumbnail availability, then waits after a recorded failure', () => {
+  const f = fixture(), s = snapshot(0, 'single', 3)
+  s.window = []
+  f.c.update(s, true, false, 2, 'source'); f.c.setEnabled(true)
+  f.fire(); assert.equal(f.calls(), 1)
+  let requested = 0
+  const unresolved = fixture(() => { requested++ }), previewOnly = snapshot(0, 'single', 3)
+  // This is the NextE counterexample: sUrl supplied a thumbnail, while the
+  // body imageUrl has not been resolved yet.
+  previewOnly.pageMetadata[1].thumbnail.available = true
+  previewOnly.pageMetadata[1].bodySourceReady = false
+  unresolved.c.update(previewOnly, true, false, 2, 'source'); unresolved.c.setEnabled(true)
+  unresolved.fire(); assert.equal(unresolved.calls(), 0); assert.equal(requested, 1); assert.equal(unresolved.timers.size, 0)
+  previewOnly.pageMetadata[1].bodySourceReady = true
+  unresolved.c.update(previewOnly, true, false, 2, 'source')
+  assert.equal(unresolved.timers.size, 1)
+  unresolved.fire(); assert.equal(unresolved.calls(), 1)
+  const blocked = fixture(), retry = snapshot(0, 'single', 3)
+  const retryNext = retry.window.find(item => item.index === 1)
+  retryNext.frames[0].asset.phase = 'failed'
+  blocked.c.update(retry, true, false, 2, 'source'); blocked.c.setEnabled(true)
+  blocked.fire(); assert.equal(blocked.calls(), 0); assert.equal(blocked.timers.size, 0)
+  retryNext.frames[0].asset.phase = 'asset'
+  blocked.c.update(retry, true, false, 2, 'source'); assert.equal(blocked.timers.size, 1)
+})
+
+test('surface stops target preparation whenever automatic reading becomes disabled', () => {
+  const source = readFileSync(join(__dirname, '../reader-ui/src/main/ets/ReaderSurface.ets'), 'utf8')
+  assert.match(source, /autoReadController\.subscribe\(\(enabled: boolean\): void => \{\s*this\.autoReadEnabled = enabled\s*if \(!enabled\) this\.session\.cancelAutoReadSourcePreparations\(\)/)
+  assert.match(source, /private toggleAutoRead\(\): void \{[\s\S]*?this\.autoReadController\.setEnabled\(!this\.autoReadController\.isEnabled\(\)\)/)
+  assert.match(source, /aboutToDisappear\(\): void \{[\s\S]*?this\.autoReadController\.close\(\)[\s\S]*?this\.session\.close\(\)/)
 })

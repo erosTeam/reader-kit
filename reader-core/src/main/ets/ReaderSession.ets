@@ -183,6 +183,15 @@ export interface ReaderPreloadHost {
   preload(page: ReaderPage, cancellation: ReaderCancellation): Promise<void>
 }
 
+/**
+ * Optional host bridge for an automatic-reading target. Unlike cache warming,
+ * it returns the refreshed body-source fact so the shared session can publish
+ * it without treating a thumbnail as a decoded or resolved body image.
+ */
+export interface ReaderAutoReadSourceHost {
+  prepareAutoReadSource(page: ReaderPage, cancellation: ReaderCancellation): Promise<ReaderPage>
+}
+
 /** A host-owned resolved recipe, not a downloaded asset or a persistent reader preference. */
 export interface ReaderOriginalAssetPlan {
   page: ReaderPage
