@@ -207,6 +207,19 @@ test('legacy null guard still starts the existing flight', () => {
   assert.equal(value.entry.phase, 'moving'); assert.equal(value.animations.length, 1)
 })
 
+test('whole-page preview with a different fitted aspect uses one atomic handoff', () => {
+  const value = scenario(null, 'whole-page')
+  // The snapshot may contain the whole page while its fitted thumbnail ratio
+  // differs from the decoded Reader leaf. A 140ms cross-fade would double it.
+  value.preview.source.rect = new ReaderEntryRect(40, 55, 100, 130)
+  value.preview.advance(); value.animations[0].onFinish()
+  value.target.decodedReady = true; value.entry.publishTarget(value.target); value.preview.advance()
+  const handoff = value.animations.at(-1)
+  assert.equal(handoff.duration, 0); assert.equal(handoff.onFinish, undefined)
+  assert.equal(value.entry.phase, 'finished'); assert.equal(value.entry.selectedOpacity, 1)
+  assert.equal(value.preview.previewOpacity, 0)
+})
+
 for (const coverage of ['unknown', 'whole-page']) {
   test(`${coverage}: actual advance preserves flight and selects the declared handoff opacity`, () => {
     const value = scenario(null, coverage)
