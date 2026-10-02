@@ -64,7 +64,7 @@ function surface(session) {
   const s=new Surface(),toasts=[]
   Object.assign(s,{session,state:session.snapshot(),active:true,closing:false,chromeCloseRequested:false,chromeDisposed:false,shareBusy:false,informationBusy:false,saveBusy:false,previewIndex:-1,
     saveFeedback:null,saveController:new core.ReaderImageSaveController(),shareController:new core.ReaderImageShareController(),autoReadController:new core.ReaderAutoReadController(()=>{}),
-    getUIContext:()=>({getPromptAction:()=>({showToast:v=>toasts.push(v.message)})}),invalidateChromeShow(){},input:null,entryTransition:null,
+    getUIContext:()=>({getPromptAction:()=>({showToast:v=>toasts.push(v.message)})}),invalidateChromeShow(){},syncPreferredVariant(){},input:null,entryTransition:null,
     mediaActions:null})
   s.saveController.subscribe(v=>s.saveBusy=v)
   return {s,toasts}
