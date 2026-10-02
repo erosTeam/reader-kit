@@ -51,7 +51,6 @@ export class ReaderAutoReadController {
     if (this.closed || enabled === this.enabled) return
     this.enabled = enabled
     this.fired = ''
-    if (!enabled) this.waitingForTarget = false
     this.cancelTimer()
     this.listener?.(enabled)
     this.schedule()
@@ -143,7 +142,7 @@ export class ReaderAutoReadController {
     this.timer = -1
   }
   private schedule(): void {
-    if (this.closed || !this.enabled || !this.foreground || this.blocked || !this.ready || this.waitingForTarget ||
+    if (this.closed || !this.enabled || !this.foreground || this.blocked || !this.ready ||
       this.timer !== -1 || this.identity === this.fired) return
     const generation = this.generation
     const identity = this.identity
