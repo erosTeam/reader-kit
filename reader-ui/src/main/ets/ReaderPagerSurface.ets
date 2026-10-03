@@ -95,6 +95,7 @@ export struct ReaderPagerSurface {
   @Event onBoundary: (direction: ReaderBoundaryDirection, topologyRevision: number,
     navigationRevision: number) => void = () => {}
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
+  @Event onPrepareTarget: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -117,6 +118,7 @@ export struct ReaderPagerSurface {
           onInputLockChange: this.onInputLockChange,
           onZoomedChange: this.onZoomedChange,
           onBoundary: this.onBoundary,
+          onPrepareTarget: this.onPrepareTarget,
           onSelect: this.onSelect, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
           onRetry: this.onRetry, onNoticeAction: this.onNoticeAction,
           onTap: this.onTap,
@@ -144,6 +146,7 @@ struct ReaderNativePager {
   @Event onBoundary: (direction: ReaderBoundaryDirection, topologyRevision: number,
     navigationRevision: number) => void = () => {}
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
+  @Event onPrepareTarget: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -364,7 +367,13 @@ struct ReaderNativePager {
     .width('100%').height('100%').id('rkit-native-pager')
     .onTouch((event: TouchEvent): void => { this.handleBoundaryTouch(event) })
     .onGestureSwipe((): void => { this.beginMotion() })
-    .onAnimationStart((): void => { this.beginMotion() })
+    .onAnimationStart((_index: number, targetIndex: number): void => {
+      this.beginMotion()
+      if (this.active && this.gestureTopology === this.snapshot.topologyRevision &&
+        this.gestureNavigation === this.snapshot.navigationRevision) {
+        this.onPrepareTarget(targetIndex, this.gestureTopology, this.gestureNavigation)
+      }
+    })
     .onScrollStateChanged((state: ScrollState): void => {
       if (state !== ScrollState.Idle) this.entryTransition?.cancel()
       this.moving = state !== ScrollState.Idle

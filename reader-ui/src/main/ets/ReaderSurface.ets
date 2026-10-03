@@ -898,6 +898,9 @@ export struct ReaderSurface {
               this.requestBoundaryChapter(direction, topology, navigation)
             },
             onTap: (x: number, y: number): void => { this.pageTap(x, y) },
+            onPrepareTarget: (index: number, topology: number, navigation: number): void => {
+              this.session.preparePagedTarget(index, topology, navigation)
+            },
             onSelect: (index: number, topology: number, navigation: number): void => {
               this.session.selectDisplay(index, topology, navigation)
             },
