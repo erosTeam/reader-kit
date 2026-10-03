@@ -985,7 +985,9 @@ export struct ReaderPagedImage {
         .rotate({ angle: this.rotateClockwise ? 90 : 0 })
       } else if (this.frame.asset.uri.length > 0) {
         Image(this.frame.asset.uri)
-          .width(this.renderWidth()).height(this.renderHeight())
+          // Follow the fitted parent in this layout pass, not its previous area callback.
+          .width(this.rotateClockwise ? this.renderWidth() : '100%')
+          .height(this.rotateClockwise ? this.renderHeight() : '100%')
           .interpolation(this.frame.asset.kind === 'original' ? this.imageInterpolation : ImageInterpolation.Low)
           .objectFit(this.thumbnailCover && this.frame.asset.kind === 'thumbnail' ? ImageFit.Cover : ImageFit.Contain)
           .rotate({ angle: this.rotateClockwise ? 90 : 0 })
