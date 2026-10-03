@@ -24,14 +24,28 @@ export class ReaderPagerCommand {
   }
 }
 
-/** Immutable within one topology revision; a changed topology gets a new native pager. */
+/** Native LazyForEach data source; map changes notify the retained Swiper. */
 class ReaderPagerIndexSource implements IDataSource {
   private keys: string[]
+  private listeners: DataChangeListener[] = []
   constructor(keys: string[]) { this.keys = keys.slice() }
   totalCount(): number { return this.keys.length }
   getData(index: number): string { return this.keys[index] }
-  registerDataChangeListener(_listener: DataChangeListener): void {}
-  unregisterDataChangeListener(_listener: DataChangeListener): void {}
+  setData(keys: string[]): void {
+    if (keys.length === this.keys.length && keys.every((key: string, index: number): boolean =>
+      key === this.keys[index])) return
+    this.keys = keys.slice()
+    this.listeners.forEach((listener: DataChangeListener): void => {
+      listener.onDatasetChange([{ type: DataOperationType.RELOAD }])
+    })
+  }
+  registerDataChangeListener(listener: DataChangeListener): void {
+    if (!this.listeners.includes(listener)) this.listeners.push(listener)
+  }
+  unregisterDataChangeListener(listener: DataChangeListener): void {
+    const index = this.listeners.indexOf(listener)
+    if (index >= 0) this.listeners.splice(index, 1)
+  }
 }
 
 /** Native page container only. Session ownership and diagnostic chrome stay outside. */
@@ -62,22 +76,20 @@ export struct ReaderPagerSurface {
   build() {
     Stack() {
       if (this.snapshot.displayCount > 0) {
-        ForEach([this.snapshot.topologyRevision], (revision: number) => {
-          ReaderNativePager({
-            imageInterpolation: this.imageInterpolation,
-            pageGap: this.pageGap,
-            snapshot: this.snapshot, active: this.active, createdRevision: revision,
-            command: this.command,
-            zoomResetCommand: this.zoomResetCommand,
-            entryTransition: this.entryTransition,
-            onInputLockChange: this.onInputLockChange,
-            onZoomedChange: this.onZoomedChange,
-            onBoundary: this.onBoundary,
-            onSelect: this.onSelect, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
-            onRetry: this.onRetry, onNoticeAction: this.onNoticeAction,
-            onTap: this.onTap,
-          })
-        }, (revision: number): string => `${revision}`)
+        ReaderNativePager({
+          imageInterpolation: this.imageInterpolation,
+          pageGap: this.pageGap,
+          snapshot: this.snapshot, active: this.active,
+          command: this.command,
+          zoomResetCommand: this.zoomResetCommand,
+          entryTransition: this.entryTransition,
+          onInputLockChange: this.onInputLockChange,
+          onZoomedChange: this.onZoomedChange,
+          onBoundary: this.onBoundary,
+          onSelect: this.onSelect, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
+          onRetry: this.onRetry, onNoticeAction: this.onNoticeAction,
+          onTap: this.onTap,
+        })
       } else if (this.snapshot.phase === 'idle' || this.snapshot.phase === 'catalog') {
         LoadingProgress().width(32).height(32)
       }
@@ -100,7 +112,6 @@ struct ReaderNativePager {
   @Event onTap: (xFraction: number, yFraction: number) => void = () => {}
   @Event onBoundary: (direction: ReaderBoundaryDirection, topologyRevision: number,
     navigationRevision: number) => void = () => {}
-  @Require @Param createdRevision: number
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -114,7 +125,9 @@ struct ReaderNativePager {
   private controller: SwiperController = new SwiperController()
   @Local private inputLocked: boolean = false
   @Local private moving: boolean = false
+  private gestureTopology: number = -1
   private gestureNavigation: number = -1
+  private lastTopology: number = -1
   private lastNavigation: number = -1
   private lastCommandSerial: number = 0
   private pendingChange: number = 0
@@ -134,6 +147,8 @@ struct ReaderNativePager {
         this.boundarySwipe.cancel()
         return
       }
+      this.gestureTopology = this.snapshot.topologyRevision
+      this.gestureNavigation = this.snapshot.navigationRevision
       this.boundaryTopology = this.snapshot.topologyRevision
       this.boundaryNavigation = this.snapshot.navigationRevision
       this.boundarySwipe.begin(point.windowX, point.windowY,
@@ -142,6 +157,8 @@ struct ReaderNativePager {
       return
     }
     if (event.type === TouchType.Cancel) {
+      this.gestureTopology = -1
+      this.gestureNavigation = -1
       this.boundarySwipe.cancel()
       return
     }
@@ -150,7 +167,7 @@ struct ReaderNativePager {
       this.snapshot.policy.pagingAxis === 'vertical' ? 'vertical' : 'horizontal',
       this.snapshot.policy.direction)
     if (direction !== null && this.active && this.snapshot.phase === 'ready' &&
-      this.createdRevision === this.snapshot.topologyRevision && this.boundaryTopology === this.snapshot.topologyRevision &&
+      this.boundaryTopology === this.snapshot.topologyRevision &&
       this.boundaryNavigation === this.snapshot.navigationRevision) {
       this.onBoundary(direction, this.boundaryTopology, this.boundaryNavigation)
     }
@@ -158,6 +175,7 @@ struct ReaderNativePager {
 
   aboutToAppear(): void {
     this.source = new ReaderPagerIndexSource(this.snapshot.displayKeys)
+    this.lastTopology = this.snapshot.topologyRevision
     this.lastNavigation = this.snapshot.navigationRevision
     this.reportExternalLock()
   }
@@ -166,13 +184,24 @@ struct ReaderNativePager {
     this.pendingChange = 0
   }
 
-  @Monitor('inputLocked', 'moving', 'active')
+  @Monitor('inputLocked', 'moving', 'active', 'snapshot')
   reportExternalLock(): void {
-    this.onInputLockChange(!this.active || this.inputLocked || this.moving, this.createdRevision)
+    this.onInputLockChange(!this.active || this.inputLocked || this.moving, this.snapshot.topologyRevision)
   }
 
   @Monitor('snapshot')
   onNavigationChanged(): void {
+    if (this.lastTopology !== this.snapshot.topologyRevision) {
+      this.lastTopology = this.snapshot.topologyRevision
+      if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
+      this.pendingChange = 0
+      this.inputLocked = false
+      this.moving = false
+      this.gestureTopology = -1
+      this.gestureNavigation = -1
+      this.boundarySwipe.cancel()
+      this.source.setData(this.snapshot.displayKeys)
+    }
     if (this.lastNavigation !== this.snapshot.navigationRevision) {
       this.lastNavigation = this.snapshot.navigationRevision
       this.inputLocked = false
@@ -185,6 +214,7 @@ struct ReaderNativePager {
     if (!this.active) {
       this.inputLocked = false
       this.moving = false
+      this.gestureTopology = -1
       this.gestureNavigation = -1
       if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
       this.pendingChange = 0
@@ -196,10 +226,10 @@ struct ReaderNativePager {
     const command = this.command
     if (command === null || command.serial <= this.lastCommandSerial) return
     this.lastCommandSerial = command.serial
-    if (!this.active || this.inputLocked || this.moving || command.topologyRevision !== this.createdRevision ||
-      command.topologyRevision !== this.snapshot.topologyRevision ||
+    if (!this.active || this.inputLocked || this.moving || command.topologyRevision !== this.snapshot.topologyRevision ||
       command.navigationRevision !== this.snapshot.navigationRevision ||
       command.targetIndex < 0 || command.targetIndex >= this.snapshot.displayCount) return
+    this.gestureTopology = command.topologyRevision
     this.gestureNavigation = command.navigationRevision
     this.beginMotion()
     try {
@@ -208,6 +238,7 @@ struct ReaderNativePager {
         `topology=${command.topologyRevision} navigation=${command.navigationRevision}`)
     } catch (error) {
       this.moving = false
+      this.gestureTopology = -1
       this.gestureNavigation = -1
       console.warn(`[ReaderPager] command_failed=${command.serial} ${(error as Error).message}`)
     }
@@ -215,25 +246,26 @@ struct ReaderNativePager {
 
   private beginMotion(): void {
     this.entryTransition?.cancel()
-    if (this.gestureNavigation < 0) this.gestureNavigation = this.snapshot.navigationRevision
     this.moving = true
   }
 
   private queueSelection(index: number): void {
-    if (index === this.snapshot.displayIndex) {
-      this.gestureNavigation = -1
-      return
-    }
-    const navigation = this.gestureNavigation >= 0 ? this.gestureNavigation : this.snapshot.navigationRevision
+    // Declarative map/index updates are not user navigation. Only a gesture or
+    // native command started in this map may publish a new reading selection.
+    const topology = this.gestureTopology
+    const navigation = this.gestureNavigation
+    this.gestureTopology = -1
     this.gestureNavigation = -1
+    if (index === this.snapshot.displayIndex || topology !== this.snapshot.topologyRevision ||
+      navigation !== this.snapshot.navigationRevision) return
     if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
-    // ArkUI forbids refreshing LazyForEach child UI recursively inside onChange.
-    // Keep the revision captured by this native pager, not a newer map's index space.
+    // LazyForEach cannot refresh its children recursively from native onChange.
     this.pendingChange = setTimeout((): void => {
       this.pendingChange = 0
-      if (!this.active) return
-      this.onSelect(index, this.createdRevision, navigation)
-      console.info(`[ReaderPager] selected=${index} topology=${this.createdRevision} navigation=${navigation}`)
+      if (!this.active || topology !== this.snapshot.topologyRevision ||
+        navigation !== this.snapshot.navigationRevision) return
+      this.onSelect(index, topology, navigation)
+      console.info(`[ReaderPager] selected=${index} topology=${topology} navigation=${navigation}`)
     }, 0)
   }
 
@@ -253,21 +285,21 @@ struct ReaderNativePager {
           },
           onZoomedChange: (zoomed: boolean): void => {
             if (key === this.snapshot.displayKeys[this.snapshot.displayIndex]) {
-              this.onZoomedChange(zoomed, this.createdRevision, this.snapshot.navigationRevision)
+              this.onZoomedChange(zoomed, this.snapshot.topologyRevision, this.snapshot.navigationRevision)
             }
           },
           onPresented: this.onPresented,
           onTap: this.onTap,
           onVisible: this.onVisible,
           onRetry: (slotId: number, requestId: number): void => {
-            this.onRetry(this.createdRevision, key, slotId, requestId)
+            this.onRetry(this.snapshot.topologyRevision, key, slotId, requestId)
           },
           onNoticeAction: (slotId: number, requestId: number, noticeId: string): Promise<boolean> => {
-            return this.onNoticeAction(this.createdRevision, this.snapshot.navigationRevision,
+            return this.onNoticeAction(this.snapshot.topologyRevision, this.snapshot.navigationRevision,
               key, slotId, requestId, noticeId)
           },
           onFailed: (_selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {
-            this.onFailed(this.createdRevision, key, slotId, requestId, fragment)
+            this.onFailed(this.snapshot.topologyRevision, key, slotId, requestId, fragment)
           },
         })
       }, (key: string): string => readerElementKey(key))
