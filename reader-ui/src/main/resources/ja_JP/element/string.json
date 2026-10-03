@@ -146,6 +146,11 @@
     { "name": "rkit_tap_menu", "value": "メニュー" },
     { "name": "rkit_loading_resolving", "value": "画像を解析中" },
     { "name": "rkit_loading_image", "value": "画像を読み込み中" },
-    { "name": "rkit_loading_decoding", "value": "画像を準備中" }
+    { "name": "rkit_loading_decoding", "value": "画像を準備中" },
+    { "name": "rkit_read_mode_ltr", "value": "左から右" },
+    { "name": "rkit_read_mode_rtl", "value": "右から左" },
+    { "name": "rkit_read_mode_ttb", "value": "上から下" },
+    { "name": "rkit_read_mode_vertical", "value": "縦スクロール" },
+    { "name": "rkit_reading_direction", "value": "読む方向" }
   ]
 }

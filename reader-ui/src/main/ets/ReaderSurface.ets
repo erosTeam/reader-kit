@@ -6,6 +6,7 @@ import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment,
 import { ReaderPagerCommand, ReaderPagerSurface } from './ReaderPagerSurface'
 import { ReaderContinuousSurface } from './ReaderContinuousSurface'
 import { ReaderChrome, ReaderRuntimePolicyIntent } from './ReaderChrome'
+import { ReaderModeControlParams } from './ReaderModeControl'
 import { ReaderPageStatus } from './ReaderPageStatus'
 import { ReaderThumbnailRail } from './ReaderThumbnailRail'
 import { BusinessError } from '@kit.BasicServicesKit'
@@ -107,6 +108,8 @@ export struct ReaderSurface {
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPreview: ReaderEntryPreviewSource | null = null
   @Param contentOpacity: number = 1
+  @Param horizontalSpreadEnabled: boolean | null = null
+  @BuilderParam modeControl?: (params: ReaderModeControlParams) => void
   @BuilderParam openingPlaceholder: () => void = this.DefaultOpeningPlaceholder
   @Event onClose: (context: ReaderCloseContext | null) => void = () => {}
   /** Raw Image presentation, before core incorporates the measured original geometry. */
@@ -847,6 +850,11 @@ export struct ReaderSurface {
     this.syncAutoRead()
   }
 
+  @Builder
+  private HostModeControl(params: ReaderModeControlParams) {
+    if (this.modeControl !== undefined) this.modeControl(params)
+  }
+
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
       // The canvas and Reader body have distinct transition owners. A host can
@@ -986,9 +994,11 @@ export struct ReaderSurface {
           .id('rkit-thumbnail-rail-wrapper')
       }
       if (this.chromeVisible) {
-        ReaderChrome({ snapshot: this.state, active: this.active, topInset: this.topInset,
+        ReaderChrome({ hostModeControlAvailable: this.modeControl !== undefined,
+          modeControl: (params: ReaderModeControlParams): void => { this.HostModeControl(params) },
+          snapshot: this.state, active: this.active, topInset: this.topInset,
           bottomInset: this.bottomInset, accent: this.accent, onClose: (): void => this.requestClose(),
-          thumbnailsVisible: this.thumbnailsVisible,
+          thumbnailsVisible: this.thumbnailsVisible, horizontalSpreadEnabled: this.horizontalSpreadEnabled,
           chapterNavigationAvailable: this.chapterNavigation !== null,
           chapterNavigationBusy: this.chapterNavigation?.busy ?? false,
           onChapter: (direction: 'previous' | 'next', source: ReaderUnitKey): void => {

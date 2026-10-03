@@ -1,3 +1,4 @@
+import { ReaderModeControlParams } from './ReaderModeControl'
 import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPolicy, ReaderUnitKey,
   ReaderImageSaveChoice, ReaderImageSaveTarget } from '@reader-kit/core'
 import { uiMaterial } from '@kit.ArkUI'
@@ -7,12 +8,15 @@ import { ReaderHostAction } from './ReaderHostAction'
 import { readerElementKey } from './ReaderElementKey'
 import { ReaderEnhancementStatus } from './ReaderEnhancementStatus'
 
-export type ReaderRuntimePolicyIntent = 'layout' | 'direction' | 'spread_layout' |
+export type ReaderRuntimePolicyIntent = 'layout' | 'direction' | 'reading_mode' | 'spread_layout' |
   'first_page_alone' | 'split_wide_pages'
 
 /** Default overlay chrome. It emits intentions; it never opens a catalog or writes preferences. */
 @ComponentV2
 export struct ReaderChrome {
+  @Param hostModeControlAvailable: boolean = false
+  @BuilderParam modeControl: (params: ReaderModeControlParams) => void = this.EmptyModeControl
+  @Param horizontalSpreadEnabled: boolean | null = null
   @Require @Param snapshot: ReaderPagedSnapshot
   @Param active: boolean = true
   @Param topInset: number = 0
@@ -142,6 +146,55 @@ export struct ReaderChrome {
     policy.layout = layout
     policy.pagingAxis = axis
     this.onPolicy(policy, 'layout')
+  }
+
+  private readingMode(): string {
+    if (this.snapshot.policy.layout === 'continuous') return 'continuous'
+    if (this.snapshot.policy.pagingAxis === 'vertical') return 'vertical'
+    return this.snapshot.policy.direction
+  }
+
+  private readingModeIcon(mode: string): Resource {
+    if (mode === 'rtl') return $r('sys.symbol.arrow_left_and_square')
+    if (mode === 'vertical') return $r('sys.symbol.square_and_arrow_down_1')
+    if (mode === 'continuous') return $r('sys.symbol.scroll_vertical')
+    return $r('sys.symbol.arrow_right_and_square')
+  }
+
+  private selectReadingMode(mode: string): void {
+    if (!this.active || this.snapshot.phase !== 'ready' || mode === this.readingMode()) return
+    const policy = this.snapshot.policy.copy()
+    const horizontal = mode === 'ltr' || mode === 'rtl'
+    policy.layout = mode === 'continuous' ? 'continuous' :
+      horizontal && (this.horizontalSpreadEnabled ?? policy.layout === 'spread') ? 'spread' : 'single'
+    policy.pagingAxis = mode === 'vertical' ? 'vertical' : 'horizontal'
+    policy.direction = mode === 'rtl' ? 'rtl' : 'ltr'
+    this.onPolicy(policy, 'reading_mode')
+  }
+
+  @Builder
+  private EmptyModeControl(_params: ReaderModeControlParams) {}
+
+  @Builder
+  private ReadingModeMenu() {
+    Menu() {
+      MenuItem({ content: $r('app.string.rkit_read_mode_ltr'),
+        symbolStartIcon: new SymbolGlyphModifier(this.readingModeIcon('ltr')),
+        symbolEndIcon: this.readingMode() === 'ltr' ? new SymbolGlyphModifier($r('sys.symbol.checkmark')) : undefined })
+        .id('rkit-mode-ltr').onClick((): void => { this.selectReadingMode('ltr') })
+      MenuItem({ content: $r('app.string.rkit_read_mode_rtl'),
+        symbolStartIcon: new SymbolGlyphModifier(this.readingModeIcon('rtl')),
+        symbolEndIcon: this.readingMode() === 'rtl' ? new SymbolGlyphModifier($r('sys.symbol.checkmark')) : undefined })
+        .id('rkit-mode-rtl').onClick((): void => { this.selectReadingMode('rtl') })
+      MenuItem({ content: $r('app.string.rkit_read_mode_ttb'),
+        symbolStartIcon: new SymbolGlyphModifier(this.readingModeIcon('vertical')),
+        symbolEndIcon: this.readingMode() === 'vertical' ? new SymbolGlyphModifier($r('sys.symbol.checkmark')) : undefined })
+        .id('rkit-mode-vertical').onClick((): void => { this.selectReadingMode('vertical') })
+      MenuItem({ content: $r('app.string.rkit_read_mode_vertical'),
+        symbolStartIcon: new SymbolGlyphModifier(this.readingModeIcon('continuous')),
+        symbolEndIcon: this.readingMode() === 'continuous' ? new SymbolGlyphModifier($r('sys.symbol.checkmark')) : undefined })
+        .id('rkit-mode-continuous').onClick((): void => { this.selectReadingMode('continuous') })
+    }
   }
 
   private toggleSpreadLayout(): void {
@@ -643,17 +696,24 @@ export struct ReaderChrome {
             .enabled(this.active && this.snapshot.phase === 'ready' && this.snapshot.policy.layout !== 'continuous')
             .id('rkit-toggle-spread').accessibilityText($r('app.string.rkit_spread'))
             .onClick((): void => { this.setLayout(this.snapshot.policy.layout === 'spread' ? 'single' : 'spread') })
-          Button({ type: ButtonType.Circle }) {
-            SymbolGlyph(this.snapshot.policy.layout === 'continuous' || this.snapshot.policy.pagingAxis === 'vertical' ?
-              $r('sys.symbol.scroll_vertical') :
-              this.snapshot.policy.direction === 'rtl' ? $r('sys.symbol.arrow_left_and_square') : $r('sys.symbol.arrow_right_and_square')).fontSize(22).fontColor([Color.White])
-          }.width(44).height(44).backgroundColor(Color.Transparent)
-            .enabled(this.active && this.snapshot.phase === 'ready')
-            .id('rkit-reading-mode').accessibilityText($r('app.string.rkit_runtime_settings'))
-            .bindMenu(this.RuntimeMenu, {
-              aboutToAppear: (): void => { this.onMenuVisible(true) },
-              onDisappear: (): void => { this.onMenuVisible(false) },
+          if (this.hostModeControlAvailable) {
+            this.modeControl({ policy: this.snapshot.policy, enabled: this.active && this.snapshot.phase === 'ready',
+              onChange: (policy: ReaderDisplayPolicy): void => {
+                if (this.active && this.snapshot.phase === 'ready') this.onPolicy(policy, 'reading_mode')
+              },
+              onMenuVisible: this.onMenuVisible,
             })
+          } else {
+            Button({ type: ButtonType.Circle }) {
+              SymbolGlyph(this.readingModeIcon(this.readingMode())).fontSize(22).fontColor([Color.White])
+            }.width(44).height(44).backgroundColor(Color.Transparent)
+              .enabled(this.active && this.snapshot.phase === 'ready')
+              .id('rkit-reading-mode').accessibilityText($r('app.string.rkit_reading_direction'))
+              .bindMenu(this.ReadingModeMenu, {
+                aboutToAppear: (): void => { this.onMenuVisible(true) },
+                onDisappear: (): void => { this.onMenuVisible(false) },
+              })
+          }
         }.width('100%').alignItems(VerticalAlign.Center)
       }.width('100%').height(this.bottomInset + 112)
         .padding({ left: 16, right: 16, top: 8, bottom: this.bottomInset + 8 })

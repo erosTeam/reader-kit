@@ -146,6 +146,11 @@
     { "name": "rkit_tap_menu", "value": "Menu" },
     { "name": "rkit_loading_resolving", "value": "Resolving image" },
     { "name": "rkit_loading_image", "value": "Loading image" },
-    { "name": "rkit_loading_decoding", "value": "Preparing image" }
+    { "name": "rkit_loading_decoding", "value": "Preparing image" },
+    { "name": "rkit_read_mode_ltr", "value": "Left to right" },
+    { "name": "rkit_read_mode_rtl", "value": "Right to left" },
+    { "name": "rkit_read_mode_ttb", "value": "Top to bottom" },
+    { "name": "rkit_read_mode_vertical", "value": "Continuous vertical" },
+    { "name": "rkit_reading_direction", "value": "Reading direction" }
   ]
 }
