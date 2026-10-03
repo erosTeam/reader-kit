@@ -157,6 +157,8 @@ struct ReaderNativePager {
       _slotId: number, _requestId: number, _noticeId: string): Promise<boolean> => false
   private source: ReaderPagerIndexSource = new ReaderPagerIndexSource()
   private controller: SwiperController = new SwiperController()
+  @Local private viewportWidth: number = 1
+  @Local private viewportHeight: number = 1
   @Local private inputLocked: boolean = false
   @Local private moving: boolean = false
   private gestureTopology: number = -1
@@ -329,6 +331,7 @@ struct ReaderNativePager {
         ReaderPagedViewport({
           imageInterpolation: this.imageInterpolation,
           pageGap: this.pageGap,
+          viewportWidth: this.viewportWidth, viewportHeight: this.viewportHeight,
           snapshot: this.snapshot.forItem(item.displayKey),
           entryTransition: item.displayKey === this.snapshot.displayKeys[this.snapshot.displayIndex] ? this.entryTransition : null,
           selected: item.displayKey === this.snapshot.displayKeys[this.snapshot.displayIndex],
@@ -365,6 +368,10 @@ struct ReaderNativePager {
     .loop(false).indicator(false).cachedCount(1)
     .disableSwipe(!this.active || this.snapshot.phase !== 'ready' || this.inputLocked)
     .width('100%').height('100%').id('rkit-native-pager')
+    .onAreaChange((_old: Area, area: Area): void => {
+      this.viewportWidth = Math.max(1, Number(area.width))
+      this.viewportHeight = Math.max(1, Number(area.height))
+    })
     .onTouch((event: TouchEvent): void => { this.handleBoundaryTouch(event) })
     .onGestureSwipe((): void => { this.beginMotion() })
     .onAnimationStart((_index: number, targetIndex: number): void => {
