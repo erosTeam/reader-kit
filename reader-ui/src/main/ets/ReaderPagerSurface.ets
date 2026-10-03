@@ -174,12 +174,18 @@ struct ReaderNativePager {
     }
     const point = event.changedTouches[0]
     if (event.type === TouchType.Down) {
-      if (this.inputLocked || this.moving) {
+      if (this.inputLocked) {
         this.boundarySwipe.cancel()
         return
       }
+      // Param propagation can trail our just-published native selection.
+      this.gestureNavigation = this.gestureTopology === this.snapshot.topologyRevision ?
+        Math.max(this.gestureNavigation, this.snapshot.navigationRevision) : this.snapshot.navigationRevision
       this.gestureTopology = this.snapshot.topologyRevision
-      this.gestureNavigation = this.snapshot.navigationRevision
+      if (this.moving) {
+        this.boundarySwipe.cancel()
+        return
+      }
       this.boundaryTopology = this.snapshot.topologyRevision
       this.boundaryNavigation = this.snapshot.navigationRevision
       this.boundarySwipe.begin(point.windowX, point.windowY,
@@ -234,6 +240,12 @@ struct ReaderNativePager {
       this.source.setData(this.snapshot)
     }
     if (this.lastNavigation !== this.snapshot.navigationRevision) {
+      // Native commits advance their live stamp before publication. Every other
+      // navigation supersedes the interaction, even when the map is unchanged.
+      if (this.gestureNavigation !== this.snapshot.navigationRevision) {
+        this.gestureTopology = -1
+        this.gestureNavigation = -1
+      }
       this.lastNavigation = this.snapshot.navigationRevision
       this.inputLocked = false
       this.boundarySwipe.cancel()
@@ -282,13 +294,15 @@ struct ReaderNativePager {
   }
 
   private queueSelection(index: number): void {
-    // Declarative map/index updates are not user navigation. Only a gesture or
-    // native command started in this map may publish a new reading selection.
+    // Declarative echoes do not consume a gesture that has already started.
+    if (index === this.snapshot.displayIndex) {
+      if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
+      this.pendingChange = 0
+      return
+    }
     const topology = this.gestureTopology
     const navigation = this.gestureNavigation
-    this.gestureTopology = -1
-    this.gestureNavigation = -1
-    if (index === this.snapshot.displayIndex || topology !== this.snapshot.topologyRevision ||
+    if (topology !== this.snapshot.topologyRevision ||
       navigation !== this.snapshot.navigationRevision) return
     if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
     // LazyForEach cannot refresh its children recursively from native onChange.
@@ -296,6 +310,11 @@ struct ReaderNativePager {
       this.pendingChange = 0
       if (!this.active || topology !== this.snapshot.topologyRevision ||
         navigation !== this.snapshot.navigationRevision) return
+      // A new Down can arrive between onChange and this deferred publication.
+      // Carry that interaction through our own commit, not through an external seek.
+      if (this.gestureTopology === topology && this.gestureNavigation === navigation) {
+        this.gestureNavigation = navigation + 1
+      }
       this.onSelect(index, topology, navigation)
       console.info(`[ReaderPager] selected=${index} topology=${topology} navigation=${navigation}`)
     }, 0)
