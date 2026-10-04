@@ -46,6 +46,24 @@ test('entry waits for actual decode after movement, then finishes the same selec
   entry.finish(); assert.equal(entry.phase, 'finished')
 })
 
+test('decoded entry frame cannot hide feedback for a retry, another slot or another part', () => {
+  const { entry, state, target } = scenario()
+  assert.equal(entry.hasDecodedFrame(state.frames[0]), false)
+  entry.publishTarget(target())
+  assert.equal(entry.hasDecodedFrame(state.frames[0]), false)
+  const decoded = target(); decoded.decodedReady = true
+  entry.publishTarget(decoded)
+  assert.equal(entry.hasDecodedFrame(state.frames[0]), true)
+  entry.beginMove(); entry.arrived(); entry.reveal(); entry.finish()
+  assert.equal(entry.hasDecodedFrame(state.frames[0]), true)
+  for (const change of [f => f.asset.requestId++, f => f.asset.assetRequestId++, f => f.slotId++,
+    f => f.part.sourceIndex++, f => f.part.pageKey = 'other', f => f.part.fragment = 'right']) {
+    const current = state.frames[0]
+    const other = new core.ReaderPagedFrame(current.slotId, current.part.copy(), current.asset.copy()); change(other)
+    assert.equal(entry.hasDecodedFrame(other), false)
+  }
+})
+
 test('stale request and wrong original page cannot replace the published target', () => {
   const { entry, target } = scenario()
   for (const change of [t => t.requestId++, t => t.assetRequestId++, t => t.slotId++, t => t.selectionId++,

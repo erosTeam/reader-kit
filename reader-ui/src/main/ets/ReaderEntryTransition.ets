@@ -85,6 +85,14 @@ export class ReaderEntryTransition {
       (this.requestedPart.pageKey === null || part.pageKey === this.requestedPart.pageKey)
   }
 
+  /** Entry loading ends at this Image's decode, before the resource-retirement ACK. */
+  hasDecodedFrame(frame: ReaderPagedFrame): boolean {
+    const target = this.target
+    return target !== null && target.decodedReady && !target.failed && this.matches(frame.part) &&
+      target.slotId === frame.slotId && target.requestId === frame.asset.requestId &&
+      target.assetRequestId === frame.asset.assetRequestId
+  }
+
   /** Called by the actual session owner before any child layout/decode callback. */
   update(snapshot: ReaderPagedSnapshot): void {
     if (!this.pending() || snapshot.phase === 'idle' || snapshot.phase === 'catalog') return

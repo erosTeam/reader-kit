@@ -648,8 +648,11 @@ struct ReaderPagedCell {
             .zIndex(this.frame().asset.phase === 'displayed' ? 1 : 0)
         }
       }
-      if (this.frame().asset.isAssetLoading() || this.preparingAsset()) {
+      if ((this.frame().asset.isAssetLoading() && this.entryTransition?.hasDecodedFrame(this.frame()) !== true) ||
+        this.preparingAsset()) {
         ReaderLoadingStage({
+          showTransitionBackground: this.entryTransition?.pending() === true &&
+            this.entryTransition.matches(this.frame().part),
           label: this.preparingAsset() || this.frame().asset.phase === 'idle' ? $r('app.string.rkit_loading_resolving')
             : this.frame().asset.phase === 'decoding' ? $r('app.string.rkit_loading_decoding')
               : $r('app.string.rkit_loading_image'),

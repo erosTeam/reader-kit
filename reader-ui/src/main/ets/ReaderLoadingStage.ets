@@ -21,6 +21,9 @@ const LOADING_BAR_FG: ResourceColor = Color.White
 const LOADING_STAGE_SPACE: number = 8
 const LOADING_STAGE_PADDING: number = 24
 const LOADING_STAGE_FONT: number = 14
+const LOADING_TRANSITION_PANEL_COLOR: ResourceColor = '#665F6368'
+const LOADING_TRANSITION_PANEL_RADIUS: number = 24
+const LOADING_TRANSITION_PANEL_BOTTOM: number = 16
 
 @ComponentV2
 struct ReaderLoadingBar {
@@ -122,6 +125,7 @@ struct ReaderLoadingBar {
           .backgroundColor(this.barFillColor)
           .borderRadius(LOADING_BAR_RADIUS)
           .animation({ duration: LOADING_PROGRESS_ANIM_DURATION, curve: Curve.EaseOut })
+          .transition(TransitionEffect.IDENTITY)
       } else {
         Row()
           .width(this.sliderWidth())
@@ -130,6 +134,7 @@ struct ReaderLoadingBar {
           .borderRadius(LOADING_BAR_RADIUS)
           .translate({ x: this.sliderX() })
           .animation({ duration: LOADING_INDETERMINATE_ANIM_DURATION, curve: Curve.EaseInOut })
+          .transition(TransitionEffect.IDENTITY)
       }
     }
     .width(LOADING_BAR_WIDTH_PERCENT)
@@ -146,14 +151,15 @@ struct ReaderLoadingBar {
 }
 
 /**
- * Shared loading presentation. Plain (non-transition-panel) mode is used by
- * the paged cell; the host transition proxy keeps its own panel presentation.
+ * Shared loading presentation, including the legacy panel that keeps loading
+ * readable over retained entry pixels. The host retains proxy ownership.
  */
 @ComponentV2
 export struct ReaderLoadingStage {
   @Param label: ResourceStr = ''
   @Param loaded: number = 0
   @Param total: number = 0
+  @Param showTransitionBackground: boolean = false
 
   private hasProgress(): boolean {
     return this.total > 0
@@ -186,7 +192,8 @@ export struct ReaderLoadingStage {
       .textAlign(TextAlign.Center)
   }
 
-  build() {
+  @Builder
+  private LoadingContent() {
     Column({ space: LOADING_STAGE_SPACE }) {
       this.LoadingElements()
     }
@@ -195,5 +202,30 @@ export struct ReaderLoadingStage {
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .padding(LOADING_STAGE_PADDING)
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.Center }) {
+      if (this.showTransitionBackground) {
+        Column({ space: LOADING_STAGE_SPACE }) {
+          this.LoadingElements()
+        }
+        .width(LOADING_BAR_WIDTH_PERCENT)
+        .constraintSize({ maxWidth: LOADING_BAR_MAX_WIDTH + LOADING_STAGE_PADDING * 2 })
+        .alignItems(HorizontalAlign.Center)
+        .padding({
+          top: LOADING_STAGE_PADDING + LOADING_TRANSITION_PANEL_BOTTOM,
+          bottom: LOADING_TRANSITION_PANEL_BOTTOM,
+          left: LOADING_STAGE_PADDING,
+          right: LOADING_STAGE_PADDING,
+        })
+        .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN)
+        .backgroundColor(LOADING_TRANSITION_PANEL_COLOR)
+        .borderRadius(LOADING_TRANSITION_PANEL_RADIUS)
+        .clip(true)
+      } else {
+        this.LoadingContent()
+      }
+    }.width('100%').height('100%')
   }
 }

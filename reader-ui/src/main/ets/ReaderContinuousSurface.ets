@@ -593,8 +593,12 @@ struct ReaderContinuousCell {
           }
         }, (frame: ReaderPagedFrame): string =>
           readerElementKey(`${frame.slotId}`))
-        if (this.snapshot.frames.length === 0 || this.snapshot.frames[0].asset.isAssetLoading() || this.preparingAsset()) {
+        if (this.snapshot.frames.length === 0 ||
+          (this.snapshot.frames[0].asset.isAssetLoading() &&
+            this.entryTransition?.hasDecodedFrame(this.snapshot.frames[0]) !== true) || this.preparingAsset()) {
           ReaderLoadingStage({
+            showTransitionBackground: this.entryTransition?.pending() === true &&
+              this.snapshot.frames.length > 0 && this.entryTransition.matches(this.snapshot.frames[0].part),
             label: this.preparingAsset() || this.snapshot.frames.length === 0 || this.snapshot.frames[0].asset.phase === 'idle'
               ? $r('app.string.rkit_loading_resolving')
               : this.snapshot.frames[0].asset.phase === 'decoding'
