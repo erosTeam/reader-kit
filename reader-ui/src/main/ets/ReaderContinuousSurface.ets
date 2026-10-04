@@ -586,10 +586,13 @@ struct ReaderContinuousCell {
               onPresented: this.onPresented,
               onFailed: this.onFailed,
             })
-              .onDisAppear((): void => { this.onRetired(frame.slotId, frame.asset.assetRequestId) })
+              .onDisAppear((): void => {
+                const current = this.snapshot.frames[0]
+                if (current !== undefined) this.onRetired(current.slotId, current.asset.assetRequestId)
+              })
           }
         }, (frame: ReaderPagedFrame): string =>
-          readerElementKey(`${frame.slotId}:${frame.asset.assetRequestId}`))
+          readerElementKey(`${frame.slotId}`))
         if (this.snapshot.frames.length === 0 || this.snapshot.frames[0].asset.isAssetLoading() || this.preparingAsset()) {
           ReaderLoadingStage({
             label: this.preparingAsset() || this.snapshot.frames.length === 0 || this.snapshot.frames[0].asset.phase === 'idle'
@@ -599,7 +602,7 @@ struct ReaderContinuousCell {
                   : $r('app.string.rkit_loading_image'),
             loaded: this.preparingAsset() || this.snapshot.frames.length === 0 ? 0 : this.snapshot.frames[0].asset.loadProgressLoaded,
             total: this.preparingAsset() || this.snapshot.frames.length === 0 ? 0 : this.snapshot.frames[0].asset.loadProgressTotal,
-          })
+          }).zIndex(2)
         }
       }.width('100%').aspectRatio(this.imageAspectRatio)
         .id(`rkit-continuous-page-${this.snapshot.displayIndex}`)

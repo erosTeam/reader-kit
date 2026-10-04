@@ -11,6 +11,7 @@ import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { normalizedReaderPageGap } from './ReaderPageGap'
 import { readerElementKey } from './ReaderElementKey'
 import { ReaderLoadingStage } from './ReaderLoadingStage'
+import { readerRetainedFrame } from './ReaderRetainedFrame'
 
 class ReaderEntryAfterLayout extends FrameCallback {
   private action: () => void
@@ -522,28 +523,7 @@ struct ReaderPagedCell {
   }
 
   private syncRetainedFrame(): void {
-    const frame = this.frame()
-    const retainedUri = frame.asset.retainedUri
-    const retainedRequest = frame.asset.retainedAssetRequestId
-    // Do not collapse equal URI strings. A force reload is a new presentation
-    // epoch, and ArkUI may not emit onComplete when one Image node keeps the
-    // same file source. The separate candidate site below owns that callback.
-    if (retainedUri.length === 0 || retainedRequest <= 0) {
-      this.retainedFrameValue = null
-      return
-    }
-    if (this.retainedFrameValue?.asset.uri === retainedUri &&
-      this.retainedFrameValue.asset.assetRequestId === retainedRequest) return
-    const asset = frame.asset.copy()
-    asset.phase = 'displayed'
-    asset.uri = retainedUri
-    asset.requestId = retainedRequest
-    asset.assetRequestId = retainedRequest
-    asset.retainedUri = ''
-    asset.retainedAssetRequestId = 0
-    const retained = new ReaderPagedFrame(frame.slotId, frame.part, asset, frame.crop)
-    retained.cropPending = frame.cropPending
-    this.retainedFrameValue = retained
+    this.retainedFrameValue = readerRetainedFrame(this.frame(), this.retainedFrameValue)
   }
 
   aboutToAppear(): void { this.syncRetainedFrame() }
