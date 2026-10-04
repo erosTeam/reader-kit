@@ -625,6 +625,11 @@ struct ReaderPagedCell {
         })
           .width(this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy))
           .height(this.imageHeight())
+          // Publish an ordinary first image with its loading sibling from the
+          // same cell snapshot. Entry pixels and retained replacements keep
+          // their existing independent handoff and composed-frame ownership.
+          .opacity(this.entryTransition === null && this.frame().asset.phase === 'decoding' &&
+            this.frame().asset.retainedUri.length === 0 ? 0 : 1)
           .zIndex(this.retainedFrameValue !== null && this.frame().asset.phase === 'decoding' ? 1 : 0)
         if (this.retainedFrameValue !== null) {
           ReaderPagedImage({

@@ -586,6 +586,8 @@ struct ReaderContinuousCell {
               onPresented: this.onPresented,
               onFailed: this.onFailed,
             })
+              .opacity(this.entryTransition === null && this.snapshot.frames[0].asset.phase === 'decoding' &&
+                this.snapshot.frames[0].asset.retainedUri.length === 0 ? 0 : 1)
               .onDisAppear((): void => {
                 const current = this.snapshot.frames[0]
                 if (current !== undefined) this.onRetired(current.slotId, current.asset.assetRequestId)
