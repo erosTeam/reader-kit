@@ -18,6 +18,12 @@ class ReaderEntryAfterLayout extends FrameCallback {
   onIdle(_remaining: number): void { this.action() }
 }
 
+class ReaderImageBeforeFrame extends FrameCallback {
+  private action: () => void
+  constructor(action: () => void) { super(); this.action = action }
+  onFrame(_time: number): void { this.action() }
+}
+
 /** One monotonic layout clock also survives a selected leaf being remounted. */
 class ReaderEntryLayoutRevision {
   private static current: number = 0
@@ -915,15 +921,17 @@ export struct ReaderPagedImage {
     const requestId: number = this.assetRequestId
     if (this.scheduledPresentationRequestId === requestId) return
     this.scheduledPresentationRequestId = requestId
-    // onComplete means decoded, not that pixels reached a composed frame. Keep
-    // the prior image above this candidate for one frame, then let the session
-    // publish displayed and swap the layers only if this leaf is still current.
-    this.getUIContext().postFrameCallback(new ReaderEntryAfterLayout((): void => {
+    const report = (): void => {
       if (!this.entryMounted || !this.decoded || this.assetRequestId !== requestId ||
         this.frame.asset.assetRequestId !== requestId) return
       this.onPresented(this.slotId, requestId, true, width, height)
       this.reportVisible()
-    }))
+    }
+    // Only a retained replacement needs a composed-frame fence before retiring
+    // the prior image. Ordinary decode acknowledges at the next rendering start,
+    // outside a cached Image's build callback and before a post-render idle wait.
+    this.getUIContext().postFrameCallback(this.frame.asset.retainedUri.length > 0
+      ? new ReaderEntryAfterLayout(report) : new ReaderImageBeforeFrame(report))
   }
 
   private failed(): void {
