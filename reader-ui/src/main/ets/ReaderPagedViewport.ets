@@ -560,6 +560,10 @@ struct ReaderPagedCell {
     return this.retainedFrameValue ?? this.frame()
   }
 
+  private preparingAsset(): boolean {
+    return this.snapshot.preparingSourceIndexes.includes(this.frame().part.sourceIndex)
+  }
+
   private cellWidth(): number {
     return this.frameWidth > 0 ? this.frameWidth : this.frameHeight *
       readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy)
@@ -664,15 +668,14 @@ struct ReaderPagedCell {
             .zIndex(this.frame().asset.phase === 'displayed' ? 1 : 0)
         }
       }
-      if ((this.frame().asset.phase === 'idle' || this.frame().asset.phase === 'asset' || this.frame().asset.phase === 'decoding') &&
-        this.retainedFrameValue === null) {
+      if (this.frame().asset.isAssetLoading() || this.preparingAsset()) {
         ReaderLoadingStage({
-          label: this.frame().asset.phase === 'idle' ? $r('app.string.rkit_loading_resolving')
+          label: this.preparingAsset() || this.frame().asset.phase === 'idle' ? $r('app.string.rkit_loading_resolving')
             : this.frame().asset.phase === 'decoding' ? $r('app.string.rkit_loading_decoding')
               : $r('app.string.rkit_loading_image'),
-          loaded: this.frame().asset.loadProgressLoaded,
-          total: this.frame().asset.loadProgressTotal,
-        })
+          loaded: this.preparingAsset() ? 0 : this.frame().asset.loadProgressLoaded,
+          total: this.preparingAsset() ? 0 : this.frame().asset.loadProgressTotal,
+        }).zIndex(2)
       }
     }
     .width(this.cellWidth())

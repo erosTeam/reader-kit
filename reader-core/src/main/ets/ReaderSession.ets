@@ -248,6 +248,12 @@ export class ReaderSnapshot {
   presentedAnchor: ReaderReadingAnchor | null = null
   presentedRequestId: number = 0
 
+  /** Displayed pixels can belong to the previous epoch while their replacement loads. */
+  isAssetLoading(): boolean {
+    return this.phase === 'idle' || this.phase === 'asset' || this.phase === 'decoding' ||
+      (this.phase === 'displayed' && this.requestId !== this.assetRequestId)
+  }
+
   copy(): ReaderSnapshot {
     const value = new ReaderSnapshot()
     value.phase = this.phase
@@ -496,9 +502,15 @@ export class ReaderSession {
       this.releaseRetiredAsset()
       this.releaseAsset()
       this.emit()
+    } else {
+      // Publish acquisition without changing the displayed source or its lease.
+      this.state.loadProgressLoaded = 0
+      this.state.loadProgressTotal = 0
+      this.emit()
     }
     const reportProgress = (loaded: number, total: number): void => {
-      if (this.disposed || epoch !== this.epoch || this.state.phase !== 'asset') return
+      if (this.disposed || epoch !== this.epoch ||
+        (this.state.phase !== 'asset' && !(retainDisplayed && this.state.phase === 'displayed'))) return
       if (!Number.isFinite(loaded) || !Number.isFinite(total) || loaded < 0 || total <= 0) return
       if (this.state.loadProgressLoaded === loaded && this.state.loadProgressTotal === total) return
       this.state.loadProgressLoaded = loaded

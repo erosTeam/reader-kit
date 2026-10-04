@@ -527,6 +527,11 @@ struct ReaderContinuousCell {
     async (_slot: number, _request: number, _noticeId: string): Promise<boolean> => false
   @Local private noticeActionBusy: boolean = false
 
+  private preparingAsset(): boolean {
+    const frame = this.snapshot.frames[0]
+    return frame !== undefined && this.snapshot.preparingSourceIndexes.includes(frame.part.sourceIndex)
+  }
+
   private async resolveNoticeAction(frame: ReaderPagedFrame): Promise<void> {
     const notice = frame.asset.notice
     if (notice === null || this.noticeActionBusy) return
@@ -585,16 +590,15 @@ struct ReaderContinuousCell {
           }
         }, (frame: ReaderPagedFrame): string =>
           readerElementKey(`${frame.slotId}:${frame.asset.assetRequestId}`))
-        if (this.snapshot.frames.length === 0 || this.snapshot.frames[0].asset.phase === 'idle' ||
-          this.snapshot.frames[0].asset.phase === 'asset' || this.snapshot.frames[0].asset.phase === 'decoding') {
+        if (this.snapshot.frames.length === 0 || this.snapshot.frames[0].asset.isAssetLoading() || this.preparingAsset()) {
           ReaderLoadingStage({
-            label: this.snapshot.frames.length === 0 || this.snapshot.frames[0].asset.phase === 'idle'
+            label: this.preparingAsset() || this.snapshot.frames.length === 0 || this.snapshot.frames[0].asset.phase === 'idle'
               ? $r('app.string.rkit_loading_resolving')
               : this.snapshot.frames[0].asset.phase === 'decoding'
                 ? $r('app.string.rkit_loading_decoding')
                   : $r('app.string.rkit_loading_image'),
-            loaded: this.snapshot.frames.length === 0 ? 0 : this.snapshot.frames[0].asset.loadProgressLoaded,
-            total: this.snapshot.frames.length === 0 ? 0 : this.snapshot.frames[0].asset.loadProgressTotal,
+            loaded: this.preparingAsset() || this.snapshot.frames.length === 0 ? 0 : this.snapshot.frames[0].asset.loadProgressLoaded,
+            total: this.preparingAsset() || this.snapshot.frames.length === 0 ? 0 : this.snapshot.frames[0].asset.loadProgressTotal,
           })
         }
       }.width('100%').aspectRatio(this.imageAspectRatio)
