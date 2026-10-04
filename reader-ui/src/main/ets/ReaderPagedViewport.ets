@@ -937,6 +937,11 @@ export struct ReaderPagedImage {
   private renderWidth(): number { return this.rotateClockwise ? this.viewportHeight : this.viewportWidth }
   private renderHeight(): number { return this.rotateClockwise ? this.viewportWidth : this.viewportHeight }
 
+  private usesOriginalRegion(): boolean {
+    return this.frame.asset.kind === 'original' &&
+      (this.frame.part.fragment !== 'whole' || this.frame.crop.applied())
+  }
+
   build() {
     Stack() {
       if (this.frame.asset.uri.length > 0 && this.frame.asset.kind === 'thumbnail' &&
@@ -961,43 +966,39 @@ export struct ReaderPagedImage {
         .height(this.frame.asset.page.thumbnail.height * this.spriteScale())
         .clip(true)
         .rotate({ angle: this.rotateClockwise ? 90 : 0 })
-      } else if (this.frame.asset.uri.length > 0 && this.frame.asset.kind === 'original' &&
-        (this.frame.part.fragment !== 'whole' || this.frame.crop.applied())) {
+      } else if (this.frame.asset.uri.length > 0) {
+        // Crop changes the same image's attributes, not its native build site.
         Stack({ alignContent: Alignment.TopStart }) {
           Image(this.frame.asset.uri)
-            .width(this.renderWidth() / this.frame.crop.region(this.frame.part).width)
-            .height(this.renderHeight() / this.frame.crop.region(this.frame.part).height)
-            .id(`rkit-cropped-image-${this.frame.part.sourceIndex}-${this.frame.part.fragment}`)
-            .interpolation(this.imageInterpolation)
-            .objectFit(ImageFit.Fill)
+            .width(this.usesOriginalRegion() ? this.renderWidth() / this.frame.crop.region(this.frame.part).width :
+              (this.rotateClockwise ? this.renderWidth() : '100%'))
+            .height(this.usesOriginalRegion() ? this.renderHeight() / this.frame.crop.region(this.frame.part).height :
+              (this.rotateClockwise ? this.renderHeight() : '100%'))
+            .id(this.usesOriginalRegion() ? `rkit-cropped-image-${this.frame.part.sourceIndex}-${this.frame.part.fragment}` :
+              this.entryLeafId())
+            .interpolation(this.frame.asset.kind === 'original' ? this.imageInterpolation : ImageInterpolation.Low)
+            .objectFit(this.usesOriginalRegion() ? ImageFit.Fill :
+              (this.thumbnailCover && this.frame.asset.kind === 'thumbnail' ? ImageFit.Cover : ImageFit.Contain))
             .position({
-              x: -this.renderWidth() * this.frame.crop.region(this.frame.part).x / this.frame.crop.region(this.frame.part).width,
-              y: -this.renderHeight() * this.frame.crop.region(this.frame.part).y / this.frame.crop.region(this.frame.part).height,
+              x: this.usesOriginalRegion()
+                ? -this.renderWidth() * this.frame.crop.region(this.frame.part).x / this.frame.crop.region(this.frame.part).width : 0,
+              y: this.usesOriginalRegion()
+                ? -this.renderHeight() * this.frame.crop.region(this.frame.part).y / this.frame.crop.region(this.frame.part).height : 0,
+            })
+            .onAreaChange((): void => {
+              if (this.usesOriginalRegion()) return
+              this.entryLeafLaidOut = true
+              this.publishEntryTarget()
             })
             .onComplete((event): void => {
               if (event?.loadingStatus === 1) this.completed(event.width, event.height)
             })
             .onError((): void => { this.failed() })
         }
-        .width(this.renderWidth()).height(this.renderHeight()).clip(true)
+        .width(this.usesOriginalRegion() || this.rotateClockwise ? this.renderWidth() : '100%')
+        .height(this.usesOriginalRegion() || this.rotateClockwise ? this.renderHeight() : '100%')
+        .clip(this.usesOriginalRegion())
         .rotate({ angle: this.rotateClockwise ? 90 : 0 })
-      } else if (this.frame.asset.uri.length > 0) {
-        Image(this.frame.asset.uri)
-          // Follow the fitted parent in this layout pass, not its previous area callback.
-          .width(this.rotateClockwise ? this.renderWidth() : '100%')
-          .height(this.rotateClockwise ? this.renderHeight() : '100%')
-          .interpolation(this.frame.asset.kind === 'original' ? this.imageInterpolation : ImageInterpolation.Low)
-          .objectFit(this.thumbnailCover && this.frame.asset.kind === 'thumbnail' ? ImageFit.Cover : ImageFit.Contain)
-          .rotate({ angle: this.rotateClockwise ? 90 : 0 })
-          .id(this.entryLeafId())
-          .onAreaChange((): void => {
-            this.entryLeafLaidOut = true
-            this.publishEntryTarget()
-          })
-          .onComplete((event): void => {
-            if (event?.loadingStatus === 1) this.completed(event.width, event.height)
-          })
-          .onError((): void => { this.failed() })
       }
     }
     .width('100%').height('100%')
