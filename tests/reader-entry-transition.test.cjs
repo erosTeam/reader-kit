@@ -64,6 +64,33 @@ test('decoded entry frame cannot hide feedback for a retry, another slot or anot
   }
 })
 
+test('initial loading keeps its backdrop when motion is cancelled and retires with its request', () => {
+  const { entry, state, target } = scenario()
+  const frame = state.frames[0]
+  entry.publishTarget(target()); entry.beginMove(); entry.arrived()
+  assert.equal(entry.hasLoadingBackdrop(frame), true)
+  entry.cancel()
+  assert.equal(entry.hasLoadingBackdrop(frame), true)
+  for (const change of [f => f.asset.requestId++, f => f.slotId++, f => f.part.sourceIndex++,
+    f => f.part.pageKey = 'other', f => f.part.fragment = 'right']) {
+    const other = new core.ReaderPagedFrame(frame.slotId, frame.part.copy(), frame.asset.copy())
+    change(other)
+    assert.equal(entry.hasLoadingBackdrop(other), false)
+  }
+})
+
+test('decoded and finished entries cannot retain a loading backdrop for later reloads', () => {
+  const { entry, state, target } = scenario()
+  const decoded = target(); decoded.decodedReady = true
+  entry.publishTarget(decoded)
+  assert.equal(entry.hasLoadingBackdrop(state.frames[0]), false)
+  entry.beginMove(); entry.arrived(); entry.reveal(); entry.finish()
+  assert.equal(entry.hasLoadingBackdrop(state.frames[0]), false)
+  const retry = new core.ReaderPagedFrame(state.frames[0].slotId, state.frames[0].part.copy(), state.frames[0].asset.copy())
+  retry.asset.requestId++; retry.asset.assetRequestId++
+  assert.equal(entry.hasLoadingBackdrop(retry), false)
+})
+
 test('stale request and wrong original page cannot replace the published target', () => {
   const { entry, target } = scenario()
   for (const change of [t => t.requestId++, t => t.assetRequestId++, t => t.slotId++, t => t.selectionId++,
