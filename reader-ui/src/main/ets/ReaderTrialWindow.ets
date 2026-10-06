@@ -9,8 +9,8 @@ export function readerEntryWindowReady(entry: ReaderEntryTransition | null, root
 
 /** Native navigation is also a color writer; it must consume the same admission. */
 export function readerEntryStatusBarStyle(entry: ReaderEntryTransition | null, rootPresentationSettled: boolean,
-  sourceContentColor: string, readerContentColor: string): window.SystemBarStyle {
-  return { statusBarContentColor: readerEntryWindowReady(entry, rootPresentationSettled)
+  sourceContentColor: string, readerContentColor: string, statusVisible: boolean): window.SystemBarStyle {
+  return { statusBarContentColor: statusVisible && readerEntryWindowReady(entry, rootPresentationSettled)
     ? readerContentColor : sourceContentColor }
 }
 
@@ -29,9 +29,15 @@ export async function applyReaderStatusBar(context: common.UIAbilityContext, vis
 
 export type ReaderTrialCloseSystemAvoidAreaResult = 'pending' | 'not-required' | 'already-visible' | 'ready' | 'failed'
 
-interface ReaderStatusVisibilityRequest {
-  visible: boolean
+@ObservedV2
+class ReaderStatusVisibilityRequest {
+  @Trace visible: boolean
   isCurrent: () => boolean
+
+  constructor(visible: boolean, isCurrent: () => boolean) {
+    this.visible = visible
+    this.isCurrent = isCurrent
+  }
 }
 
 /** Optional host-owned window lease, separate from the reader surface/session.
@@ -130,7 +136,8 @@ export class ReaderTrialWindow {
 
   private observer: ((event: string) => void) | null = null
   private restoreStatusVisible: boolean | null
-  private desiredStatus: ReaderStatusVisibilityRequest = { visible: true, isCurrent: (): boolean => this.canPresent() }
+  private desiredStatus: ReaderStatusVisibilityRequest = new ReaderStatusVisibilityRequest(true,
+    (): boolean => this.canPresent())
   private entry: () => ReaderEntryTransition | null
   private rootPresentationSettled: () => boolean
 
@@ -138,15 +145,21 @@ export class ReaderTrialWindow {
     return !this.closed && readerEntryWindowReady(this.entry(), this.rootPresentationSettled())
   }
 
+  /** Navigation colors consume the same intent as the serialized Window writer. */
+  statusBarVisible(): boolean { return this.desiredStatus.visible }
+
   /** System top-area readiness only; callers must separately await their layout. */
   async prepareStatusBarVisible(isCurrent: () => boolean): Promise<boolean> {
     if (!isCurrent() || !this.canPresent() || this.restoreStatusVisible === null || !this.started || this.mainWindow === null) return false
     let ready: boolean = false
     await ReaderTrialWindow.enqueue(async (): Promise<void> => {
       if (!isCurrent() || !this.canPresent() || this.mainWindow === null) return
-      this.desiredStatus = { visible: true, isCurrent: isCurrent }
+      this.desiredStatus.isCurrent = isCurrent
+      this.desiredStatus.visible = true
       this.observe('prepare_system_avoid_area_requested')
       try {
+        await this.mainWindow.setWindowSystemBarProperties({ statusBarContentColor: '#FFFFFFFF' })
+        if (!isCurrent() || !this.canPresent()) return
         await this.restoreVisibleStatus(false, isCurrent)
         ready = isCurrent() && this.canPresent()
         this.observe(`prepare_status_visibility_completed ready=${ready}`)
@@ -175,7 +188,8 @@ export class ReaderTrialWindow {
 
   setStatusBarVisible(visible: boolean, isCurrent: () => boolean): void {
     if (this.closed || !isCurrent()) return
-    this.desiredStatus = { visible: visible, isCurrent: isCurrent }
+    this.desiredStatus.isCurrent = isCurrent
+    this.desiredStatus.visible = visible
     if (this.restoreStatusVisible === null || !this.started) return
     ReaderTrialWindow.enqueue(async (): Promise<void> => {
       if (!isCurrent() || !this.canPresent() || this.mainWindow === null) return
@@ -224,8 +238,10 @@ export class ReaderTrialWindow {
       }
       if (!this.canPresent()) { this.started = false; return }
       const mainWindow = this.mainWindow
-      await mainWindow.setWindowSystemBarProperties({ statusBarContentColor: '#FFFFFFFF' })
-      console.info('[ReaderTrialWindow] status_content=light')
+      if (this.restoreStatusVisible === null || this.desiredStatus.visible) {
+        await mainWindow.setWindowSystemBarProperties({ statusBarContentColor: '#FFFFFFFF' })
+        console.info('[ReaderTrialWindow] status_content=light')
+      }
       if (this.canPresent() && this.restoreStatusVisible !== null) {
         const request = this.desiredStatus
         await this.writeStatusVisible(request.visible, false, request.isCurrent)

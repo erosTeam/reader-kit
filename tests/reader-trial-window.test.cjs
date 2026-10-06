@@ -20,6 +20,7 @@ function fixture(getLastWindow, timers = { setTimeout, clearTimeout }) {
   const exports = {}, logs = []
   vm.runInNewContext(code, {
     exports,
+    ObservedV2: value => value, Trace: () => {},
     setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
     console: { info: value => logs.push(value), warn: value => logs.push(value) },
     require: name => {
@@ -81,7 +82,7 @@ test('pending entry captures only source properties and rejects every presentati
   }
   root = true
   lease.open({}); await drain()
-  assert.deepEqual(main.calls.map(call => call[0]), ['read', 'write', 'visibility'])
+  assert.deepEqual(main.calls.map(call => call[0]), ['read', 'visibility'])
   assert.equal(main.calls.at(-1)[2], false)
   await lease.close()
 })
@@ -104,12 +105,13 @@ test('native navigation style follows the same content and root admission', () =
   const { nativeStyle } = fixture(async () => mainWindow())
   let pending = true
   const entry = { pending: () => pending }
-  const color = root => nativeStyle(entry, root, '#FF000000', '#FFFFFFFF').statusBarContentColor
+  const color = root => nativeStyle(entry, root, '#FF000000', '#FFFFFFFF', true).statusBarContentColor
   assert.equal(color(true), '#FF000000')
   pending = false
   assert.equal(color(false), '#FF000000')
   assert.equal(color(true), '#FFFFFFFF')
-  assert.equal(nativeStyle(null, true, '#FF000000', '#FFFFFFFF').statusBarContentColor, '#FFFFFFFF')
+  assert.equal(nativeStyle(null, true, '#FF000000', '#FFFFFFFF', true).statusBarContentColor, '#FFFFFFFF')
+  assert.equal(nativeStyle(entry, true, '#FF000000', '#FFFFFFFF', false).statusBarContentColor, '#FF000000')
 })
 
 test('admission replay restores the captured source colors rather than a later navigation style', async () => {
