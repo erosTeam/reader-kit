@@ -27,7 +27,16 @@ function fixture(getLastWindow, timers = { setTimeout, clearTimeout }) {
       return { window: { getLastWindow, AvoidAreaType: { TYPE_SYSTEM: 0 } } }
     },
   }, { filename: 'ReaderTrialWindow.ets' })
-  return { Lease: exports.ReaderTrialWindow, logs }
+  // Existing cases exercise ordinary no-thumbnail routes; only this test fixture
+  // supplies those bindings by default. The production constructor requires them.
+  class Lease extends exports.ReaderTrialWindow {
+    constructor(observer = null, restore = null, entry = () => null, root = () => true) {
+      super(observer, restore, entry, root)
+    }
+    setStatusBarVisible(visible, current = () => true) { super.setStatusBarVisible(visible, current) }
+    prepareStatusBarVisible(current = () => true) { return super.prepareStatusBarVisible(current) }
+  }
+  return { Lease, applyStatus: exports.applyReaderStatusBar, logs }
 }
 
 function mainWindow(write = async () => {}, visibility = async () => {}) {
@@ -52,6 +61,97 @@ function mainWindow(write = async () => {}, visibility = async () => {}) {
 
 // Drain promise continuations without sleeping or modelling any platform/render timing.
 const drain = () => new Promise(resolve => setImmediate(resolve))
+
+test('pending entry and cancelled fallback root reject every presentation entrypoint', async () => {
+  const main = mainWindow()
+  let pending = true, root = true, lookups = 0
+  const entry = { pending: () => pending }
+  const { Lease, applyStatus } = fixture(async () => { lookups++; return main })
+  const lease = new Lease(null, true, () => entry, () => root)
+  for (const state of [[true, true], [false, false]]) {
+    [pending, root] = state
+    lease.open({})
+    lease.setStatusBarVisible(false)
+    assert.equal(await lease.prepareStatusBarVisible(), false)
+    await applyStatus({}, true, { statusBarContentColor: '#FFFFFFFF' }, () => entry, () => root, () => true)
+    await applyStatus({}, false, {}, () => entry, () => root, () => true)
+    await drain()
+    assert.equal(lookups, 0)
+    assert.deepEqual(main.calls, [])
+  }
+  root = true
+  lease.open({}); await drain()
+  assert.deepEqual(main.calls.map(call => call[0]), ['read', 'write', 'visibility'])
+  assert.equal(main.calls.at(-1)[2], false)
+  await lease.close()
+})
+
+test('entry revocation during window lookup prevents colors and permits a later retry', async () => {
+  const lookup = deferred(), main = mainWindow()
+  let pending = false
+  const entry = { pending: () => pending }
+  const { Lease } = fixture(() => lookup.promise)
+  const lease = new Lease(null, true, () => entry, () => true)
+  lease.open({}); await drain()
+  pending = true; lookup.resolve(main); await drain()
+  assert.deepEqual(main.calls, [])
+  pending = false; lease.open({}); await drain()
+  assert.deepEqual(main.calls.map(call => call[0]), ['read', 'write', 'visibility'])
+  await lease.close()
+})
+
+test('queued presentation checks live root handoff and close remains a restoration path', async () => {
+  const color = deferred()
+  let writes = 0, root = true
+  const main = mainWindow(async () => { if (++writes === 1) await color.promise })
+  const { Lease } = fixture(async () => main)
+  const lease = new Lease(null, true, () => null, () => root)
+  lease.open({}); await drain()
+  lease.setStatusBarVisible(false)
+  root = false; color.resolve(); await drain()
+  assert.equal(main.calls.some(call => call[0] === 'visibility'), false)
+  assert.equal(await lease.prepareStatusBarVisible(), false)
+  await lease.close()
+  assert.deepEqual(main.calls.at(-2), ['write', main.original])
+  assert.deepEqual(main.calls.at(-1), ['visibility', 'status', true, false])
+})
+
+test('shared host writer checks root and route generation after each async boundary', async () => {
+  for (const boundary of ['lookup', 'colors']) {
+    const lookup = deferred(), color = deferred()
+    let current = true, root = true
+    const main = mainWindow(() => color.promise)
+    const { applyStatus } = fixture(() => lookup.promise)
+    const work = applyStatus({}, true, { statusBarContentColor: '#FFFFFFFF' }, () => null, () => root, () => current)
+    if (boundary === 'lookup') {
+      root = false; lookup.resolve(main)
+    } else {
+      lookup.resolve(main); await drain(); current = false; color.resolve()
+    }
+    await work
+    assert.equal(main.calls.some(call => call[0] === 'visibility'), false)
+    assert.equal(main.calls.filter(call => call[0] === 'write').length, boundary === 'lookup' ? 0 : 1)
+  }
+})
+
+test('a retired chapter cannot dispatch its queued hide or prepare on the reused parent lease', async () => {
+  const color = deferred()
+  let writes = 0, oldChapterCurrent = true
+  const main = mainWindow(async () => { if (++writes === 1) await color.promise })
+  const { Lease } = fixture(async () => main)
+  const lease = new Lease(null, true)
+  lease.open({}); await drain()
+  lease.setStatusBarVisible(false, () => oldChapterCurrent)
+  const prepare = lease.prepareStatusBarVisible(() => oldChapterCurrent)
+  oldChapterCurrent = false; color.resolve(); await drain()
+  assert.equal(await prepare, false)
+  assert.equal(main.calls.filter(call => call[0] === 'visibility' && call[2] === false).length, 0)
+  lease.setStatusBarVisible(false, () => true); await drain()
+  assert.equal(main.calls.at(-1)[2], false)
+  await lease.close()
+  assert.deepEqual(main.calls.at(-2), ['write', main.original])
+  assert.deepEqual(main.calls.at(-1), ['visibility', 'status', true, false])
+})
 
 test('opt-in close orders real area, unique host callback and colors while excluding the next lease', async () => {
   const host = deferred(), color = deferred(), main = avoidWindow(), timers = fakeTimers()
