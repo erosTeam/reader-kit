@@ -36,7 +36,7 @@ function fixture(getLastWindow, timers = { setTimeout, clearTimeout }) {
     setStatusBarVisible(visible, current = () => true) { super.setStatusBarVisible(visible, current) }
     prepareStatusBarVisible(current = () => true) { return super.prepareStatusBarVisible(current) }
   }
-  return { Lease, applyStatus: exports.applyReaderStatusBar, logs }
+  return { Lease, applyStatus: exports.applyReaderStatusBar, nativeStyle: exports.readerEntryStatusBarStyle, logs }
 }
 
 function mainWindow(write = async () => {}, visibility = async () => {}) {
@@ -62,7 +62,7 @@ function mainWindow(write = async () => {}, visibility = async () => {}) {
 // Drain promise continuations without sleeping or modelling any platform/render timing.
 const drain = () => new Promise(resolve => setImmediate(resolve))
 
-test('pending entry and cancelled fallback root reject every presentation entrypoint', async () => {
+test('pending entry captures only source properties and rejects every presentation writer', async () => {
   const main = mainWindow()
   let pending = true, root = true, lookups = 0
   const entry = { pending: () => pending }
@@ -76,8 +76,8 @@ test('pending entry and cancelled fallback root reject every presentation entryp
     await applyStatus({}, true, { statusBarContentColor: '#FFFFFFFF' }, () => entry, () => root, () => true)
     await applyStatus({}, false, {}, () => entry, () => root, () => true)
     await drain()
-    assert.equal(lookups, 0)
-    assert.deepEqual(main.calls, [])
+    assert.equal(lookups, 1)
+    assert.deepEqual(main.calls.map(call => call[0]), ['read'])
   }
   root = true
   lease.open({}); await drain()
@@ -94,10 +94,36 @@ test('entry revocation during window lookup prevents colors and permits a later 
   const lease = new Lease(null, true, () => entry, () => true)
   lease.open({}); await drain()
   pending = true; lookup.resolve(main); await drain()
-  assert.deepEqual(main.calls, [])
+  assert.deepEqual(main.calls.map(call => call[0]), ['read'])
   pending = false; lease.open({}); await drain()
   assert.deepEqual(main.calls.map(call => call[0]), ['read', 'write', 'visibility'])
   await lease.close()
+})
+
+test('native navigation style follows the same content and root admission', () => {
+  const { nativeStyle } = fixture(async () => mainWindow())
+  let pending = true
+  const entry = { pending: () => pending }
+  const color = root => nativeStyle(entry, root, '#FF000000', '#FFFFFFFF').statusBarContentColor
+  assert.equal(color(true), '#FF000000')
+  pending = false
+  assert.equal(color(false), '#FF000000')
+  assert.equal(color(true), '#FFFFFFFF')
+  assert.equal(nativeStyle(null, true, '#FF000000', '#FFFFFFFF').statusBarContentColor, '#FFFFFFFF')
+})
+
+test('admission replay restores the captured source colors rather than a later navigation style', async () => {
+  const main = mainWindow()
+  let pending = true, lookups = 0
+  const { Lease } = fixture(async () => { lookups++; return main })
+  const lease = new Lease(null, true, () => ({ pending: () => pending }), () => true)
+  lease.open({}); await drain()
+  assert.deepEqual(main.calls.map(call => call[0]), ['read'])
+  await main.setWindowSystemBarProperties({ statusBarContentColor: '#FFFFFFFF' })
+  pending = false; lease.open({}); await drain()
+  assert.equal(lookups, 1)
+  await lease.close()
+  assert.deepEqual(main.calls.filter(call => call[0] === 'write').at(-1)[1], main.original)
 })
 
 test('queued presentation checks live root handoff and close remains a restoration path', async () => {

@@ -7,6 +7,13 @@ export function readerEntryWindowReady(entry: ReaderEntryTransition | null, root
   return rootPresentationSettled && entry?.pending() !== true
 }
 
+/** Native navigation is also a color writer; it must consume the same admission. */
+export function readerEntryStatusBarStyle(entry: ReaderEntryTransition | null, rootPresentationSettled: boolean,
+  sourceContentColor: string, readerContentColor: string): window.SystemBarStyle {
+  return { statusBarContentColor: readerEntryWindowReady(entry, rootPresentationSettled)
+    ? readerContentColor : sourceContentColor }
+}
+
 /** Host queue owns ordering; the shared writer owns entry admission at dispatch. */
 export async function applyReaderStatusBar(context: common.UIAbilityContext, visible: boolean,
   properties: window.SystemBarProperties, entry: () => ReaderEntryTransition | null,
@@ -202,15 +209,21 @@ export class ReaderTrialWindow {
   }
 
   open(context: common.UIAbilityContext): void {
-    if (this.started || !this.canPresent()) return
+    if (this.started || this.closed) return
     this.started = true
     ReaderTrialWindow.enqueue(async (): Promise<void> => {
+      if (this.closed) { this.started = false; return }
+      // Capture while navigation still uses the source style. Reading the
+      // baseline does not grant presentation; a later replay reuses it.
+      if (this.mainWindow === null) {
+        const mainWindow = await window.getLastWindow(context)
+        if (this.closed) { this.started = false; return }
+        this.mainWindow = mainWindow
+        this.previous = mainWindow.getWindowSystemBarProperties()
+        this.observe(`saved ${JSON.stringify(this.previous)}`)
+      }
       if (!this.canPresent()) { this.started = false; return }
-      const mainWindow = await window.getLastWindow(context)
-      if (!this.canPresent()) { this.started = false; return }
-      this.mainWindow = mainWindow
-      this.previous = mainWindow.getWindowSystemBarProperties()
-      this.observe(`saved ${JSON.stringify(this.previous)}`)
+      const mainWindow = this.mainWindow
       await mainWindow.setWindowSystemBarProperties({ statusBarContentColor: '#FFFFFFFF' })
       console.info('[ReaderTrialWindow] status_content=light')
       if (this.canPresent() && this.restoreStatusVisible !== null) {
