@@ -33,6 +33,8 @@ export { ReaderFileCropSource } from './src/main/ets/ReaderFileCropSource'
 export { ReaderChrome, ReaderRuntimePolicyIntent } from './src/main/ets/ReaderChrome'
 export { ReaderModeControlParams } from './src/main/ets/ReaderModeControl'
 export { ReaderEnhancementStatus } from './src/main/ets/ReaderEnhancementStatus'
+export { bindReaderSourceWindow, unbindReaderSourceWindow, updateReaderSourceConfiguration,
+  readerSourceStatusBarVisible, writeReaderSystemBarVisibility } from './src/main/ets/ReaderSourceWindowPolicy'
 export { ReaderTrialWindow, readerEntryWindowReady, readerEntryStatusBarStyle, applyReaderStatusBar } from './src/main/ets/ReaderTrialWindow'
 export { ReaderKeepScreenOn } from './src/main/ets/ReaderKeepScreenOn'
 export { ReaderTrialLayoutCommit } from './src/main/ets/ReaderTrialLayoutCommit'
