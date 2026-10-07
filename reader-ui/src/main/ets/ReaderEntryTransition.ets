@@ -93,9 +93,9 @@ export class ReaderEntryTransition {
       target.assetRequestId === frame.asset.assetRequestId
   }
 
-  /** Cancelling motion does not retire the initial image's loading presentation. */
+  /** Motion cancellation keeps initial loading; later processing of displayed pixels does not. */
   hasLoadingBackdrop(frame: ReaderPagedFrame): boolean {
-    return this.phase !== 'finished' && !this.hasDecodedFrame(frame) && this.matches(frame.part) &&
+    return frame.asset.isAssetLoading() && this.phase !== 'finished' && !this.hasDecodedFrame(frame) && this.matches(frame.part) &&
       this.slot === frame.slotId && this.loadRequest === frame.asset.requestId
   }
 
