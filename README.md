@@ -54,6 +54,12 @@ The following are existing preservation requirements, not new feature work:
 - A consumer-specific capability remains optional. A host without chapter,
   processed-image or media support does not gain placeholder product actions.
   Reuse existing leaves/adapters; do not copy a complete app into the Kit.
+  Chapter requests retain their `explicit` or `boundary` origin. Hosts keep
+  manual resume semantics and authorize automatic continuation from their own
+  verified sequence; a manual catalog fallback is not automatic authorization.
+  The host resolves the target page, and `ReaderPagedSession.open` can apply a
+  one-shot page-end position for backward continuation. This position survives
+  catalog retry without becoming a persisted preference or a synthetic observation.
 
 Validate every exposed behavior in one declared complete user interval, from
 its source state through return. A visible missing background, premature

@@ -1,6 +1,7 @@
 import { ReaderUnitKey } from '@reader-kit/core'
 
 export type ReaderChapterDirection = 'previous' | 'next'
+export type ReaderChapterRequestOrigin = 'explicit' | 'boundary'
 
 /**
  * Optional host-owned chapter continuation capability.
@@ -11,15 +12,18 @@ export type ReaderChapterDirection = 'previous' | 'next'
  */
 export class ReaderChapterNavigation {
   readonly busy: boolean
-  private readonly onRequest: (direction: ReaderChapterDirection, source: ReaderUnitKey) => void
+  private readonly onRequest: (direction: ReaderChapterDirection, source: ReaderUnitKey,
+    origin: ReaderChapterRequestOrigin) => void
 
   constructor(busy: boolean = false,
-    onRequest: (direction: ReaderChapterDirection, source: ReaderUnitKey) => void = () => {}) {
+    onRequest: (direction: ReaderChapterDirection, source: ReaderUnitKey,
+      origin: ReaderChapterRequestOrigin) => void = () => {}) {
     this.busy = busy
     this.onRequest = onRequest
   }
 
-  request(direction: ReaderChapterDirection, source: ReaderUnitKey): void {
-    this.onRequest(direction, source.copy())
+  request(direction: ReaderChapterDirection, source: ReaderUnitKey,
+    origin: ReaderChapterRequestOrigin = 'explicit'): void {
+    this.onRequest(direction, source.copy(), origin)
   }
 }

@@ -20,7 +20,7 @@ import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { ReaderCloseContext } from './ReaderCloseContext'
 import { readerElementKey } from './ReaderElementKey'
 import { ReaderMediaActions } from './ReaderMediaActions'
-import { ReaderChapterNavigation } from './ReaderChapterNavigation'
+import { ReaderChapterNavigation, ReaderChapterRequestOrigin } from './ReaderChapterNavigation'
 import { ReaderHostStatus } from './ReaderHostStatus'
 import { ReaderObservationSink } from './ReaderObservationSink'
 import { ReaderPreferenceSink } from './ReaderPreferenceSink'
@@ -664,14 +664,15 @@ export struct ReaderSurface {
     })
   }
 
-  private requestChapter(direction: 'previous' | 'next', source: ReaderUnitKey): void {
+  private requestChapter(direction: 'previous' | 'next', source: ReaderUnitKey,
+    origin: ReaderChapterRequestOrigin = 'explicit'): void {
     const current = this.session.snapshot()
     if (this.chapterNavigation === null || this.chapterNavigation.busy || !this.active || this.closing ||
       this.chromeDisposed || this.chromeCloseRequested || current.phase !== 'ready' ||
       current.unit?.key.equals(source) !== true) return
     this.previewIndex = -1
     this.autoReadController.stop()
-    this.chapterNavigation.request(direction, source)
+    this.chapterNavigation.request(direction, source, origin)
   }
 
   private requestBoundaryChapter(direction: 'previous' | 'next', topology: number, navigation: number): void {
@@ -679,7 +680,7 @@ export struct ReaderSurface {
     const available = direction === 'previous' ? current.canPreviousUnit : current.canNextUnit
     if (!available || topology !== current.topologyRevision || navigation !== current.navigationRevision ||
       current.unit === null) return
-    this.requestChapter(direction, current.unit.key)
+    this.requestChapter(direction, current.unit.key, 'boundary')
   }
 
   private commitChromeVisible(visible: boolean): void {

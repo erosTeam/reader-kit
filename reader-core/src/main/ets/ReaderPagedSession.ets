@@ -247,6 +247,7 @@ export class ReaderPagedSession {
   private cancellation: ReaderCancellation = new ReaderCancellation()
   private pendingUnit: ReaderUnitKey | null = null
   private pendingIndex: number = 0
+  private pendingEdge: 'start' | 'end' = 'start'
   private disposed: boolean = false
   private active: boolean = false
   private cropEnabled: boolean = false
@@ -754,7 +755,8 @@ export class ReaderPagedSession {
 
   private emit(): void { if (this.listener !== null) this.listener(this.snapshot()) }
 
-  async open(key: ReaderUnitKey, index: number = 0): Promise<void> {
+  /** Initial edge is a one-shot source-page position, including split/continuous page ends. */
+  async open(key: ReaderUnitKey, index: number = 0, edge: 'start' | 'end' = 'start'): Promise<void> {
     if (this.disposed) return
     this.cancelOriginalPreparations()
     this.cancelAutoReadSourcePreparations()
@@ -772,6 +774,7 @@ export class ReaderPagedSession {
     this.continuousEnd = -1
     this.pendingUnit = target
     this.pendingIndex = index
+    this.pendingEdge = edge
     this.state.phase = 'catalog'
     this.state.error = ''
     this.state.selectionId += 1
@@ -793,8 +796,12 @@ export class ReaderPagedSession {
       this.pendingUnit = null
       this.state.canPreviousUnit = this.catalog.adjacent(unit.copy(), 'previous') !== null
       this.state.canNextUnit = this.catalog.adjacent(unit.copy(), 'next') !== null
-      this.state.anchor = new ReaderReadingAnchor(unit.key, null,
-        Number.isFinite(index) ? Math.max(0, Math.min(unit.pageCount - 1, Math.floor(index))) : 0)
+      const sourceIndex = Number.isFinite(index) ? Math.max(0, Math.min(unit.pageCount - 1, Math.floor(index))) : 0
+      // Continuous rotation advances along source X; paged splits end on the
+      // last reading fragment. Existing opens retain the default page start.
+      const endX = this.state.policy.layout === 'continuous' || this.state.policy.direction !== 'rtl' ? 1 : 0
+      this.state.anchor = new ReaderReadingAnchor(unit.key, null, sourceIndex,
+        edge === 'end' ? endX : 0.5, edge === 'end' ? 1 : 0)
       this.rebuild()
     } catch (_error) {
       if (this.disposed || epoch !== this.epoch) return
@@ -932,7 +939,7 @@ export class ReaderPagedSession {
 
   async retry(): Promise<void> {
     if (this.disposed) return
-    if (this.pendingUnit !== null) await this.open(this.pendingUnit, this.pendingIndex)
+    if (this.pendingUnit !== null) await this.open(this.pendingUnit, this.pendingIndex, this.pendingEdge)
     else {
       this.cancelAutoReadSourcePreparations()
       await Promise.all(this.slots.filter((slot: ReaderPageSlot) => slot.session.snapshot().phase === 'failed' &&
