@@ -254,6 +254,17 @@ export class ReaderSnapshot {
       (this.phase === 'displayed' && this.requestId !== this.assetRequestId)
   }
 
+  /** Transport may continue while a prior image remains readable. */
+  hasDisplayedPixels(): boolean {
+    return (this.phase === 'displayed' && this.uri.length > 0 && this.assetRequestId > 0) ||
+      (this.retainedUri.length > 0 && this.retainedAssetRequestId > 0)
+  }
+
+  /** The placeholder shares the image's presentation lifetime, not processing-queue lifetime. */
+  needsImagePlaceholder(): boolean {
+    return this.isAssetLoading() && !this.hasDisplayedPixels()
+  }
+
   copy(): ReaderSnapshot {
     const value = new ReaderSnapshot()
     value.phase = this.phase

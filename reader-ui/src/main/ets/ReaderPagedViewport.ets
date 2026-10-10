@@ -11,6 +11,7 @@ import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { normalizedReaderPageGap } from './ReaderPageGap'
 import { readerElementKey } from './ReaderElementKey'
 import { ReaderLoadingStage } from './ReaderLoadingStage'
+import { ReaderImagePlaceholder } from './ReaderImagePlaceholder'
 import { readerRetainedFrame } from './ReaderRetainedFrame'
 
 class ReaderEntryAfterLayout extends FrameCallback {
@@ -448,7 +449,7 @@ export struct ReaderPagedViewport {
       .translate({ x: this.zoomState.x, y: this.zoomState.y })
       .animation({ duration: this.zoomAnimating ? 180 : 0, curve: Curve.FastOutSlowIn })
       .id(this.selected ? 'rkit-paged-content' : `rkit-cached-content-${this.snapshot.displayIndex}`)
-      if (this.snapshot.phase === 'catalog') {
+      if (this.snapshot.phase === 'catalog' && this.snapshot.frames.length === 0) {
         ReaderLoadingStage({ label: $r('app.string.rkit_loading_resolving') })
       }
     }
@@ -538,10 +539,6 @@ struct ReaderPagedCell {
 
   private presentedFrame(): ReaderPagedFrame {
     return this.retainedFrameValue ?? this.frame()
-  }
-
-  private preparingAsset(): boolean {
-    return this.snapshot.preparingSourceIndexes.includes(this.frame().part.sourceIndex)
   }
 
   private cellWidth(): number {
@@ -653,17 +650,7 @@ struct ReaderPagedCell {
             .zIndex(this.frame().asset.phase === 'displayed' ? 1 : 0)
         }
       }
-      if ((this.frame().asset.isAssetLoading() && this.entryTransition?.hasDecodedFrame(this.frame()) !== true) ||
-        this.preparingAsset()) {
-        ReaderLoadingStage({
-          showTransitionBackground: this.entryTransition?.hasLoadingBackdrop(this.frame()) === true,
-          label: this.preparingAsset() || this.frame().asset.phase === 'idle' ? $r('app.string.rkit_loading_resolving')
-            : this.frame().asset.phase === 'decoding' ? $r('app.string.rkit_loading_decoding')
-              : $r('app.string.rkit_loading_image'),
-          loaded: this.preparingAsset() ? 0 : this.frame().asset.loadProgressLoaded,
-          total: this.preparingAsset() ? 0 : this.frame().asset.loadProgressTotal,
-        }).zIndex(2)
-      }
+      ReaderImagePlaceholder({ frame: this.frame(), entryTransition: this.entryTransition }).zIndex(2)
     }
     .width(this.cellWidth())
     .height(this.frameHeight).clip(true)

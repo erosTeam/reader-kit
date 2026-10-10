@@ -85,7 +85,7 @@ export class ReaderEntryTransition {
       (this.requestedPart.pageKey === null || part.pageKey === this.requestedPart.pageKey)
   }
 
-  /** Entry loading ends at this Image's decode, before the resource-retirement ACK. */
+  /** Exact decoder evidence for entry geometry; not the image placeholder's lifetime. */
   hasDecodedFrame(frame: ReaderPagedFrame): boolean {
     const target = this.target
     return target !== null && target.decodedReady && !target.failed && this.matches(frame.part) &&
@@ -93,9 +93,9 @@ export class ReaderEntryTransition {
       target.assetRequestId === frame.asset.assetRequestId
   }
 
-  /** Motion cancellation keeps initial loading; later processing of displayed pixels does not. */
+  /** Preview material belongs to this image epoch until its placeholder ends, even if motion stops. */
   hasLoadingBackdrop(frame: ReaderPagedFrame): boolean {
-    return frame.asset.isAssetLoading() && this.phase !== 'finished' && !this.hasDecodedFrame(frame) && this.matches(frame.part) &&
+    return frame.asset.needsImagePlaceholder() && this.matches(frame.part) &&
       this.slot === frame.slotId && this.loadRequest === frame.asset.requestId
   }
 

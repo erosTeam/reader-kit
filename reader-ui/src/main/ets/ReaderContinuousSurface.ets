@@ -9,6 +9,7 @@ import { ReaderTapAction } from './ReaderTapAction'
 import { ReaderBoundaryDirection, ReaderBoundarySwipe } from './ReaderBoundarySwipe'
 import { normalizedReaderPageGap } from './ReaderPageGap'
 import { ReaderLoadingStage } from './ReaderLoadingStage'
+import { ReaderImagePlaceholder } from './ReaderImagePlaceholder'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { readerElementKey } from './ReaderElementKey'
 
@@ -527,11 +528,6 @@ struct ReaderContinuousCell {
     async (_slot: number, _request: number, _noticeId: string): Promise<boolean> => false
   @Local private noticeActionBusy: boolean = false
 
-  private preparingAsset(): boolean {
-    const frame = this.snapshot.frames[0]
-    return frame !== undefined && this.snapshot.preparingSourceIndexes.includes(frame.part.sourceIndex)
-  }
-
   private async resolveNoticeAction(frame: ReaderPagedFrame): Promise<void> {
     const notice = frame.asset.notice
     if (notice === null || this.noticeActionBusy) return
@@ -595,21 +591,9 @@ struct ReaderContinuousCell {
           }
         }, (frame: ReaderPagedFrame): string =>
           readerElementKey(`${frame.slotId}`))
-        if (this.snapshot.frames.length === 0 ||
-          (this.snapshot.frames[0].asset.isAssetLoading() &&
-            this.entryTransition?.hasDecodedFrame(this.snapshot.frames[0]) !== true) || this.preparingAsset()) {
-          ReaderLoadingStage({
-            showTransitionBackground: this.snapshot.frames.length > 0 &&
-              this.entryTransition?.hasLoadingBackdrop(this.snapshot.frames[0]) === true,
-            label: this.preparingAsset() || this.snapshot.frames.length === 0 || this.snapshot.frames[0].asset.phase === 'idle'
-              ? $r('app.string.rkit_loading_resolving')
-              : this.snapshot.frames[0].asset.phase === 'decoding'
-                ? $r('app.string.rkit_loading_decoding')
-                  : $r('app.string.rkit_loading_image'),
-            loaded: this.preparingAsset() || this.snapshot.frames.length === 0 ? 0 : this.snapshot.frames[0].asset.loadProgressLoaded,
-            total: this.preparingAsset() || this.snapshot.frames.length === 0 ? 0 : this.snapshot.frames[0].asset.loadProgressTotal,
-          }).zIndex(2)
-        }
+        ReaderImagePlaceholder({
+          frame: this.snapshot.frames[0] ?? null, entryTransition: this.entryTransition,
+        }).zIndex(2)
       }.width('100%').aspectRatio(this.imageAspectRatio)
         .id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
     }
