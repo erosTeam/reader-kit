@@ -1,5 +1,5 @@
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy, ReaderLayout,
-  ReaderVariantPreference, ReaderPage, ReaderTemporaryVariantScope, ReaderTemporaryVariantOverride,
+  ReaderVariantPreference, ReaderProcessingPolicy, ReaderProcessingResult, ReaderPage, ReaderTemporaryVariantScope, ReaderTemporaryVariantOverride,
   ReaderInputPort, ReaderMoveIntent, ReaderImageShareTarget,
   ReaderImageShareController, ReaderPagedFrame, ReaderImageInformation,
   ReaderImageSaveController, ReaderImageSaveChoice, ReaderAutoReadController } from '@reader-kit/core'
@@ -177,9 +177,35 @@ export struct ReaderSurface {
       this.state.topologyRevision, this.state.navigationRevision)
   }
 
+  private processingPolicySignature: string = ''
+
+  private syncProcessingPolicy(state: ReaderPagedSnapshot, scope: ReaderTemporaryVariantScope | null): void {
+    const policy = this.variantPolicy
+    if (policy === null || !policy.supportsProcessing()) return
+    const fallback = policy.defaultPreference()
+    const signature = JSON.stringify([policy.revision, fallback.variant, fallback.identity,
+      policy.automaticNext, this.temporaryVariantOverride.revision,
+      this.cropPolicy?.enabled ?? false, this.cropPolicy?.sourceRevision ?? ''])
+    if (signature === this.processingPolicySignature) return
+    this.processingPolicySignature = signature
+    this.session.setProcessingPolicy(new ReaderProcessingPolicy(signature, policy.automaticNext,
+      (page: ReaderPage, automatic: boolean): ReaderVariantPreference =>
+        this.temporaryVariantOverride.preference(scope, page.sourceIndex, page.key,
+          policy.processingPreference(page, automatic)),
+      (index: number, preference: ReaderVariantPreference, result: ReaderProcessingResult): void =>
+        policy.selectionCompleted(index, preference, result)), this.cropPolicy?.sourceRevision ?? '')
+  }
+
   private syncPreferredVariant(state: ReaderPagedSnapshot): void {
     const unit = state.unit?.key
     const temporaryScope = this.reconcileTemporaryVariantOverride(state)
+    if (this.variantPolicy?.supportsProcessing() === true) {
+      this.syncProcessingPolicy(state, temporaryScope)
+      return
+    }
+    if (this.processingPolicySignature.length > 0) {
+      this.processingPolicySignature = ''; this.session.setProcessingPolicy(null)
+    }
     const fallback = this.variantPolicy?.defaultPreference() ?? new ReaderVariantPreference()
     const hasPerSourcePreference = this.variantPolicy?.hasPerSourcePreference() ?? false
     const context = JSON.stringify([unit?.scope ?? '', unit?.work ?? '', unit?.unit ?? '', state.navigationRevision,
@@ -265,6 +291,7 @@ export struct ReaderSurface {
     // disagree before the first user toggle; later flips keep flowing through
     // commitChromeVisible.
     this.activitySink?.chromeChanged(this.chromeVisible)
+    this.syncPreferredVariant(this.session.snapshot())
     this.session.setNeighborPreload(true)
     this.session.setPreloadDepth(this.preloadDepth)
     this.appliedCropSourceRevision = this.cropPolicy?.sourceRevision ?? ''
@@ -574,7 +601,8 @@ export struct ReaderSurface {
   private enhancementApplied(): boolean {
     const sourceIndex = this.enhancementSourceIndex()
     return sourceIndex >= 0 && this.state.frames.some((frame: ReaderPagedFrame): boolean =>
-      frame.part.sourceIndex === sourceIndex && frame.asset.variant === 'enhanced')
+      frame.part.sourceIndex === sourceIndex && frame.asset.phase === 'displayed' &&
+      frame.asset.variant === 'enhanced')
   }
 
   private async showInformation(frame: ReaderPagedFrame): Promise<void> {

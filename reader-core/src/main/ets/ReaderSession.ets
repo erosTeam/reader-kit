@@ -211,6 +211,8 @@ export interface ReaderVariantAssetPlan {
   variant: ReaderProcessedAssetVariant
   /** Exact host processing identity, including every setting that can change the output. */
   identity: string
+  /** Release an unused recipe; loaded assets retain their own independent lifetime. */
+  release?(): void
   load(cancellation: ReaderCancellation, forceReload: boolean,
     onProgress?: (loaded: number, total: number) => void): Promise<ReaderAsset>
 }

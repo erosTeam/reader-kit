@@ -10,6 +10,7 @@ import { ReaderDisplayMap, ReaderDisplayPolicy, ReaderDisplayPart, ReaderReading
 import { ReaderThumbnailWindow } from './ReaderThumbnailWindow'
 import { ReaderImageInformation } from './ReaderImageInformation'
 import { ReaderImageCropBounds } from './ReaderImageCrop'
+import { ReaderProcessingCoordinator, ReaderProcessingPolicy, ReaderProcessingState } from './ReaderProcessingCoordinator'
 
 export class ReaderPagedFrame {
   cropPending: boolean = false
@@ -95,6 +96,7 @@ export class ReaderPagedSnapshot {
   variantPreparing: boolean = false
   preparingSourceIndexes: number[] = []
   preparingVariants: ReaderAssetVariant[] = []
+  processingStates: ReaderProcessingState[] = []
   cropEnabled: boolean = false
   displayIndex: number = 0
   displayCount: number = 0
@@ -127,7 +129,12 @@ export class ReaderPagedSnapshot {
     for (let index: number = 0; index < this.preparingSourceIndexes.length; index++) {
       if (this.preparingSourceIndexes[index] === sourceIndex && this.preparingVariants[index] === variant) return true
     }
-    return false
+    const processing = this.processingStates.find((value: ReaderProcessingState): boolean =>
+      value.sourceIndex === sourceIndex && value.preference.variant === variant)
+    if (processing === undefined || processing.phase === 'unavailable') return false
+    return processing.phase === 'preparing' || !this.frames.some((frame: ReaderPagedFrame): boolean =>
+      frame.part.sourceIndex === sourceIndex && frame.asset.phase === 'displayed' &&
+      frame.asset.variant === variant && frame.asset.variantIdentity === processing.preference.identity)
   }
 
   observedPosition(): ReaderObservedPosition | null {
@@ -163,6 +170,7 @@ export class ReaderPagedSnapshot {
     value.variantPreparing = this.variantPreparing
     value.preparingSourceIndexes = this.preparingSourceIndexes.slice()
     value.preparingVariants = this.preparingVariants.slice()
+    value.processingStates = this.processingStates.slice()
     value.cropEnabled = this.cropEnabled
     value.displayIndex = this.displayKeys.indexOf(key)
     value.displayCount = this.displayCount
@@ -215,6 +223,11 @@ export class ReaderPagedSession {
   private readonly assets: ReaderAssetProvider
   private readonly preloadHost: ReaderPreloadHost | null
   private readonly autoReadSourceHost: ReaderAutoReadSourceHost | null
+  private readonly processing: ReaderProcessingCoordinator
+  private processingPolicy: ReaderProcessingPolicy | null = null
+  private processingAllowed: boolean = true
+  private processingCropRevision: string = ''
+  private processingReloads: Set<number> = new Set()
   private readonly failures: ReaderAssetFailureClassifier | null
   private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
   private map: ReaderDisplayMap | null = null
@@ -256,6 +269,9 @@ export class ReaderPagedSession {
 
   constructor(catalog: ReaderCatalog, assets: ReaderAssetProvider, preloadHost: ReaderPreloadHost | null = null,
     failures: ReaderAssetFailureClassifier | null = null, autoReadSourceHost: ReaderAutoReadSourceHost | null = null) {
+    this.processing = new ReaderProcessingCoordinator(catalog, assets, preloadHost, (): void => {
+      if (!this.disposed && this.state.phase === 'ready') this.reconcile()
+    })
     this.catalog = catalog
     this.assets = assets
     this.preloadHost = preloadHost
@@ -507,6 +523,7 @@ export class ReaderPagedSession {
     if (!active) this.cancelAutoReadSourcePreparations()
     if (this.active && !active) this.activityEpoch += 1
     this.active = active && !this.disposed
+    this.syncProcessing()
   }
   subscribe(listener: (snapshot: ReaderPagedSnapshot) => void): void {
     this.listener = listener
@@ -523,7 +540,9 @@ export class ReaderPagedSession {
     value.kind = this.state.kind
     value.originalPreparing = Array.from(this.preparationVariants.values())
       .some((variant: ReaderAssetVariant): boolean => variant === 'original')
-    value.variantPreparing = this.originalPreparations.size > 0
+    value.processingStates = this.processing.states()
+    value.variantPreparing = this.originalPreparations.size > 0 ||
+      value.processingStates.some((value: ReaderProcessingState): boolean => value.phase === 'preparing')
     this.preparationVariants.forEach((variant: ReaderAssetVariant, sourceIndex: number): void => {
       value.preparingSourceIndexes.push(sourceIndex)
       value.preparingVariants.push(variant)
@@ -652,7 +671,49 @@ export class ReaderPagedSession {
     return indexes
   }
 
+  /** Hosts publish configuration/permissions; this session owns all preparation consumers. */
+  setProcessingPolicy(policy: ReaderProcessingPolicy | null, cropRevision: string = ''): void {
+    if (this.disposed) return
+    this.processingPolicy = policy; this.processingCropRevision = cropRevision
+    if (policy === null) this.processing.clear()
+    if (this.state.phase === 'ready') this.reconcile()
+  }
+
+  setProcessingActive(active: boolean): void {
+    if (this.disposed || this.processingAllowed === active) return
+    this.processingAllowed = active
+    this.syncProcessing()
+    this.emit()
+  }
+
+  private syncProcessing(): void {
+    const unit = this.state.unit
+    const policy = this.processingPolicy
+    if (unit === null || policy === null || this.state.phase !== 'ready' || this.state.kind !== 'original') {
+      this.processing.clear()
+      return
+    }
+    const indexes: number[] = this.futurePreloadIndexes()
+    this.windowIndexes().forEach((display: number): void => {
+      this.map?.item(display)?.parts.forEach((part: ReaderDisplayPart): void => {
+        if (!indexes.includes(part.sourceIndex)) indexes.push(part.sourceIndex)
+      })
+    })
+    const current = (this.map?.item(this.state.displayIndex)?.parts ?? [])
+      .map((part: ReaderDisplayPart): number => part.sourceIndex)
+    const automaticIndex = (this.state.anchor?.sourceIndexHint ?? -2) + 1
+    if (policy.automaticNext && automaticIndex >= 0 && automaticIndex < unit.pageCount &&
+      !indexes.includes(automaticIndex)) indexes.push(automaticIndex)
+    const allowed = indexes.filter((index: number): boolean => !this.processingReloads.has(index) &&
+      this.assetPlans.get(index)?.variant !== 'original')
+    this.processing.update(unit, allowed, current, automaticIndex, policy,
+      this.active && this.processingAllowed, this.cropEnabled, this.processingCropRevision)
+  }
+
   private schedulePreload(): void {
+    if (this.processingPolicy !== null) {
+      this.preloadCancellation.cancel(); this.preloadSignature = ''; return
+    }
     const unit = this.state.unit
     const indexes = this.futurePreloadIndexes()
     const signature = unit === null || this.preloadHost === null || indexes.length === 0
@@ -760,6 +821,7 @@ export class ReaderPagedSession {
     if (this.disposed) return
     this.cancelOriginalPreparations()
     this.cancelAutoReadSourcePreparations()
+    this.processing.clear()
     this.preloadSignature = ''
     this.preloadCancellation.cancel()
     this.preloadCancellation = new ReaderCancellation()
@@ -1004,7 +1066,10 @@ export class ReaderPagedSession {
       this.assetPlans.delete(slot.index)
       slot.assetPlan = null
     }
-    await slot.session.show(slot.index, slot.kind, true, slot.assetPlan)
+    this.processingReloads.add(slot.index)
+    this.processing.invalidate(slot.index)
+    try { await slot.session.show(slot.index, slot.kind, true, slot.assetPlan) }
+    finally { this.processingReloads.delete(slot.index); this.reconcile() }
     return true
   }
 
@@ -1046,8 +1111,13 @@ export class ReaderPagedSession {
       })
     })
     if (unit === null) return
-    const targetPlan = (index: number): ReaderResolvedAssetPlan | null =>
-      this.state.kind === 'original' ? this.assetPlans.get(index) ?? null : null
+    this.syncProcessing()
+    const targetPlan = (index: number): ReaderResolvedAssetPlan | null => {
+      if (this.state.kind !== 'original') return null
+      const explicit = this.assetPlans.get(index) ?? null
+      if (this.processingPolicy === null || explicit?.variant === 'original') return explicit
+      return this.processing.plan(index)
+    }
     const retained = this.slots.filter((slot: ReaderPageSlot) => slot.kind === this.state.kind &&
       parts.some((part: ReaderDisplayPart) => part.sourceIndex === slot.index))
     const removed = this.slots.filter((slot: ReaderPageSlot) => !retained.includes(slot))
@@ -1243,6 +1313,7 @@ export class ReaderPagedSession {
   }
 
   close(): void {
+    this.processing.clear()
     this.cancelOriginalPreparations()
     this.cancelAutoReadSourcePreparations()
     this.assetPlans.clear()
