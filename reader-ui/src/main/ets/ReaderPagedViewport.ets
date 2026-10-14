@@ -729,16 +729,13 @@ export struct ReaderPagedImage {
 
   private publishEntryTarget(failed: boolean = false): void {
     const position = this.continuousEntry
-    if (position !== null) {
-      if (!position.isCurrent()) return
-      // The closure keeps the positioning token that scheduled this measurement.
-      this.getUIContext().postFrameCallback(new ReaderEntryAfterLayout((): void => {
-        if (this.continuousEntry !== position || !position.isCurrent()) return
-        this.measureEntryTarget(failed, position)
-      }))
-      return
-    }
-    this.measureEntryTarget(failed, null)
+    if (position !== null && !position.isCurrent()) return
+    // State monitors run before native layout. Both paged and continuous
+    // measurements must read the fitted rectangle after that layout is applied.
+    this.getUIContext().postFrameCallback(new ReaderEntryAfterLayout((): void => {
+      if (this.continuousEntry !== position || (position !== null && !position.isCurrent())) return
+      this.measureEntryTarget(failed, position)
+    }))
   }
 
   private measureEntryTarget(failed: boolean, position: ReaderContinuousEntryPosition | null): void {
@@ -774,6 +771,9 @@ export struct ReaderPagedImage {
       transition.cancel(); return
     }
     if (page === null) return
+    // Decode reports canonical dimensions at the existing presentation frame.
+    // Do not compare that new decode with an earlier preview-derived layout.
+    if (this.decoded && (page.width !== this.decodedWidth || page.height !== this.decodedHeight)) return
     const geometry = ReaderEntryGeometryGate.frame(this.frame)
     if (geometry === 'invalid' || (geometry === 'unknown' && transition.phase !== 'layout')) {
       transition.cancel(); return
@@ -816,7 +816,9 @@ export struct ReaderPagedImage {
         transition.cancel(); return
       }
       if (position !== null) {
-        const root = context.getComponentUtils().getRectangleById('rkit-entry-preview-root')
+        // The root-owned host omits ReaderEntryPreview. Clip against the
+        // actual common Reader parent, which also contains a local preview.
+        const root = context.getComponentUtils().getRectangleById('rkit-reading-surface')
         const left = Math.max(viewport.windowOffset.x, root.windowOffset.x)
         const top = Math.max(viewport.windowOffset.y, root.windowOffset.y)
         const right = Math.min(viewport.windowOffset.x + viewport.size.width, root.windowOffset.x + root.size.width)

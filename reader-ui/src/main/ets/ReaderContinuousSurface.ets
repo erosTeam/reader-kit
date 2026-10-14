@@ -1,6 +1,8 @@
 import { FrameCallback, LengthMetrics } from '@kit.ArkUI'
-import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderFragment, ReaderAssetNotice, readerPolicyRotatesPage } from '@reader-kit/core'
+import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderFragment, ReaderAssetNotice, readerPolicyRotatesPage,
+  readerPagedFrameAspectRatio } from '@reader-kit/core'
 import { ReaderContinuousZoomImage } from './ReaderContinuousZoomImage'
+import { ReaderEntryGeometryGate } from './ReaderPagedViewport'
 import { ReaderFailurePanel } from './ReaderFailurePanel'
 import { ReaderAssetNoticePanel } from './ReaderAssetNoticePanel'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
@@ -277,6 +279,13 @@ struct ReaderContinuousList {
 
   private imageAspectRatio(index: number): number {
     const page = this.snapshot.pageMetadata.find((value) => value.sourceIndex === index)
+    const frame = this.snapshot.window.find((item) => item.index === index)?.frames[0]
+    if (this.snapshot.kind === 'original' && frame !== undefined && frame.asset.page !== null &&
+      frame.part.fragment === 'whole' &&
+      !frame.crop.applied() && !this.snapshot.cropForPage(index).applied() &&
+      !readerPolicyRotatesPage(this.snapshot.policy, page ?? null)) {
+      return readerPagedFrameAspectRatio(frame, this.snapshot.policy)
+    }
     const width = this.snapshot.kind === 'thumbnail' ? page?.thumbnail.width ?? 0 : page?.width ?? 0
     const height = this.snapshot.kind === 'thumbnail' ? page?.thumbnail.height ?? 0 : page?.height ?? 0
     const crop = this.snapshot.cropForPage(index)
@@ -528,6 +537,11 @@ struct ReaderContinuousCell {
     async (_slot: number, _request: number, _noticeId: string): Promise<boolean> => false
   @Local private noticeActionBusy: boolean = false
 
+  private entryContentReady(frame: ReaderPagedFrame): boolean {
+    return this.entryPosition?.isCurrent() === true && frame.part.fragment === 'whole' &&
+      !this.rotateClockwise && ReaderEntryGeometryGate.frame(frame) === 'ready'
+  }
+
   private async resolveNoticeAction(frame: ReaderPagedFrame): Promise<void> {
     const notice = frame.asset.notice
     if (notice === null || this.noticeActionBusy) return
@@ -568,7 +582,9 @@ struct ReaderContinuousCell {
     } else {
       Stack() {
         ForEach(this.snapshot.frames, (frame: ReaderPagedFrame) => {
-          if (this.snapshot.frames[0].asset.uri.length > 0) {
+          // Stable slot identity belongs to ForEach; state belongs to the current snapshot.
+          if (this.snapshot.frames[0].asset.uri.length > 0 ||
+            this.entryContentReady(this.snapshot.frames[0])) {
             ReaderContinuousZoomImage({
               imageInterpolation: this.imageInterpolation,
               frame: this.snapshot.frames[0], navigation: this.snapshot.navigationRevision,
