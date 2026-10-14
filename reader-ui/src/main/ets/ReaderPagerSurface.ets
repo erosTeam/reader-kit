@@ -1,9 +1,10 @@
-import { ReaderPagedSnapshot, ReaderFragment } from '@reader-kit/core'
+import { ReaderPagedSnapshot, ReaderFragment, readerVisualPreloadDepth } from '@reader-kit/core'
 import { ReaderPagedViewport } from './ReaderPagedViewport'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderBoundaryDirection, ReaderBoundarySwipe } from './ReaderBoundarySwipe'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { readerElementKey } from './ReaderElementKey'
+import { ReaderSelectedDrawable } from './ReaderSelectedDrawable'
 import { ReaderPositionHandoff } from './ReaderPositionHandoff'
 import { FrameCallback, UIUtils } from '@kit.ArkUI'
 
@@ -48,6 +49,7 @@ class ReaderPagerIndexSource implements IDataSource {
 export struct ReaderPagerSurface {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param pageGap: number = 0
+  @Param preloadDepth: number = 0
   @Param canvasBackground: ResourceColor = Color.Black
   @Param retainedProjectionDiagnostic: boolean = false
   @Param entryOwnershipDiagnostic: boolean = false
@@ -63,6 +65,8 @@ export struct ReaderPagerSurface {
   @Event onBoundary: (direction: ReaderBoundaryDirection, topologyRevision: number,
     navigationRevision: number) => void = () => {}
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
+  @Event onDeferredSwipe: (direction: ReaderBoundaryDirection, topologyRevision: number,
+    navigationRevision: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onStableNative: (topologyRevision: number, navigationRevision: number, selectionId: number,
     slotId: number, requestId: number, sourceIndex: number,
@@ -86,6 +90,7 @@ export struct ReaderPagerSurface {
           ReaderNativePager({
             imageInterpolation: this.imageInterpolation,
             pageGap: this.pageGap,
+            preloadDepth: this.preloadDepth,
             canvasBackground: this.canvasBackground,
             retainedProjectionDiagnostic: this.retainedProjectionDiagnostic,
             entryOwnershipDiagnostic: this.entryOwnershipDiagnostic,
@@ -97,7 +102,8 @@ export struct ReaderPagerSurface {
             onInputLockChange: this.onInputLockChange,
             onZoomedChange: this.onZoomedChange,
             onBoundary: this.onBoundary,
-            onSelect: this.onSelect, onPresented: this.onPresented, onStableNative: this.onStableNative,
+            onSelect: this.onSelect, onDeferredSwipe: this.onDeferredSwipe,
+            onPresented: this.onPresented, onStableNative: this.onStableNative,
             onVisualClaim: this.onVisualClaim,
             onVisible: this.onVisible, onFailed: this.onFailed,
             onPositionHandoff: this.onPositionHandoff,
@@ -118,6 +124,7 @@ export struct ReaderPagerSurface {
 struct ReaderNativePager {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param pageGap: number = 0
+  @Param preloadDepth: number = 0
   @Param canvasBackground: ResourceColor = Color.Black
   @Param retainedProjectionDiagnostic: boolean = false
   @Param entryOwnershipDiagnostic: boolean = false
@@ -134,6 +141,8 @@ struct ReaderNativePager {
     navigationRevision: number) => void = () => {}
   @Require @Param createdRevision: number
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
+  @Event onDeferredSwipe: (direction: ReaderBoundaryDirection, topologyRevision: number,
+    navigationRevision: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onStableNative: (topologyRevision: number, navigationRevision: number, selectionId: number,
     slotId: number, requestId: number, sourceIndex: number,
@@ -175,19 +184,67 @@ struct ReaderNativePager {
   private oldVisualMounted: boolean = false
   private pendingChange: number = 0
   private boundarySwipe: ReaderBoundarySwipe = new ReaderBoundarySwipe()
+  private deferredSwipe: ReaderBoundarySwipe = new ReaderBoundarySwipe()
+  @Local private deferredGestureActive: boolean = false
+  @Local private nativeReadyRevision: number = 0
+  private nativeStableParts: Set<string> = new Set<string>()
+  private nativeReceiptSelection: number = -1
   private boundaryTopology: number = -1
   private boundaryNavigation: number = -1
+
+  private nativePart(key: string, slotId: number, requestId: number, visualRevision: number): string {
+    return JSON.stringify([this.snapshot.selectionId, key, slotId, requestId, visualRevision])
+  }
+
+  private recordNativeStable(key: string, topology: number, navigation: number, selection: number,
+    slotId: number, requestId: number, sourceIndex: number, fragment: ReaderFragment,
+    visualRevision: number): void {
+    if (topology !== this.snapshot.topologyRevision || navigation !== this.snapshot.navigationRevision ||
+      selection !== this.snapshot.selectionId) return
+    if (this.nativeReceiptSelection !== selection) {
+      this.nativeReceiptSelection = selection
+      this.nativeStableParts.clear()
+    }
+    const target = this.snapshot.forItem(key)
+    if (!target.frames.some(frame => frame.slotId === slotId && frame.asset.assetRequestId === requestId &&
+      frame.asset.visualRevision === visualRevision && frame.part.sourceIndex === sourceIndex &&
+      frame.part.fragment === fragment && frame.asset.phase === 'displayed')) return
+    const part = this.nativePart(key, slotId, requestId, visualRevision)
+    if (this.nativeStableParts.has(part)) return
+    this.nativeStableParts.add(part)
+    this.nativeReadyRevision += 1
+  }
+
+  private nativeTargetReady(index: number): boolean {
+    const key = this.snapshot.displayKeys[index]
+    if (key === undefined) return false
+    const target = this.snapshot.forItem(key)
+    return ReaderSelectedDrawable.from(target) !== null && target.frames.every(frame =>
+      this.nativeStableParts.has(this.nativePart(key, frame.slotId,
+        frame.asset.assetRequestId, frame.asset.visualRevision)))
+  }
+
+  private nativeAdjacentReady(): boolean {
+    if (this.snapshot.kind !== 'original') return true
+    if (this.nativeReadyRevision < 0) return false
+    const index = this.snapshot.displayIndex
+    return (index === 0 || this.nativeTargetReady(index - 1)) &&
+      (index + 1 >= this.snapshot.displayCount || this.nativeTargetReady(index + 1))
+  }
 
   private handleBoundaryTouch(event: TouchEvent): void {
     if (!this.active || this.snapshot.phase !== 'ready' || event.touches.length > 1 ||
       event.changedTouches.length === 0) {
       this.boundarySwipe.cancel()
+      this.deferredSwipe.cancel()
+      this.deferredGestureActive = false
       return
     }
     const point = event.changedTouches[0]
     if (event.type === TouchType.Down) {
       if (this.inputLocked || this.moving) {
         this.boundarySwipe.cancel()
+        this.deferredSwipe.cancel()
         return
       }
       this.boundaryTopology = this.snapshot.topologyRevision
@@ -195,13 +252,29 @@ struct ReaderNativePager {
       this.boundarySwipe.begin(point.windowX, point.windowY,
         this.snapshot.displayIndex === 0,
         this.snapshot.displayIndex + 1 === this.snapshot.displayCount)
+      this.deferredGestureActive = !this.nativeAdjacentReady()
+      if (this.deferredGestureActive) this.deferredSwipe.begin(point.windowX, point.windowY,
+        this.snapshot.displayIndex > 0,
+        this.snapshot.displayIndex + 1 < this.snapshot.displayCount)
       return
     }
     if (event.type === TouchType.Cancel) {
       this.boundarySwipe.cancel()
+      this.deferredSwipe.cancel()
+      this.deferredGestureActive = false
       return
     }
     if (event.type !== TouchType.Up) return
+    const deferred = this.deferredSwipe.finish(point.windowX, point.windowY,
+      this.snapshot.policy.pagingAxis === 'vertical' ? 'vertical' : 'horizontal',
+      this.snapshot.policy.direction)
+    this.deferredGestureActive = false
+    if (deferred !== null && this.active && !this.inputLocked && !this.moving &&
+      this.createdRevision === this.snapshot.topologyRevision &&
+      this.boundaryTopology === this.snapshot.topologyRevision &&
+      this.boundaryNavigation === this.snapshot.navigationRevision) {
+      this.onDeferredSwipe(deferred, this.boundaryTopology, this.boundaryNavigation)
+    }
     const direction = this.boundarySwipe.finish(point.windowX, point.windowY,
       this.snapshot.policy.pagingAxis === 'vertical' ? 'vertical' : 'horizontal',
       this.snapshot.policy.direction)
@@ -247,6 +320,11 @@ struct ReaderNativePager {
 
   @Monitor('snapshot')
   onNavigationChanged(): void {
+    if (this.nativeReceiptSelection !== this.snapshot.selectionId) {
+      this.nativeReceiptSelection = this.snapshot.selectionId
+      this.nativeStableParts.clear()
+      this.nativeReadyRevision += 1
+    }
     if (this.lastNavigation !== this.snapshot.navigationRevision) {
       this.lastNavigation = this.snapshot.navigationRevision
       this.inputLocked = false
@@ -370,7 +448,8 @@ struct ReaderNativePager {
 
   private readyToAnimate(claim: ReaderPositionHandoff): boolean {
     const readiness = claim.targetReadiness(this.snapshot)
-    return (readiness === 'terminal-face' || readiness === 'drawable') && claim.targetNodeReady(this.snapshot)
+    return readiness === 'terminal-face' ? claim.targetNodeReady(this.snapshot) :
+      readiness === 'drawable' && claim.targetStableReady(this.snapshot)
   }
 
   private startAnimatedCommand(command: ReaderPagerCommand): void {
@@ -438,6 +517,28 @@ struct ReaderNativePager {
     }
   }
 
+  private targetVisualStable(serial: number, topology: number, navigation: number, selection: number,
+    slotId: number, requestId: number, sourceIndex: number, fragment: ReaderFragment,
+    visualRevision: number): void {
+    const claim = this.positionHandoff
+    if (claim === null || claim.serial !== serial || !claim.animated || this.visualPhase !== 'preparing') return
+    if (claim.targetNodeStable(this.snapshot, topology, navigation, selection, slotId, requestId,
+      sourceIndex, fragment, visualRevision) && this.pendingAnimatedCommand?.serial === serial) {
+      this.scheduleAnimatedCommand(this.pendingAnimatedCommand)
+    }
+  }
+
+  private oldVisualStable(serial: number, topology: number, navigation: number, selection: number,
+    slotId: number, requestId: number, sourceIndex: number, fragment: ReaderFragment,
+    visualRevision: number): void {
+    const claim = this.positionHandoff
+    if (claim === null || claim.serial !== serial || claim.animated ||
+      !claim.oldNodeStable(topology, navigation, selection, slotId, requestId,
+        sourceIndex, fragment, visualRevision)) return
+    const command = this.pendingOffCommand
+    if (command !== null && command.serial === serial) this.startOffCommandAfterFrame(command)
+  }
+
   private targetVisualTerminalMounted(serial: number, slotId: number, requestId: number): void {
     const claim = this.positionHandoff
     if (claim === null || claim.serial !== serial || !claim.animated || this.visualPhase !== 'preparing') return
@@ -449,7 +550,9 @@ struct ReaderNativePager {
 
   private startOffCommandAfterFrame(command: ReaderPagerCommand): void {
     this.getUIContext().postFrameCallback(new ReaderPagerAfterFrame((): void => {
-      if (!this.active || !this.oldVisualMounted || this.pendingOffCommand?.serial !== command.serial ||
+      if (!this.active || !this.oldVisualMounted ||
+        (this.positionHandoff?.oldProjection.kind === 'original' && !this.positionHandoff.oldNodeReady()) ||
+        this.pendingOffCommand?.serial !== command.serial ||
         this.positionHandoff?.current(command.serial, this.snapshot) !== true) return
       this.pendingOffCommand = null
       try {
@@ -490,6 +593,21 @@ struct ReaderNativePager {
       handoff.nativeNodeReady(this.snapshot)) this.scheduleAnimatedRetirement(handoff)
   }
 
+  private nativeTargetStable(key: string, topology: number, navigation: number, selection: number,
+    slotId: number, requestId: number, sourceIndex: number, fragment: ReaderFragment,
+    visualRevision: number): void {
+    const handoff = this.positionHandoff
+    if (handoff !== null && handoff.animated && handoff.nativeNodeStable(this.snapshot, key, topology,
+      navigation, selection, slotId, requestId, sourceIndex, fragment, visualRevision)) {
+      this.scheduleAnimatedRetirement(handoff)
+    }
+  }
+
+  private nativeReadyForRetirement(handoff: ReaderPositionHandoff): boolean {
+    return handoff.targetReadiness(this.snapshot) === 'terminal-face' ? handoff.nativeNodeReady(this.snapshot) :
+      handoff.nativeStableReady(this.snapshot)
+  }
+
   private nativeTerminalMounted(key: string, slotId: number, requestId: number): void {
     const handoff = this.positionHandoff
     if (handoff === null || !handoff.animated) return
@@ -502,7 +620,7 @@ struct ReaderNativePager {
       !handoff.targetSelected(this.snapshot) ||
       (handoff.targetReadiness(this.snapshot) !== 'drawable' &&
         handoff.targetReadiness(this.snapshot) !== 'terminal-face') ||
-      !handoff.nativeNodeReady(this.snapshot) || this.scheduledAnimatedRetireSerial === handoff.serial) return
+      !this.nativeReadyForRetirement(handoff) || this.scheduledAnimatedRetireSerial === handoff.serial) return
     const anchor = this.snapshot.anchor
     if (anchor === null) return
     const frame = this.snapshot.frames.find(candidate => candidate.part.pageKey === anchor.pageKey &&
@@ -525,7 +643,7 @@ struct ReaderNativePager {
         !handoff.targetSelected(this.snapshot) ||
         (handoff.targetReadiness(this.snapshot) !== 'drawable' &&
           handoff.targetReadiness(this.snapshot) !== 'terminal-face') ||
-        !handoff.nativeNodeReady(this.snapshot) ||
+        !this.nativeReadyForRetirement(handoff) ||
         this.snapshot.displayKeys[this.snapshot.displayIndex] !== handoff.targetKey) return
       this.positionHandoff = null
       this.onPositionHandoff(null)
@@ -649,7 +767,16 @@ struct ReaderNativePager {
             this.onPresented(slotId, requestId, success, width, height)
             this.nativeTargetPresented(key, slotId, requestId, success)
           },
-          onStableNative: this.onStableNative,
+          onStableNative: (topology: number, navigation: number, selection: number,
+            slotId: number, requestId: number, sourceIndex: number, fragment: ReaderFragment,
+            visualRevision: number, width: number, height: number): void => {
+            this.recordNativeStable(key, topology, navigation, selection, slotId, requestId,
+              sourceIndex, fragment, visualRevision)
+            this.nativeTargetStable(key, topology, navigation, selection, slotId, requestId,
+              sourceIndex, fragment, visualRevision)
+            this.onStableNative(topology, navigation, selection, slotId, requestId,
+              sourceIndex, fragment, visualRevision, width, height)
+          },
           onVisualClaim: this.onVisualClaim,
           onTap: this.onTap,
           onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {
@@ -675,9 +802,9 @@ struct ReaderNativePager {
     .vertical(this.snapshot.policy.pagingAxis === 'vertical')
     .direction(this.snapshot.policy.pagingAxis !== 'vertical' && this.snapshot.policy.direction === 'rtl' ?
       Direction.Rtl : Direction.Ltr)
-    .loop(false).indicator(false).cachedCount(1)
+    .loop(false).indicator(false).cachedCount(readerVisualPreloadDepth(this.preloadDepth))
     .disableSwipe(!this.active || this.snapshot.phase !== 'ready' || this.inputLocked ||
-      this.positionHandoff !== null)
+      this.positionHandoff !== null || this.deferredGestureActive || !this.nativeAdjacentReady())
     .width('100%').height('100%').id('rkit-native-pager')
     .backgroundColor(this.canvasBackground)
     .translate({ x: this.oldVisualX, y: this.oldVisualY })
@@ -695,20 +822,33 @@ struct ReaderNativePager {
     .onAnimationEnd((): void => { this.moving = false })
     .onChange((index: number): void => { this.queueSelection(index) })
     if (this.positionHandoff !== null && !this.positionHandoff.animated) {
-      ReaderPagedViewport({
-        imageInterpolation: this.imageInterpolation,
-        pageGap: this.pageGap,
-        snapshot: this.positionHandoff.oldProjection,
-        selected: false,
-        active: false,
-      })
-      .width('100%').height('100%').hitTestBehavior(HitTestMode.None)
-      .onAppear((): void => {
-        this.oldVisualMounted = true
-        const command = this.pendingOffCommand
-        if (command !== null) this.startOffCommandAfterFrame(command)
-      })
-      .onDisAppear((): void => { this.oldVisualMounted = false })
+      ForEach([this.positionHandoff.serial], (serial: number) => {
+        if (this.positionHandoff !== null && this.positionHandoff.serial === serial) {
+          ReaderPagedViewport({
+            imageInterpolation: this.imageInterpolation,
+            pageGap: this.pageGap,
+            snapshot: this.positionHandoff.oldProjection,
+            selected: false,
+            active: false,
+            onStableNative: (topology: number, navigation: number, selection: number,
+              slotId: number, requestId: number, sourceIndex: number, fragment: ReaderFragment,
+              visualRevision: number): void => {
+              this.oldVisualStable(serial, topology, navigation, selection,
+                slotId, requestId, sourceIndex, fragment, visualRevision)
+            },
+          })
+          .width('100%').height('100%').hitTestBehavior(HitTestMode.None)
+          .onAppear((): void => {
+            if (this.positionHandoff?.serial !== serial) return
+            this.oldVisualMounted = true
+            const command = this.pendingOffCommand
+            if (command !== null) this.startOffCommandAfterFrame(command)
+          })
+          .onDisAppear((): void => {
+            if (this.positionHandoff?.serial === serial) this.oldVisualMounted = false
+          })
+        }
+      }, (serial: number): string => `${serial}`)
     }
     if (this.positionHandoff !== null && this.positionHandoff.animated) {
       ForEach([this.positionHandoff.serial], (serial: number) => {
@@ -719,6 +859,12 @@ struct ReaderNativePager {
             snapshot: this.snapshot.forItem(this.positionHandoff.targetKey),
             selected: false,
             active: false,
+            onStableNative: (topology: number, navigation: number, selection: number,
+              slotId: number, requestId: number, sourceIndex: number, fragment: ReaderFragment,
+              visualRevision: number): void => {
+              this.targetVisualStable(serial, topology, navigation, selection,
+                slotId, requestId, sourceIndex, fragment, visualRevision)
+            },
             onPresented: (slotId: number, requestId: number, success: boolean,
               width: number, height: number): void => {
               this.targetVisualPresented(serial, slotId, requestId, success, width, height)

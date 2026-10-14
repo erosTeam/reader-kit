@@ -18,6 +18,74 @@ export class ReaderPositionHandoff {
   readonly animated: boolean
   private readonly targetNodeReceipts: Set<string> = new Set<string>()
   private readonly nativeNodeReceipts: Set<string> = new Set<string>()
+  private readonly oldStableReceipts: Set<string> = new Set<string>()
+  private readonly targetStableReceipts: Set<string> = new Set<string>()
+  private readonly nativeStableReceipts: Set<string> = new Set<string>()
+
+  private stablePart(slotId: number, requestId: number, visualRevision: number): string {
+    return `${slotId}:${requestId}:${visualRevision}`
+  }
+
+  private matchesPart(snapshot: ReaderPagedSnapshot, slotId: number, requestId: number,
+    sourceIndex: number, fragment: string, visualRevision: number): boolean {
+    return snapshot.frames.some(frame => frame.slotId === slotId &&
+      frame.asset.assetRequestId === requestId && frame.asset.visualRevision === visualRevision &&
+      frame.part.sourceIndex === sourceIndex && frame.part.fragment === fragment &&
+      frame.asset.kind === 'original' && frame.asset.phase === 'displayed')
+  }
+
+  oldNodeStable(topology: number, navigation: number, selection: number, slotId: number,
+    requestId: number, sourceIndex: number, fragment: string, visualRevision: number): boolean {
+    const old = this.oldProjection
+    if (topology !== old.topologyRevision || navigation !== old.navigationRevision ||
+      selection !== old.selectionId || !this.matchesPart(old, slotId, requestId,
+        sourceIndex, fragment, visualRevision)) return false
+    this.oldStableReceipts.add(this.stablePart(slotId, requestId, visualRevision))
+    return this.oldNodeReady()
+  }
+
+  oldNodeReady(): boolean {
+    return this.oldProjection.frames.length > 0 && this.oldProjection.frames.every(frame =>
+      this.oldStableReceipts.has(this.stablePart(frame.slotId, frame.asset.assetRequestId,
+        frame.asset.visualRevision)))
+  }
+
+  targetNodeStable(snapshot: ReaderPagedSnapshot, topology: number, navigation: number, selection: number,
+    slotId: number, requestId: number, sourceIndex: number, fragment: string,
+    visualRevision: number): boolean {
+    if (!this.current(this.serial, snapshot) || topology !== snapshot.topologyRevision ||
+      navigation !== snapshot.navigationRevision || selection !== snapshot.selectionId) return false
+    const target = snapshot.forItem(this.targetKey)
+    if (!this.matchesPart(target, slotId, requestId, sourceIndex, fragment, visualRevision)) return false
+    this.targetStableReceipts.add(this.stablePart(slotId, requestId, visualRevision))
+    return this.targetStableReady(snapshot)
+  }
+
+  targetStableReady(snapshot: ReaderPagedSnapshot): boolean {
+    const target = snapshot.forItem(this.targetKey)
+    return this.targetNodeReady(snapshot) && target.frames.every(frame =>
+      this.targetStableReceipts.has(this.stablePart(frame.slotId, frame.asset.assetRequestId,
+        frame.asset.visualRevision)))
+  }
+
+  nativeNodeStable(snapshot: ReaderPagedSnapshot, key: string, topology: number, navigation: number,
+    selection: number, slotId: number, requestId: number, sourceIndex: number,
+    fragment: string, visualRevision: number): boolean {
+    if (!this.targetSelected(snapshot) || key !== this.targetKey ||
+      topology !== snapshot.topologyRevision || navigation !== snapshot.navigationRevision ||
+      selection !== snapshot.selectionId) return false
+    const target = snapshot.forItem(this.targetKey)
+    if (!this.matchesPart(target, slotId, requestId, sourceIndex, fragment, visualRevision)) return false
+    this.nativeStableReceipts.add(this.stablePart(slotId, requestId, visualRevision))
+    return this.nativeStableReady(snapshot)
+  }
+
+  nativeStableReady(snapshot: ReaderPagedSnapshot): boolean {
+    const target = snapshot.forItem(this.targetKey)
+    return this.nativeNodeReady(snapshot) && target.frames.every(frame =>
+      this.nativeStableReceipts.has(this.stablePart(frame.slotId, frame.asset.assetRequestId,
+        frame.asset.visualRevision)))
+  }
 
   constructor(serial: number, targetIndex: number, topologyRevision: number, navigationRevision: number,
     snapshot: ReaderPagedSnapshot,

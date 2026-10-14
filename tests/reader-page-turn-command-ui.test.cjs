@@ -59,6 +59,7 @@ test('late OFF callbacks cannot commit the first of two native commands', () => 
       }
       current(serial, snapshot) { return this.serial === serial &&
         this.topologyRevision === snapshot.topologyRevision && this.targetKey === snapshot.displayKeys[this.targetIndex] }
+      oldNodeReady() { return true }
     },
   })
   const native = new exports.Harness()
@@ -133,6 +134,7 @@ test('animated command waits for its mounted target node, moves L2 layers, then 
         this.targetKey === snapshot.displayKeys[this.targetIndex] }
       targetReadiness(snapshot) { return snapshot.readiness }
       targetNodeReady() { return this.nodeReady }
+      targetStableReady() { return this.nodeReady }
     },
   })
   const native = new exports.Harness()
@@ -236,6 +238,9 @@ test('only the exact current failed target reveals its native failure face', () 
   native.createdRevision = 3
   native.pendingAnimatedCommand = null
   native.positionHandoff = { serial: 8, targetKey: 'red', targetIndex: 0 }
+  native.nativeStableParts = new Set()
+  native.nativeReceiptSelection = 4
+  native.nativeReadyRevision = 0
   native.onFailed = (...args) => reports.push(args)
   native.onPositionHandoff = claim => projections.push(claim)
   native.resetVisualMotion = () => {}
@@ -294,7 +299,7 @@ test('animated L2 target mounts below the opaque native old cell until its own d
   assert.match(build, /ForEach\(\[this\.positionHandoff\.serial\][\s\S]*?snapshot: this\.snapshot\.forItem\(this\.positionHandoff\.targetKey\)[\s\S]*?this\.targetVisualPresented\(serial, slotId, requestId, success, width, height\)/)
   assert.match(build, /\.zIndex\(this\.visualPhase === 'moving' \|\| this\.visualPhase === 'settled' \? 1 : -2\)/)
   assert.match(pager, /handoff\.nativeNodePresented\(this\.snapshot, key, slotId, requestId, success\)/)
-  assert.match(pager, /!handoff\.nativeNodeReady\(this\.snapshot\)[\s\S]*?this\.scheduledAnimatedRetireSerial = handoff\.serial/)
+  assert.match(pager, /!this\.nativeReadyForRetirement\(handoff\)[\s\S]*?this\.scheduledAnimatedRetireSerial = handoff\.serial/)
   assert.match(pager, /if \(handoff\.animated\) \{\s+this\.scheduleAnimatedRetirement\(handoff\)/)
   assert.equal((viewport.match(/\.onAppear\(\(\): void => \{ this\.terminalMounted\(\) \}\)/g) ?? []).length, 3,
     'both suppressed notice branches and the failed panel report their own mounted face')
@@ -365,6 +370,7 @@ test('animated retirement retries an invalidated app frame without exposing a st
         asset: { phase: 'displayed', assetRequestId: 3 } }] },
     getUIContext() { return { postFrameCallback(callback) { frames.push(callback.action) } } },
     onPositionHandoff(value) { reported.push(value) }, resetVisualMotion() {},
+    nativeReadyForRetirement(claim) { return claim.ready },
     onVisible(...args) { reported.push(args) },
   })
   native.scheduleAnimatedRetirement(handoff)

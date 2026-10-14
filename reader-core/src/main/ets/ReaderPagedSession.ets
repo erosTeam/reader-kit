@@ -47,6 +47,11 @@ export function readerPagedFrameAspectRatio(frame: ReaderPagedFrame,
   return width > 0 && height > 0 ? width / height * fraction : 0.75
 }
 
+/** Bound native decode lookahead independently from the host file-cache depth. */
+export function readerVisualPreloadDepth(depth: number): number {
+  return Number.isFinite(depth) ? Math.max(1, Math.min(2, Math.round(depth))) : 1
+}
+
 export class ReaderPageCropMetadata {
   sourceIndex: number
   bounds: ReaderImageCropBounds
@@ -682,7 +687,10 @@ export class ReaderPagedSession {
     const indexes: number[] = [this.state.displayIndex]
     if (this.prefetchNeighbors) {
       if (this.state.displayIndex > 0) indexes.push(this.state.displayIndex - 1)
-      if (this.state.displayIndex + 1 < this.map.count()) indexes.push(this.state.displayIndex + 1)
+      const ahead = readerVisualPreloadDepth(this.preloadDepth)
+      for (let offset = 1; offset <= ahead && this.state.displayIndex + offset < this.map.count(); offset += 1) {
+        indexes.push(this.state.displayIndex + offset)
+      }
     }
     if (this.outgoingPositionKey !== null) {
       const outgoing = this.displayKeys.indexOf(this.outgoingPositionKey)
@@ -725,16 +733,14 @@ export class ReaderPagedSession {
     if (this.state.phase === 'ready') this.reconcile()
   }
 
-  /**
-   * Request up to five future visual destinations from a host-owned cache
-   * warmer. This never expands the native render window or owns cached files.
-   */
+  /** Host file warming may look five ahead; native L1/L2 decode is capped at two. */
   setPreloadDepth(depth: number): void {
     if (this.disposed) return
     const normalized = Number.isFinite(depth) ? Math.max(0, Math.min(5, Math.round(depth))) : 0
     if (normalized === this.preloadDepth) return
     this.preloadDepth = normalized
-    this.schedulePreload()
+    if (this.state.phase === 'ready' && this.prefetchNeighbors) this.reconcile()
+    else this.schedulePreload()
   }
 
   private futurePreloadIndexes(): number[] {

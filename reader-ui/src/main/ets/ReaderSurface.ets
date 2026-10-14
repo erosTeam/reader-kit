@@ -78,7 +78,7 @@ export struct ReaderSurface {
   @Param pageTurnAnimation: boolean = false
   /** Host-owned visual spacing between continuous pages and separated spread slots. */
   @Param pageGap: number = 0
-  /** Host preference for future cache warming; native render neighbors remain fixed and bounded. */
+  /** Host lookahead; shared native decode uses the same preference with a two-item cap. */
   @Param preloadDepth: number = 0
   /**
    * Initial chrome visibility on entry. All three legacy hosts mount their
@@ -1067,6 +1067,7 @@ export struct ReaderSurface {
           ReaderPagerSurface({
             imageInterpolation: this.imageInterpolation,
             pageGap: this.pageGap,
+            preloadDepth: this.preloadDepth,
             canvasBackground: this.canvasBackground,
             snapshot: this.state, active: this.active,
             retainedProjectionDiagnostic: this.retainedProjectionDiagnostic,
@@ -1091,6 +1092,11 @@ export struct ReaderSurface {
             },
             onBoundary: (direction: 'previous' | 'next', topology: number, navigation: number): void => {
               this.requestBoundaryChapter(direction, topology, navigation)
+            },
+            onDeferredSwipe: (direction: 'previous' | 'next', topology: number, navigation: number): void => {
+              if (!this.active || topology !== this.state.topologyRevision ||
+                navigation !== this.state.navigationRevision || this.inputLocked) return
+              this.requestMove(direction)
             },
             onTap: (x: number, y: number): void => { this.pageTap(x, y) },
             onSelect: (index: number, topology: number, navigation: number): void => {

@@ -806,6 +806,7 @@ struct ReaderPagedCell {
           imageInterpolation: this.imageInterpolation,
           entryOwnershipDiagnostic: this.entryOwnershipDiagnostic,
           quarantineOriginal: this.quarantineOriginal,
+          guardUndecodedOriginal: true,
           frame: this.presentedFrame(), selectionId: this.snapshot.selectionId,
           topologyRevision: this.snapshot.topologyRevision, navigationRevision: this.snapshot.navigationRevision,
           entryTransition: this.retainedFrameValue === null ? this.entryTransition : null,
@@ -845,6 +846,7 @@ struct ReaderPagedCell {
             imageInterpolation: this.imageInterpolation,
             entryOwnershipDiagnostic: this.entryOwnershipDiagnostic,
             quarantineOriginal: this.quarantineOriginal,
+            guardUndecodedOriginal: true,
             frame: this.frame(), selectionId: this.snapshot.selectionId,
             topologyRevision: this.snapshot.topologyRevision, navigationRevision: this.snapshot.navigationRevision,
             entryTransition: this.entryTransition,
@@ -908,6 +910,7 @@ export struct ReaderPagedImage {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param entryOwnershipDiagnostic: boolean = false
   @Param quarantineOriginal: boolean = false
+  @Param guardUndecodedOriginal: boolean = false
   @Param continuousEntry: ReaderContinuousEntryPosition | null = null
   @Require @Param frame: ReaderPagedFrame
   @Require @Param slotId: number
@@ -941,6 +944,7 @@ export struct ReaderPagedImage {
   private decoded: boolean = false
   private decodedRequestId: number = 0
   @Local private stableNativeIdentity: string = ''
+  @Local private stableDrawableIdentity: string = ''
   private scheduledNativeIdentity: string = ''
   private selectedReplayIdentity: string = ''
   private entryContentLaidOut: boolean = false
@@ -953,7 +957,10 @@ export struct ReaderPagedImage {
   private measuredEntryId: number = -1
   private measuredEntryRect: ReaderEntryRect | null = null
 
-  aboutToAppear(): void { this.entryMounted = true }
+  aboutToAppear(): void {
+    this.entryMounted = true
+    this.scheduleNativeStability()
+  }
   aboutToDisappear(): void { this.entryMounted = false }
 
   @Monitor('active', 'selectionId', 'frame')
@@ -996,10 +1003,17 @@ export struct ReaderPagedImage {
       `${this.frame.part.sourceIndex}:${this.renderedFragment}:${this.frame.asset.visualRevision}`
   }
 
+  private drawableIdentity(): string {
+    // A mounted Image keeps its decoded pixels across pure selection/navigation
+    // changes. Only a changed drawable part/request/revision needs quarantine.
+    return `${this.slotId}:${this.assetRequestId}:` +
+      `${this.frame.part.sourceIndex}:${this.renderedFragment}:${this.frame.asset.visualRevision}`
+  }
+
   /** Merge one native decode receipt with the later current displayed metadata. */
   private scheduleNativeStability(): void {
     const page = this.frame.asset.page
-    if (!this.quarantineOriginal || !this.active || !this.entryMounted || !this.decoded ||
+    if ((!this.quarantineOriginal && !this.guardUndecodedOriginal) || !this.entryMounted || !this.decoded ||
       this.decodedRequestId !== this.assetRequestId || this.frame.asset.kind !== 'original' ||
       this.frame.asset.phase !== 'displayed' || this.decodedWidth <= 0 || this.decodedHeight <= 0 ||
       page?.width !== this.decodedWidth || page?.height !== this.decodedHeight) return
@@ -1010,11 +1024,12 @@ export struct ReaderPagedImage {
       if (this.scheduledNativeIdentity !== identity) return
       this.scheduledNativeIdentity = ''
       const currentPage = this.frame.asset.page
-      if (!this.quarantineOriginal || !this.active || !this.entryMounted || !this.decoded ||
+      if ((!this.quarantineOriginal && !this.guardUndecodedOriginal) || !this.entryMounted || !this.decoded ||
         this.decodedRequestId !== this.assetRequestId || this.nativeIdentity() !== identity ||
         this.frame.asset.phase !== 'displayed' || currentPage?.width !== this.decodedWidth ||
         currentPage?.height !== this.decodedHeight) return
       this.stableNativeIdentity = identity
+      this.stableDrawableIdentity = this.drawableIdentity()
       if (this.entryOwnershipDiagnostic) console.info(`[ReaderImage] native_stable selection=${this.selectionId} ` +
         `topology=${this.topologyRevision} navigation=${this.navigationRevision} slot=${this.slotId} ` +
         `request=${this.assetRequestId} part=${this.frame.part.sourceIndex}/${this.renderedFragment} ` +
@@ -1022,6 +1037,7 @@ export struct ReaderPagedImage {
       this.onStableNative(this.topologyRevision, this.navigationRevision, this.selectionId,
         this.slotId, this.assetRequestId, this.frame.part.sourceIndex, this.renderedFragment,
         this.frame.asset.visualRevision, this.decodedWidth, this.decodedHeight)
+      this.reportVisible()
     }))
   }
 
@@ -1195,6 +1211,7 @@ export struct ReaderPagedImage {
 
   private reportVisible(): void {
     if (this.active && this.fullyVisible && this.decoded && this.frame.asset.kind === 'original' &&
+      (!this.guardUndecodedOriginal || this.stableDrawableIdentity === this.drawableIdentity()) &&
       (this.entryTransition === null || !this.entryTransition.pending())) {
       this.onVisible(this.selectionId, this.slotId, this.assetRequestId, this.renderedFragment)
     }
@@ -1246,6 +1263,7 @@ export struct ReaderPagedImage {
     this.decoded = false
     this.decodedRequestId = 0
     this.stableNativeIdentity = ''
+    this.stableDrawableIdentity = ''
     this.scheduledNativeIdentity = ''
     this.publishEntryTarget(true)
     this.onFailed(this.selectionId, this.slotId, this.assetRequestId, this.renderedFragment)
@@ -1290,7 +1308,8 @@ export struct ReaderPagedImage {
         (this.frame.part.fragment !== 'whole' || this.frame.crop.applied())) {
         Stack({ alignContent: Alignment.TopStart }) {
           Image(this.frame.asset.uri)
-            .opacity(this.quarantineOriginal && this.stableNativeIdentity !== this.nativeIdentity() ? 0 : 1)
+            .opacity((this.quarantineOriginal || this.guardUndecodedOriginal) &&
+              this.stableDrawableIdentity !== this.drawableIdentity() ? 0 : 1)
             .width(this.renderWidth() / this.frame.crop.region(this.frame.part).width)
             .height(this.renderHeight() / this.frame.crop.region(this.frame.part).height)
             .id(`rkit-cropped-image-${this.frame.part.sourceIndex}-${this.frame.part.fragment}`)
@@ -1309,8 +1328,8 @@ export struct ReaderPagedImage {
         .rotate({ angle: this.rotateClockwise ? 90 : 0 })
       } else if (this.frame.asset.uri.length > 0) {
         Image(this.frame.asset.uri)
-          .opacity(this.quarantineOriginal && this.frame.asset.kind === 'original' &&
-            this.stableNativeIdentity !== this.nativeIdentity() ? 0 : 1)
+          .opacity((this.quarantineOriginal || this.guardUndecodedOriginal) &&
+            this.frame.asset.kind === 'original' && this.stableDrawableIdentity !== this.drawableIdentity() ? 0 : 1)
           .width(this.renderWidth()).height(this.renderHeight())
           .interpolation(this.frame.asset.kind === 'original' ? this.imageInterpolation : ImageInterpolation.Low)
           .objectFit(this.thumbnailCover && this.frame.asset.kind === 'thumbnail' ? ImageFit.Cover : ImageFit.Contain)

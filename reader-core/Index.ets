@@ -13,7 +13,7 @@ export {
   readerPageIsWide, readerPolicyRotatesPage,
 } from './src/main/ets/ReaderDisplayMap'
 export { ReaderPagedSession, ReaderPagedSnapshot, ReaderPagedFrame, ReaderPagedItemSnapshot,
-  ReaderObservedPosition, readerPagedFrameAspectRatio } from './src/main/ets/ReaderPagedSession'
+  ReaderObservedPosition, readerPagedFrameAspectRatio, readerVisualPreloadDepth } from './src/main/ets/ReaderPagedSession'
 export { ReaderViewportGeometry, ReaderViewportTransform } from './src/main/ets/ReaderViewportTransform'
 export { ReaderThumbnailWindow, ReaderThumbnailFrame } from './src/main/ets/ReaderThumbnailWindow'
 export { ReaderInputPort, ReaderMoveIntent } from './src/main/ets/ReaderInputPort'

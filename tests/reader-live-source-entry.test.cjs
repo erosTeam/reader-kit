@@ -159,7 +159,7 @@ function nativeImageMethods(names) {
 }
 
 test('one native completion merges with later displayed metadata and reveals without a second completion', () => {
-  const Image = nativeImageMethods(['nativeIdentity', 'scheduleNativeStability', 'completed'])
+  const Image = nativeImageMethods(['nativeIdentity', 'drawableIdentity', 'scheduleNativeStability', 'completed'])
   const image = new Image(), owner = new ReaderLiveSourceEntry(), frames = [], snapshot = state('decoding')
   snapshot.frames[0].asset.page = { width: 0, height: 0 }
   Object.assign(image, {
@@ -167,7 +167,7 @@ test('one native completion merges with later displayed metadata and reveals wit
     slotId: 20, assetRequestId: 30, renderedFragment: 'whole', active: true,
     quarantineOriginal: true, entryMounted: true, entryOwnershipDiagnostic: false,
     decoded: false, decodedRequestId: 0, decodedWidth: 0, decodedHeight: 0,
-    stableNativeIdentity: '', scheduledNativeIdentity: '', scheduledPresentationRequestId: 0,
+    stableNativeIdentity: '', stableDrawableIdentity: '', scheduledNativeIdentity: '', scheduledPresentationRequestId: 0,
     reportInvalidDecodedMetrics() {}, publishEntryTarget() {}, reportVisible() {},
     getUIContext() { return { postFrameCallback(callback) { frames.push(callback.action) } } },
     onPresented() {
@@ -194,14 +194,14 @@ test('one native completion merges with later displayed metadata and reveals wit
 })
 
 test('retired native receipt cannot unquarantine or release a replaced request', () => {
-  const Image = nativeImageMethods(['nativeIdentity', 'scheduleNativeStability'])
+  const Image = nativeImageMethods(['nativeIdentity', 'drawableIdentity', 'scheduleNativeStability'])
   const image = new Image(), owner = new ReaderLiveSourceEntry(), frames = [], snapshot = state()
   Object.assign(image, {
     frame: snapshot.frames[0], topologyRevision: 3, navigationRevision: 7, selectionId: 11,
     slotId: 20, assetRequestId: 30, renderedFragment: 'whole', active: true,
     quarantineOriginal: true, entryMounted: true, entryOwnershipDiagnostic: false,
     decoded: true, decodedRequestId: 30, decodedWidth: 1200, decodedHeight: 900,
-    stableNativeIdentity: '', scheduledNativeIdentity: '',
+    stableNativeIdentity: '', stableDrawableIdentity: '', scheduledNativeIdentity: '', reportVisible() {},
     getUIContext() { return { postFrameCallback(callback) { frames.push(callback.action) } } },
     onStableNative(topology, navigation, selection, slot, request, sourceIndex, fragment, visual, width, height) {
       owner.recordNativeReady(snapshot, topology, navigation, selection, slot, request, sourceIndex,
@@ -218,14 +218,14 @@ test('retired native receipt cannot unquarantine or release a replaced request',
 })
 
 test('queued native receipt is invalidated by a new selection with the same page and request', () => {
-  const Image = nativeImageMethods(['nativeIdentity', 'scheduleNativeStability'])
+  const Image = nativeImageMethods(['nativeIdentity', 'drawableIdentity', 'scheduleNativeStability'])
   const image = new Image(), owner = new ReaderLiveSourceEntry(), frames = [], snapshot = state()
   Object.assign(image, {
     frame: snapshot.frames[0], topologyRevision: 3, navigationRevision: 7, selectionId: 11,
     slotId: 20, assetRequestId: 30, renderedFragment: 'whole', active: true,
     quarantineOriginal: true, entryMounted: true, entryOwnershipDiagnostic: false,
     decoded: true, decodedRequestId: 30, decodedWidth: 1200, decodedHeight: 900,
-    stableNativeIdentity: '', scheduledNativeIdentity: '',
+    stableNativeIdentity: '', stableDrawableIdentity: '', scheduledNativeIdentity: '', reportVisible() {},
     getUIContext() { return { postFrameCallback(callback) { frames.push(callback.action) } } },
     onStableNative(topology, navigation, selection, slot, request, sourceIndex, fragment, visual, width, height) {
       owner.recordNativeReady(snapshot, topology, navigation, selection, slot, request, sourceIndex,
@@ -243,14 +243,14 @@ test('queued native receipt is invalidated by a new selection with the same page
 })
 
 test('native failure cancels a queued stability receipt before any source release', () => {
-  const Image = nativeImageMethods(['nativeIdentity', 'scheduleNativeStability', 'failed'])
+  const Image = nativeImageMethods(['nativeIdentity', 'drawableIdentity', 'scheduleNativeStability', 'failed'])
   const image = new Image(), owner = new ReaderLiveSourceEntry(), frames = [], snapshot = state()
   Object.assign(image, {
     frame: snapshot.frames[0], topologyRevision: 3, navigationRevision: 7, selectionId: 11,
     slotId: 20, assetRequestId: 30, renderedFragment: 'whole', active: true,
     quarantineOriginal: true, entryMounted: true, entryOwnershipDiagnostic: false,
     decoded: true, decodedRequestId: 30, decodedWidth: 1200, decodedHeight: 900,
-    stableNativeIdentity: '', scheduledNativeIdentity: '',
+    stableNativeIdentity: '', stableDrawableIdentity: '', scheduledNativeIdentity: '', reportVisible() {},
     getUIContext() { return { postFrameCallback(callback) { frames.push(callback.action) } } },
     publishEntryTarget() {}, onFailed() { owner.fail() },
     onStableNative(topology, navigation, selection, slot, request, sourceIndex, fragment, visual, width, height) {
@@ -264,4 +264,19 @@ test('native failure cancels a queued stability receipt before any source releas
   assert.equal(image.stableNativeIdentity, '')
   assert.equal(owner.readerVisible(), false)
   assert.equal(owner.offer(snapshot), null)
+})
+
+test('a mounted decoded original stays visible across pure native page selection', () => {
+  const Image = nativeImageMethods(['nativeIdentity', 'drawableIdentity'])
+  const image = new Image()
+  Object.assign(image, { topologyRevision: 1, navigationRevision: 2, selectionId: 5,
+    slotId: 7, assetRequestId: 3, renderedFragment: 'whole',
+    frame: { part: { sourceIndex: 50 }, asset: { visualRevision: 0 } } })
+  const oldDrawable = image.drawableIdentity(), oldReceipt = image.nativeIdentity()
+  image.navigationRevision = 3
+  image.selectionId = 6
+  assert.equal(image.drawableIdentity(), oldDrawable, 'same native bitmap cannot blink on navigation')
+  assert.notEqual(image.nativeIdentity(), oldReceipt, 'ownership receipt still fences the new selection')
+  image.frame.asset.visualRevision = 1
+  assert.notEqual(image.drawableIdentity(), oldDrawable, 'replacement candidate is hidden until new decode')
 })
