@@ -80,6 +80,9 @@ export class ReaderEntryTransition {
 
   pending(): boolean { return this.phase !== 'finished' && this.phase !== 'cancelled' }
 
+  /** Loading after arrival does not own the reader's input. */
+  blocksInput(): boolean { return this.phase === 'layout' || this.phase === 'moving' }
+
   matches(part: ReaderDisplayPart): boolean {
     return part.unit.equals(this.requestedPart.unit) && part.sourceIndex === this.requestedPart.sourceIndex &&
       part.fragment === this.requestedPart.fragment &&

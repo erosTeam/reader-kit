@@ -195,3 +195,66 @@ test('cancellation after root arrival does not hide the already revealed neighbo
   calls.arrival(); entry.cancel('pager-command')
   assert.equal(entry.neighborOpacity, 1)
 })
+
+test('selected-part geometry starts flight before decode and keeps loading input available', () => {
+  const { entry, target } = scenario(); const { calls, host } = rootHost()
+  const handoff = new ReaderRootEntryHandoff()
+  assert.equal(entry.blocksInput(), true)
+  handoff.sync(entry, true, false, host)
+  assert.equal(calls.flights, 0)
+  entry.publishTarget(target())
+  handoff.sync(entry, true, false, host)
+  assert.equal(entry.phase, 'moving'); assert.equal(entry.target.contentRect.x, 10)
+  assert.equal(entry.blocksInput(), true)
+  assert.equal(calls.flights, 1); assert.equal(calls.targets, 1); assert.equal(calls.ready, 0)
+  handoff.sync(entry, true, false, host); assert.equal(calls.flights, 1)
+  calls.arrival(); assert.equal(entry.phase, 'waiting')
+  assert.equal(entry.blocksInput(), false)
+  entry.publishTarget(target()); handoff.sync(entry, true, true, host)
+  assert.equal(calls.reveals, 0)
+  const decoded = target(); decoded.decodedReady = true; entry.publishTarget(decoded)
+  handoff.sync(entry, true, true, host)
+  assert.equal(entry.phase, 'finished'); assert.equal(calls.reveals, 1); assert.equal(calls.ready, 1)
+})
+
+test('host without prepared target retains measured-target departure and rejects failed target admission', () => {
+  const { entry, target } = scenario(); const { calls, host } = rootHost()
+  const handoff = new ReaderRootEntryHandoff()
+  handoff.sync(entry, true, false, host); assert.equal(calls.flights, 0)
+  entry.publishTarget(target()); host.setOpeningTarget = () => false
+  handoff.sync(entry, true, false, host)
+  assert.equal(entry.phase, 'cancelled'); assert.equal(calls.arrival, null)
+})
+
+test('measured opening still requires valid source departure and active route', () => {
+  const { entry, target } = scenario(); const { calls, host } = rootHost()
+  const handoff = new ReaderRootEntryHandoff()
+  handoff.sync(entry, false, false, host); assert.equal(calls.flights, 0)
+  entry.publishTarget(target())
+  host.authorizeDeparture = () => false
+  handoff.sync(entry, true, false, host)
+  assert.equal(entry.phase, 'cancelled'); assert.equal(calls.arrival, null); assert.equal(calls.ready, 0)
+})
+
+test('Back during measured opening fences delayed arrival and original reveal', () => {
+  const { entry, target } = scenario(); const { calls, host } = rootHost()
+  const handoff = new ReaderRootEntryHandoff()
+  entry.publishTarget(target())
+  handoff.sync(entry, true, false, host)
+  assert.equal(handoff.requestReverse(entry, true, () => true), true)
+  calls.arrival()
+  const decoded = target(); decoded.decodedReady = true; entry.publishTarget(decoded)
+  handoff.sync(entry, true, true, host)
+  assert.equal(entry.phase, 'cancelled'); assert.equal(calls.ready, 0); assert.equal(calls.reveals, 0)
+})
+
+test('turning away during online loading cancels entry without accepting a stale original', () => {
+  const { entry, state, target } = scenario(); const { calls, host } = rootHost()
+  const handoff = new ReaderRootEntryHandoff()
+  entry.publishTarget(target()); handoff.sync(entry, true, false, host); calls.arrival()
+  assert.equal(entry.blocksInput(), false)
+  const late = target(); late.decodedReady = true
+  state.navigationRevision++; entry.update(state)
+  entry.publishTarget(late); handoff.sync(entry, true, true, host)
+  assert.equal(entry.phase, 'cancelled'); assert.equal(calls.ready, 0); assert.equal(calls.reveals, 0)
+})

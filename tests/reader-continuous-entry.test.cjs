@@ -35,7 +35,7 @@ function fixture(width = 400, height = 2400) {
   return { frame, state, transition }
 }
 const List = evaluate(`export class List { ${methods('ReaderContinuousSurface', 'ReaderContinuousList',
-  ['imageAspectRatio', 'refreshEntryPosition', 'rotates', 'imageIdentity', 'invalidatePosition', 'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'onImageLock'])} }`, {}, {
+  ['imageTap', 'imageAspectRatio', 'refreshEntryPosition', 'rotates', 'imageIdentity', 'invalidatePosition', 'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'onImageLock'])} }`, {}, {
   ReaderContinuousEntryPosition: Position, clearTimeout() {}, setTimeout: callback => { callback(); return 1 },
   ReaderContinuousAfterLayout: class { constructor(action) { this.action = action } },
   readerPolicyRotatesPage: core.readerPolicyRotatesPage,
@@ -123,14 +123,16 @@ function imageFixture(width = 400, height = 2400) {
     topologyRevision: 5, navigationRevision: 6, active: false, continuousEntry: position,
     entryTransition: f.transition, entryMounted: true, decoded: true, decodedWidth: width, decodedHeight: height,
     renderedFragment: 'whole', entryContentLaidOut: true, entryLeafLaidOut: true,
-    entryLayoutRevision: 0, measuredEntryId: -1, measuredEntryRect: null, reportInvalidDecodedMetrics: () => false,
+    entryMeasurement: null, entryLayoutRevision: 0, measuredEntryId: -1, measuredEntryRect: null, reportInvalidDecodedMetrics: () => false,
     getUIContext: () => ({ postFrameCallback: v => callbacks.push(v.action), px2vp: x => x, vp2px: x => x,
       getComponentUtils: () => ({ getRectangleById: id => id.startsWith('rkit-entry-image-') ? rectangles.image :
-        id.startsWith('rkit-entry-content-') ? rectangles.content : rectangles.viewport }) }),
+        id.startsWith('rkit-entry-content-') ? rectangles.content :
+        id === 'rkit-continuous-list' || id === 'rkit-reading-surface' ? rectangles.viewport :
+        { windowOffset: { x: 0, y: 0 }, size: { width: 0, height: 0 } } }) }),
   })
   return { ...f, image, position, callbacks, rectangles, retire: () => { current = false } }
 }
-test('actual leaf measurement preserves full long Image bounds and publishes an independent viewport clip', () => {
+test('host-owned preview may be absent: leaf measurement preserves long Image bounds and uses the Reader viewport clip', () => {
   const f = imageFixture(); f.image.publishEntryTarget(); assert.equal(f.transition.target, null)
   f.callbacks.shift()(); const t = f.transition.target
   assert.equal(t.contentRect.height, 2400); assert.equal(t.contentRect.y, -300)
@@ -211,4 +213,41 @@ test('native pixel rounding retains the committed target while later real moveme
   f.rectangles.image.windowOffset.y += .1; f.rectangles.content.windowOffset.y += .1
   f.image.publishEntryTarget(); f.callbacks.shift()()
   assert.equal(f.transition.phase, 'cancelled')
+})
+
+test('continuous measured container can authorize flight while the original URI is still loading', () => {
+  const f = imageFixture(400, 600)
+  f.frame.asset.uri = ''; f.frame.asset.phase = 'asset'; f.image.decoded = false
+  f.image.entryLeafLaidOut = false
+  f.rectangles.content.windowOffset.y = 100
+  f.image.publishEntryTarget(); f.callbacks.shift()()
+  assert.equal(f.transition.phase, 'layout')
+  assert.equal(f.transition.target.geometryReady, true)
+  assert.equal(f.transition.target.decodedReady, false)
+})
+
+test('continuous waiting permits current loading-page taps but motion and stale topology do not', () => {
+  const f = listFixture(), actions = []
+  f.frame.asset.phase = 'asset'
+  Object.assign(f.list, { fullyVisible: true, createdRevision: f.state.topologyRevision,
+    getUIContext: () => ({ px2vp: x => x, getComponentUtils: () => ({ getRectangleById: () =>
+      ({ windowOffset: { x: 0, y: 0 }, size: { width: 400, height: 800 } }) }) }),
+    onTap: () => { actions.push('menu'); return 'menu' } })
+  f.transition.phase = 'moving'; f.list.imageTap('selected', 200, 400)
+  assert.equal(actions.length, 0)
+  f.transition.phase = 'waiting'; f.list.imageTap('selected', 200, 400)
+  assert.deepEqual(actions, ['menu'])
+  f.list.createdRevision--; f.list.imageTap('selected', 200, 400)
+  assert.equal(actions.length, 1)
+})
+
+test('plain tap remains available during loading without enabling image zoom', () => {
+  const Zoom = evaluate(`export class Zoom { ${methods('ReaderContinuousZoomImage',
+    'ReaderContinuousZoomImage', ['canTap', 'canInteract'])} }`).Zoom
+  const zoom = new Zoom()
+  Object.assign(zoom, { active: true, interactionAllowed: true, componentWidth: 400,
+    frame: { asset: { phase: 'asset' } } })
+  assert.equal(zoom.canTap(), true); assert.equal(zoom.canInteract(), false)
+  zoom.frame.asset.phase = 'displayed'; assert.equal(zoom.canInteract(), true)
+  zoom.interactionAllowed = false; assert.equal(zoom.canTap(), false)
 })

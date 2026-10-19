@@ -979,7 +979,8 @@ export struct ReaderPagedImage {
         transition.cancel(); return
       }
       if (position !== null) {
-        const root = context.getComponentUtils().getRectangleById('rkit-entry-preview-root')
+        // The host may own the preview; ReaderSurface always owns the content clip.
+        const root = context.getComponentUtils().getRectangleById('rkit-reading-surface')
         const left = Math.max(viewport.windowOffset.x, root.windowOffset.x)
         const top = Math.max(viewport.windowOffset.y, root.windowOffset.y)
         const right = Math.min(viewport.windowOffset.x + viewport.size.width, root.windowOffset.x + root.size.width)

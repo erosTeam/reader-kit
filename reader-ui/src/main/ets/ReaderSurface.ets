@@ -231,7 +231,7 @@ export struct ReaderSurface {
   private reportInteractionBusy(): void {
     const busy = this.active && !this.closing && !this.chromeDisposed &&
       (this.touching || this.menuVisible || this.tapZonePreviewVisible || this.inputLocked ||
-        this.entryTransition?.pending() === true)
+        this.entryTransition?.blocksInput() === true)
     if (busy === this.interactionBusyReported) return
     this.interactionBusyReported = busy
     this.activitySink?.interactionBusyChanged(busy)
@@ -745,7 +745,7 @@ export struct ReaderSurface {
 
   private pageTap(x: number, y: number): ReaderTapAction {
     if (!this.active || this.closing || this.chromeDisposed || this.chromeCloseRequested ||
-      this.entryTransition?.pending() || this.state.phase !== 'ready' || this.menuVisible ||
+      this.entryTransition?.blocksInput() || this.state.phase !== 'ready' || this.menuVisible ||
       this.shareBusy || this.saveBusy || this.informationBusy || this.tapZonePreviewVisible || this.previewIndex >= 0 ||
       this.inputTopology !== this.state.topologyRevision ||
       !Number.isFinite(x) || !Number.isFinite(y)) return 'none'

@@ -253,7 +253,7 @@ struct ReaderContinuousList {
   private imageTap(key: string, windowX: number, windowY: number): void {
     if (!this.active || this.disposed || this.pendingPosition || this.positionInFlight || !this.fullyVisible ||
       this.moving || (this.lockedKey.length > 0 && this.lockedKey !== key) || this.snapshot.phase !== 'ready' ||
-      this.createdRevision !== this.snapshot.topologyRevision || this.entryTransition?.pending() ||
+      this.createdRevision !== this.snapshot.topologyRevision || this.entryTransition?.blocksInput() ||
       !Number.isFinite(windowX) || !Number.isFinite(windowY)) return
     const frame = this.snapshot.forItem(key).frames[0]
     if (frame === undefined) return
@@ -613,23 +613,21 @@ struct ReaderContinuousCell {
     } else {
       Stack() {
         ForEach(this.snapshot.frames, (frame: ReaderPagedFrame) => {
-          if (this.snapshot.frames[0].asset.uri.length > 0) {
-            ReaderContinuousZoomImage({
-              imageInterpolation: this.imageInterpolation,
-              frame: this.snapshot.frames[0], navigation: this.snapshot.navigationRevision,
-              entryTransition: this.entryTransition, entryPosition: this.entryPosition,
-              imageHeight: this.imageHeight, active: this.active, interactionAllowed: this.interactionAllowed,
-              zoomResetCommand: this.zoomResetCommand,
-              rotateClockwise: this.rotateClockwise,
-              onLock: this.onLock,
-              onZoomedChange: this.onZoomedChange,
-              onTap: this.onTap,
-              onDecodedOriginal: (identity: string): void => { this.originalDecoded(identity) },
-              onPresented: this.onPresented,
-              onFailed: this.onFailed,
-            })
-              .onDisAppear((): void => { this.onRetired(frame.slotId, frame.asset.assetRequestId) })
-          }
+          ReaderContinuousZoomImage({
+            imageInterpolation: this.imageInterpolation,
+            frame: this.snapshot.frames[0], navigation: this.snapshot.navigationRevision,
+            entryTransition: this.entryTransition, entryPosition: this.entryPosition,
+            imageHeight: this.imageHeight, active: this.active, interactionAllowed: this.interactionAllowed,
+            zoomResetCommand: this.zoomResetCommand,
+            rotateClockwise: this.rotateClockwise,
+            onLock: this.onLock,
+            onZoomedChange: this.onZoomedChange,
+            onTap: this.onTap,
+            onDecodedOriginal: (identity: string): void => { this.originalDecoded(identity) },
+            onPresented: this.onPresented,
+            onFailed: this.onFailed,
+          })
+            .onDisAppear((): void => { this.onRetired(frame.slotId, frame.asset.assetRequestId) })
         }, (frame: ReaderPagedFrame): string =>
           readerElementKey(`${frame.slotId}:${frame.asset.assetRequestId}`))
         if (this.loadingVisible()) {

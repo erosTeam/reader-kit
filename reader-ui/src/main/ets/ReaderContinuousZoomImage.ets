@@ -82,6 +82,10 @@ export struct ReaderContinuousZoomImage {
       pixels > 0 ? pixels / this.componentWidth : 2)
   }
 
+  private canTap(): boolean {
+    return this.active && this.interactionAllowed && this.componentWidth > 1
+  }
+
   private canInteract(): boolean {
     return this.active && this.interactionAllowed && this.frame.asset.phase === 'displayed' && this.componentWidth > 1
   }
@@ -249,7 +253,7 @@ export struct ReaderContinuousZoomImage {
         TapGesture({ count: 2, distanceThreshold: 8 }).onAction((event?: GestureEvent): void => { this.doubleTap(event) }),
         TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => {
           const location = event?.tapLocation
-          if (this.canInteract() && !this.pinching && this.tapSequence.allowed() && location !== undefined &&
+          if (this.canTap() && !this.pinching && this.tapSequence.allowed() && location !== undefined &&
             Number.isFinite(location.windowX) && Number.isFinite(location.windowY)) this.onTap(location.windowX, location.windowY)
         }),
       ),
