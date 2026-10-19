@@ -232,6 +232,8 @@ export class ReaderSnapshot {
   /** Previous displayed pixels kept below an exact in-place replacement. */
   retainedUri: string = ''
   retainedAssetRequestId: number = 0
+  /** Increments only when a retained candidate is promoted to the foreground claim. */
+  visualRevision: number = 0
   requestId: number = 0
   /** Real transport bytes for the in-flight asset request; 0/0 means unknown (never faked). */
   loadProgressLoaded: number = 0
@@ -262,6 +264,7 @@ export class ReaderSnapshot {
     value.saveUri = this.saveUri
     value.retainedUri = this.retainedUri
     value.retainedAssetRequestId = this.retainedAssetRequestId
+    value.visualRevision = this.visualRevision
     value.requestId = this.requestId
     value.loadProgressLoaded = this.loadProgressLoaded
     value.loadProgressTotal = this.loadProgressTotal
