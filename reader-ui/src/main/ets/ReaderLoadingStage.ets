@@ -195,5 +195,7 @@ export struct ReaderLoadingStage {
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .padding(LOADING_STAGE_PADDING)
+    // Its children cover the page: keep this feedback branch transparent to sibling gestures.
+    .hitTestBehavior(HitTestMode.Transparent)
   }
 }
