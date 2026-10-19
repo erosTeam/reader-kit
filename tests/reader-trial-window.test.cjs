@@ -488,13 +488,19 @@ test('color restoration failure still attempts visibility; both failures remain 
   assert.equal(events.filter(event => event.includes('status_visibility_succeeded')).length, 1)
 })
 
-test('prepare rejects unopened, unresolved lookup, colors-only and closed leases without a new write', async () => {
-  const lookup = deferred(), main = mainWindow(), { Lease } = fixture(() => lookup.promise)
+test('prepare rejects unopened, colors-only and closed leases but queues behind opening', async () => {
+  const lookup = deferred(), main = avoidWindow(), { Lease } = fixture(() => lookup.promise)
+  main.top = 120
   const lease = new Lease(null, true)
   assert.equal(await lease.prepareStatusBarVisible(), false)
   lease.open({}); await drain()
-  assert.equal(await lease.prepareStatusBarVisible(), false)
-  lookup.resolve(main); await drain(); await lease.close()
+  let settled = false
+  const ready = lease.prepareStatusBarVisible().then(value => { settled = true; return value })
+  await drain(); assert.equal(settled, false)
+  assert.equal(main.calls.length, 0)
+  lookup.resolve(main)
+  assert.equal(await ready, true)
+  await lease.close()
   const count = main.calls.length
   assert.equal(await lease.prepareStatusBarVisible(), false)
   assert.equal(main.calls.length, count)

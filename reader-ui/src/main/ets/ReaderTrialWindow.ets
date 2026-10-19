@@ -103,7 +103,7 @@ export class ReaderTrialWindow {
 
   /** System top-area readiness only; callers must separately await their layout. */
   async prepareStatusBarVisible(): Promise<boolean> {
-    if (this.closed || this.restoreStatusVisible === null || !this.started || this.mainWindow === null) return false
+    if (this.closed || this.restoreStatusVisible === null || !this.started) return false
     let ready: boolean = false
     await ReaderTrialWindow.enqueue(async (): Promise<void> => {
       if (this.closed || this.mainWindow === null) return
