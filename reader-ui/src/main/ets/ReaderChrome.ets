@@ -1,12 +1,13 @@
 import { ReaderModeControlParams } from './ReaderModeControl'
 import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPolicy, ReaderUnitKey,
   ReaderImageSaveChoice, ReaderImageSaveTarget } from '@reader-kit/core'
-import { uiMaterial } from '@kit.ArkUI'
+import { Binding, UIUtils, uiMaterial } from '@kit.ArkUI'
 import { deviceInfo } from '@kit.BasicServicesKit'
 import { SymbolGlyphModifier } from '@kit.ArkUI'
 import { ReaderHostAction } from './ReaderHostAction'
 import { readerElementKey } from './ReaderElementKey'
 import { ReaderEnhancementStatus } from './ReaderEnhancementStatus'
+import { ReaderTitleParams } from './ReaderTitleParams'
 
 export type ReaderRuntimePolicyIntent = 'layout' | 'direction' | 'reading_mode' | 'spread_layout' |
   'first_page_alone' | 'split_wide_pages'
@@ -16,6 +17,8 @@ export type ReaderRuntimePolicyIntent = 'layout' | 'direction' | 'reading_mode' 
 export struct ReaderChrome {
   @Param hostModeControlAvailable: boolean = false
   @BuilderParam modeControl: (params: ReaderModeControlParams) => void = this.EmptyModeControl
+  @Param hostTitleControlAvailable: boolean = false
+  @BuilderParam titleControl: (params: Binding<ReaderTitleParams>) => void = this.EmptyTitleControl
   @Require @Param snapshot: ReaderPagedSnapshot
   @Param active: boolean = true
   @Param topInset: number = 0
@@ -149,6 +152,9 @@ export struct ReaderChrome {
 
   @Builder
   private EmptyModeControl(_params: ReaderModeControlParams) {}
+
+  @Builder
+  private EmptyTitleControl(_params: Binding<ReaderTitleParams>) {}
 
   private toggleSpreadLayout(): void {
     const policy = this.snapshot.policy.copy()
@@ -463,7 +469,23 @@ export struct ReaderChrome {
           }.width(44).height(44).backgroundColor(Color.Transparent)
             .id('rkit-close').accessibilityText($r('app.string.rkit_close'))
             .onClick((): void => { this.onClose() })
-          Blank()
+          if (this.hostTitleControlAvailable && this.snapshot.unit !== null) {
+            this.titleControl(UIUtils.makeBinding<ReaderTitleParams>(() => ({
+              unitKey: this.snapshot.unit?.key.copy() ?? null,
+              pageIndex: this.snapshot.anchor?.sourceIndexHint ?? 0,
+              pageCount: this.count(),
+            })))
+            // Keep the optional Kit enhancement affordance visible without
+            // stacking it over the host's title/page/chapter projection.
+            if (this.enhancementVisible) {
+              ReaderEnhancementStatus({ processing: this.enhancementProcessing,
+                applied: this.enhancementApplied, enhancementEnabled: this.enhancementEnabled,
+                toggleAvailable: this.enhancementToggleAvailable, accent: this.accent,
+                onToggle: (): void => { this.onToggleEnhancement() } })
+            }
+          } else {
+            Blank()
+          }
           if (this.shareAvailable) {
             Button({ type: ButtonType.Circle }) {
               if (this.shareBusy) {
@@ -524,18 +546,21 @@ export struct ReaderChrome {
               })
           }
         }.width('100%').height(56).alignItems(VerticalAlign.Center)
-        Row({ space: 4 }) {
-          Text(`${this.page()} / ${this.count()}`).fontSize(14).fontColor(Color.White)
-            .maxLines(1).textAlign(TextAlign.Center).hitTestBehavior(HitTestMode.None)
-            .id('rkit-chrome-page')
-          if (this.enhancementVisible) {
-            ReaderEnhancementStatus({ processing: this.enhancementProcessing,
-              applied: this.enhancementApplied, enhancementEnabled: this.enhancementEnabled,
-              toggleAvailable: this.enhancementToggleAvailable, accent: this.accent,
-              onToggle: (): void => { this.onToggleEnhancement() } })
+        if (!this.hostTitleControlAvailable || this.snapshot.unit === null) {
+          Row({ space: 4 }) {
+            Text(`${this.page()} / ${this.count()}`).fontSize(14).fontColor(Color.White)
+              .maxLines(1).textAlign(TextAlign.Center).hitTestBehavior(HitTestMode.None)
+              .id('rkit-chrome-page')
+            if (this.enhancementVisible) {
+              ReaderEnhancementStatus({ processing: this.enhancementProcessing,
+                applied: this.enhancementApplied, enhancementEnabled: this.enhancementEnabled,
+                toggleAvailable: this.enhancementToggleAvailable, accent: this.accent,
+                onToggle: (): void => { this.onToggleEnhancement() } })
+            }
           }
-        }.alignItems(VerticalAlign.Center)
-          .hitTestBehavior(this.enhancementToggleAvailable ? HitTestMode.Transparent : HitTestMode.None)
+          .alignItems(VerticalAlign.Center)
+            .hitTestBehavior(this.enhancementToggleAvailable ? HitTestMode.Transparent : HitTestMode.None)
+        }
       }.width('100%').height(this.topInset + 56)
         .padding({ top: this.topInset, left: 8, right: 8 })
         .backgroundColor('#CC000000').position({ x: 0, y: 0 })

@@ -12,6 +12,7 @@ import { ReaderChrome, ReaderRuntimePolicyIntent } from './ReaderChrome'
 import { ReaderPageStatus } from './ReaderPageStatus'
 import { ReaderThumbnailRail } from './ReaderThumbnailRail'
 import { BusinessError } from '@kit.BasicServicesKit'
+import { Binding } from '@kit.ArkUI'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderEntryPreview, ReaderEntryPreviewSource } from './ReaderEntryPreview'
 import { ReaderTapAction } from './ReaderTapAction'
@@ -35,6 +36,7 @@ import { ReaderCropPolicy } from './ReaderCropPolicy'
 import { ReaderAutoReadPolicy } from './ReaderAutoReadPolicy'
 import { ReaderTapPolicy } from './ReaderTapPolicy'
 import { ReaderTemporaryVariantControl } from './ReaderTemporaryVariantControl'
+import { ReaderTitleParams } from './ReaderTitleParams'
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -115,6 +117,8 @@ export struct ReaderSurface {
   @Param entryPreview: ReaderEntryPreviewSource | null = null
   @Param contentOpacity: number = 1
   @BuilderParam modeControl?: (params: ReaderModeControlParams) => void
+  /** Optional host-owned title leaf; omitted hosts keep the stock centered page indicator. */
+  @BuilderParam titleControl?: (params: Binding<ReaderTitleParams>) => void
   @BuilderParam openingPlaceholder: () => void = this.DefaultOpeningPlaceholder
   @Event onClose: (context: ReaderCloseContext | null) => void = () => {}
   /** Raw Image presentation, before core incorporates the measured original geometry. */
@@ -913,6 +917,13 @@ export struct ReaderSurface {
     if (this.modeControl !== undefined) this.modeControl(params)
   }
 
+  @Builder
+  private HostTitleControl(params: Binding<ReaderTitleParams>) {
+    if (this.titleControl !== undefined) {
+      this.titleControl(params)
+    }
+  }
+
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
       // The canvas and Reader body have distinct transition owners. A host can
@@ -1054,6 +1065,10 @@ export struct ReaderSurface {
       if (this.chromeVisible) {
         ReaderChrome({ hostModeControlAvailable: this.modeControl !== undefined,
           modeControl: (params: ReaderModeControlParams): void => { this.HostModeControl(params) },
+          hostTitleControlAvailable: this.titleControl !== undefined,
+          titleControl: (params: Binding<ReaderTitleParams>): void => {
+            this.HostTitleControl(params)
+          },
           snapshot: this.state, active: this.active, topInset: this.topInset,
           bottomInset: this.bottomInset, accent: this.accent, onClose: (): void => this.requestClose(),
           thumbnailsVisible: this.thumbnailsVisible,
