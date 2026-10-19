@@ -49,3 +49,5 @@ export { ReaderBoundarySwipe, ReaderBoundaryDirection, ReaderBoundaryAxis,
   ReaderBoundaryReadingDirection } from './src/main/ets/ReaderBoundarySwipe'
 export { ReaderFailurePanel } from './src/main/ets/ReaderFailurePanel'
 export { ReaderAssetNoticePanel } from './src/main/ets/ReaderAssetNoticePanel'
+
+export { ReaderSystemBarController } from './src/main/ets/ReaderSystemBarController'

@@ -1,3 +1,4 @@
+import { ReaderSystemBarController } from './ReaderSystemBarController'
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy, ReaderLayout,
   ReaderVariantPreference, ReaderProcessingPolicy, ReaderProcessingResult, ReaderPage, ReaderTemporaryVariantScope, ReaderTemporaryVariantOverride,
   ReaderInputPort, ReaderMoveIntent, ReaderImageShareTarget,
@@ -59,7 +60,9 @@ export struct ReaderSurface {
   /** Host-owned normalized geometry; revision explicitly requests one-shot shared presentation. */
   @Param tapZonePreviewRegions: ReaderTapZonePreviewRegion[] = []
   @Param tapZonePreviewRevision: number = 0
-  @Param beforeShowChrome: ((isCurrent: () => boolean) => Promise<boolean>) | null = null
+  @Param windowPresentation: ReaderSystemBarController | null = null
+  @Param windowFullscreen: boolean = true
+  @Param windowCanvasDark: boolean = true
   @Param initialIndex: number = 0
   @Param topInset: number = 0
   @Param bottomInset: number = 0
@@ -151,7 +154,6 @@ export struct ReaderSurface {
   private touching: boolean = false
   private menuVisible: boolean = false
   private chromeEpoch: number = 0
-  private chromeShowPending: boolean = false
   private chromeDisposed: boolean = false
   private chromeCloseRequested: boolean = false
   private lastObservedSignature: string = ''
@@ -290,7 +292,7 @@ export struct ReaderSurface {
     // Publish the real initial chrome once so the host and the surface can never
     // disagree before the first user toggle; later flips keep flowing through
     // commitChromeVisible.
-    this.activitySink?.chromeChanged(this.chromeVisible)
+    this.publishChromePresentation()
     this.syncPreferredVariant(this.session.snapshot())
     this.session.setNeighborPreload(true)
     this.session.setPreloadDepth(this.preloadDepth)
@@ -329,7 +331,7 @@ export struct ReaderSurface {
   @Monitor('chromeRepublishToken')
   onChromeRepublishTokenChanged(): void {
     if (this.chromeDisposed) return
-    this.activitySink?.chromeChanged(this.chromeVisible)
+    this.publishChromePresentation()
   }
 
   @Monitor('cropPolicy')
@@ -379,6 +381,7 @@ export struct ReaderSurface {
     this.saveController.update(this.session.snapshot(), this.active)
     this.flushSaveFeedback()
     this.session.setViewportActive(this.active)
+    if (this.active) this.publishChromePresentation()
     this.reportInteractionBusy?.()
     this.syncPreferredVariant(this.session.snapshot())
     this.syncAutoRead()
@@ -646,7 +649,6 @@ export struct ReaderSurface {
 
   private invalidateChromeShow(): void {
     this.chromeEpoch += 1
-    this.chromeShowPending = false
   }
 
   @Monitor('closing')
@@ -714,33 +716,26 @@ export struct ReaderSurface {
   private commitChromeVisible(visible: boolean): void {
     this.chromeVisible = visible
     if (!this.chromeVisible) this.previewIndex = -1
-    this.activitySink?.chromeChanged(this.chromeVisible)
+    this.publishChromePresentation()
     console.info(`[ReaderSurface] chrome=${this.chromeVisible}`)
   }
 
-  private async prepareChromeShow(epoch: number,
-    gate: (isCurrent: () => boolean) => Promise<boolean>): Promise<void> {
-    const isCurrent = (): boolean => epoch === this.chromeEpoch && this.active && !this.closing &&
-      !this.chromeDisposed && !this.chromeCloseRequested
-    try {
-      const ready = await gate(isCurrent)
-      if (ready && isCurrent()) this.commitChromeVisible(true)
-    } catch (_) {
-      // A failed host preparation leaves chrome hidden; no unhandled rejection.
-    } finally {
-      if (epoch === this.chromeEpoch) this.chromeShowPending = false
-    }
+  private publishChromePresentation(): void {
+    const epoch = ++this.chromeEpoch
+    void this.windowPresentation?.presentChrome(this.chromeVisible, this.windowFullscreen, this.windowCanvasDark,
+      (): boolean => epoch === this.chromeEpoch && this.active && !this.closing &&
+        !this.chromeDisposed && !this.chromeCloseRequested)
+    this.activitySink?.chromeChanged(this.chromeVisible)
+  }
+
+  @Monitor('windowPresentation', 'windowFullscreen', 'windowCanvasDark')
+  onWindowPresentationChanged(): void {
+    if (!this.chromeDisposed) this.publishChromePresentation()
   }
 
   private toggleChrome(): void {
-    if (!this.active || this.closing || this.chromeDisposed || this.chromeCloseRequested || this.chromeShowPending) return
-    const gate = this.beforeShowChrome
-    if (this.chromeVisible || gate === null) {
-      this.commitChromeVisible(!this.chromeVisible)
-      return
-    }
-    this.chromeShowPending = true
-    void this.prepareChromeShow(++this.chromeEpoch, gate)
+    if (!this.active || this.closing || this.chromeDisposed || this.chromeCloseRequested) return
+    this.commitChromeVisible(!this.chromeVisible)
   }
 
   private pageTap(x: number, y: number): ReaderTapAction {
