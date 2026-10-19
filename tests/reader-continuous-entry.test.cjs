@@ -156,3 +156,29 @@ test('paged default still rejects out-of-viewport geometry and does not get cont
   const f = imageFixture(); Object.assign(f.image, { continuousEntry: null, active: true, entryLayoutWidth: 400, entryLayoutHeight: 2400 })
   f.image.publishEntryTarget(); assert.equal(f.transition.phase, 'cancelled'); assert.equal(f.transition.target, null)
 })
+
+test('terminal backgrounds reuse single-pointer travel filtering and active input gates', () => {
+  const TouchType = { Down: 0, Move: 1, Up: 2, Cancel: 3 }
+  const { ReaderTapSequence } = evaluate(read('ReaderTapSequence'), {}, { TouchType })
+  const Cell = evaluate(`export class Cell { ${methods('ReaderContinuousSurface',
+    'ReaderContinuousCell', ['terminalTap'])} }`).Cell
+  const cell = new Cell(), calls = [], sequence = new ReaderTapSequence()
+  Object.assign(cell, { active: true, interactionAllowed: true,
+    terminalTapSequence: sequence, onTap: (x, y) => calls.push([x, y]) })
+  const event = { tapLocation: { windowX: 150, windowY: 60 } }
+  const touch = (type, x, count = 1) => sequence.touch({ type,
+    touches: Array.from({ length: count }, () => ({ x, y: 0 })), changedTouches: [{ x, y: 0 }] })
+  touch(TouchType.Down, 0); cell.terminalTap(event)
+  assert.deepEqual(calls, [[150, 60]])
+  touch(TouchType.Move, 9); cell.terminalTap(event)
+  touch(TouchType.Down, 0, 2); cell.terminalTap(event)
+  touch(TouchType.Down, 0); touch(TouchType.Cancel, 0); cell.terminalTap(event)
+  assert.equal(calls.length, 1)
+  touch(TouchType.Down, 0)
+  cell.active = false; cell.terminalTap(event)
+  cell.active = true; cell.interactionAllowed = false; cell.terminalTap(event)
+  cell.interactionAllowed = true
+  cell.terminalTap(); cell.terminalTap({ tapLocation: { windowX: NaN, windowY: 0 } })
+  assert.equal(calls.length, 1)
+  cell.terminalTap(event); assert.deepEqual(calls, [[150, 60], [150, 60]])
+})

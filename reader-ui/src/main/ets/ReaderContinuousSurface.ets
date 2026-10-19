@@ -6,6 +6,7 @@ import { ReaderAssetNoticePanel } from './ReaderAssetNoticePanel'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
 import { ReaderTapAction } from './ReaderTapAction'
+import { ReaderTapSequence } from './ReaderTapSequence'
 import { ReaderBoundaryDirection, ReaderBoundarySwipe } from './ReaderBoundarySwipe'
 import { normalizedReaderPageGap } from './ReaderPageGap'
 import { ReaderLoadingStage } from './ReaderLoadingStage'
@@ -255,7 +256,7 @@ struct ReaderContinuousList {
       this.createdRevision !== this.snapshot.topologyRevision || this.entryTransition?.pending() ||
       !Number.isFinite(windowX) || !Number.isFinite(windowY)) return
     const frame = this.snapshot.forItem(key).frames[0]
-    if (frame === undefined || frame.asset.phase !== 'displayed') return
+    if (frame === undefined) return
     const navigation = this.snapshot.navigationRevision
     try {
       const context = this.getUIContext()
@@ -526,6 +527,15 @@ struct ReaderContinuousCell {
   @Event onNoticeAction: (slot: number, request: number, noticeId: string) => Promise<boolean> =
     async (_slot: number, _request: number, _noticeId: string): Promise<boolean> => false
   @Local private noticeActionBusy: boolean = false
+  private terminalTapSequence: ReaderTapSequence = new ReaderTapSequence()
+
+  private terminalTap(event?: GestureEvent): void {
+    const location = event?.tapLocation
+    if (this.active && this.interactionAllowed && this.terminalTapSequence.allowed() &&
+      location !== undefined && Number.isFinite(location.windowX) && Number.isFinite(location.windowY)) {
+      this.onTap(location.windowX, location.windowY)
+    }
+  }
 
   private async resolveNoticeAction(frame: ReaderPagedFrame): Promise<void> {
     const notice = frame.asset.notice
@@ -552,6 +562,11 @@ struct ReaderContinuousCell {
         }, (frame: ReaderPagedFrame): string =>
           readerElementKey(`${frame.slotId}:${frame.asset.assetRequestId}`))
       }.width('100%').height(220).id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
+        .onTouch((event: TouchEvent): void => { this.terminalTapSequence.touch(event) })
+        .gesture(GestureGroup(GestureMode.Exclusive,
+          TapGesture({ count: 2, distanceThreshold: 8 }).onAction((): void => {}),
+          TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => { this.terminalTap(event) }),
+        ))
     } else if (this.snapshot.frames[0]?.asset.phase === 'failed') {
       Stack() {
         ForEach(this.snapshot.frames, (frame: ReaderPagedFrame) => {
@@ -564,6 +579,11 @@ struct ReaderContinuousCell {
         }, (frame: ReaderPagedFrame): string =>
           readerElementKey(`${frame.slotId}:${frame.asset.assetRequestId}`))
       }.width('100%').height(220).id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
+        .onTouch((event: TouchEvent): void => { this.terminalTapSequence.touch(event) })
+        .gesture(GestureGroup(GestureMode.Exclusive,
+          TapGesture({ count: 2, distanceThreshold: 8 }).onAction((): void => {}),
+          TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => { this.terminalTap(event) }),
+        ))
     } else {
       Stack() {
         ForEach(this.snapshot.frames, (frame: ReaderPagedFrame) => {
