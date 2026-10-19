@@ -49,6 +49,8 @@ export struct ReaderSurface {
   /** Route lifetime for current-unit overrides; host sheets pause operations without ending it. */
   @Param temporaryVariantActive: boolean = true
   @Param closing: boolean = false
+  /** Optional host-owned catalog copy; omitted hosts retain the stock failure text. */
+  @Param catalogFailureText: (() => string) | null = null
   @Param showPageNumber: boolean = true
   /** Preferred grouped capability. Legacy scalar inputs remain temporarily source-compatible. */
   @Param tapPolicy: ReaderTapPolicy | null = null
@@ -948,7 +950,7 @@ export struct ReaderSurface {
       }
       if (this.state.error.length > 0) {
         Column({ space: 16 }) {
-          Text($r('app.string.rkit_catalog_failed')).fontColor(this.canvasForeground).fontSize(16)
+          Text(this.catalogFailureText?.() || $r('app.string.rkit_catalog_failed')).fontColor(this.canvasForeground).fontSize(16)
           Button($r('app.string.rkit_retry')).height(40).constraintSize({ minWidth: 120 })
             .backgroundColor(this.accent).fontColor(Color.White)
             .onClick((): void => { void this.session.retry() })
