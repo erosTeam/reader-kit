@@ -258,6 +258,10 @@ export class ReaderPagedSession {
   private topologySignature: string = ''
   private topologyRevision: number = 0
   private navigationRevision: number = 0
+  // Resource preparation follows native motion without committing a reading position.
+  private pagedTargetIndex: number = -1
+  private pagedTargetTopology: number = -1
+  private pagedTargetNavigation: number = -1
   private continuousStart: number = -1
   private continuousEnd: number = -1
   private slotSerial: number = 0
@@ -530,11 +534,14 @@ export class ReaderPagedSession {
     return new ReaderThumbnailWindow(this.catalog, this.assets, this.failures)
   }
   setViewportActive(active: boolean): void {
+    const retiredTarget = !active && this.pagedTargetIndex >= 0
+    if (!active) this.pagedTargetIndex = -1
     if (!active) this.cancelOriginalPreparations()
     if (!active) this.cancelAutoReadSourcePreparations()
     if (this.active && !active) this.activityEpoch += 1
     this.active = active && !this.disposed
     this.syncProcessing()
+    if (retiredTarget && !this.disposed && this.state.phase === 'ready') this.reconcile()
   }
   subscribe(listener: (snapshot: ReaderPagedSnapshot) => void): void {
     this.listener = listener
@@ -639,7 +646,33 @@ export class ReaderPagedSession {
       const outgoing = this.displayKeys.indexOf(this.outgoingPositionKey)
       if (outgoing >= 0 && !indexes.includes(outgoing)) indexes.push(outgoing)
     }
+    if (this.pagedTargetIndex >= 0 && this.pagedTargetTopology === this.topologyRevision &&
+      this.pagedTargetNavigation === this.navigationRevision) {
+      const add = (index: number): void => {
+        if (index >= 0 && index < this.map!.count() && !indexes.includes(index)) indexes.push(index)
+      }
+      add(this.pagedTargetIndex)
+      if (this.prefetchNeighbors) {
+        add(this.pagedTargetIndex - 1)
+        add(this.pagedTargetIndex + 1)
+      }
+    }
     return indexes
+  }
+
+  /** Preheat an animation destination; selection and observed progress are untouched. */
+  preparePagedTarget(index: number, topology: number, navigation: number): boolean {
+    if (this.disposed || !this.active || this.state.phase !== 'ready' || this.map === null ||
+      this.state.policy.layout === 'continuous' || topology !== this.topologyRevision ||
+      navigation !== this.navigationRevision || !Number.isSafeInteger(index) || index < 0 || index >= this.map.count()) return false
+    const target = index === this.state.displayIndex ? -1 : index
+    if (target === this.pagedTargetIndex && topology === this.pagedTargetTopology &&
+      navigation === this.pagedTargetNavigation) return true
+    this.pagedTargetIndex = target
+    this.pagedTargetTopology = topology
+    this.pagedTargetNavigation = navigation
+    this.reconcile()
+    return true
   }
 
   setNeighborPreload(enabled: boolean): void {
