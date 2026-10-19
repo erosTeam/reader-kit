@@ -35,7 +35,7 @@ function fixture(width = 400, height = 2400) {
   return { frame, state, transition }
 }
 const List = evaluate(`export class List { ${methods('ReaderContinuousSurface', 'ReaderContinuousList',
-  ['refreshEntryPosition', 'rotates', 'imageIdentity', 'invalidatePosition', 'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'onImageLock'])} }`, {}, {
+  ['imageAspectRatio', 'refreshEntryPosition', 'rotates', 'imageIdentity', 'invalidatePosition', 'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'onImageLock'])} }`, {}, {
   ReaderContinuousEntryPosition: Position, clearTimeout() {}, setTimeout: callback => { callback(); return 1 },
   ReaderContinuousAfterLayout: class { constructor(action) { this.action = action } },
   readerPolicyRotatesPage: core.readerPolicyRotatesPage,
@@ -181,4 +181,21 @@ test('terminal backgrounds reuse single-pointer travel filtering and active inpu
   cell.terminalTap(); cell.terminalTap({ tapLocation: { windowX: NaN, windowY: 0 } })
   assert.equal(calls.length, 1)
   cell.terminalTap(event); assert.deepEqual(calls, [[150, 60], [150, 60]])
+})
+
+test('continuous original uses attested whole-page preview geometry until native dimensions arrive', () => {
+  const f = listFixture(), page = f.frame.asset.page
+  f.state.kind = 'original'; f.state.pageMetadata = [page]
+  f.state.policy = new core.ReaderDisplayPolicy()
+  f.state.cropForPage = () => ({ left: 0, top: 0, right: 0, bottom: 0 })
+  page.width = 0; page.height = 0
+  page.previewWidth = 690; page.previewHeight = 934; page.previewCoversWholePage = true
+  assert.equal(f.list.imageAspectRatio(page.sourceIndex), 690 / 934)
+  page.width = 800; page.height = 1200
+  assert.equal(f.list.imageAspectRatio(page.sourceIndex), 800 / 1200)
+  page.width = 0; page.height = 0; page.previewCoversWholePage = false
+  assert.equal(f.list.imageAspectRatio(page.sourceIndex), 0.75)
+  page.previewCoversWholePage = true
+  f.state.cropForPage = () => ({ left: 0.1, top: 0, right: 0, bottom: 0 })
+  assert.equal(f.list.imageAspectRatio(page.sourceIndex), 0.75)
 })

@@ -277,9 +277,14 @@ struct ReaderContinuousList {
 
   private imageAspectRatio(index: number): number {
     const page = this.snapshot.pageMetadata.find((value) => value.sourceIndex === index)
-    const width = this.snapshot.kind === 'thumbnail' ? page?.thumbnail.width ?? 0 : page?.width ?? 0
-    const height = this.snapshot.kind === 'thumbnail' ? page?.thumbnail.height ?? 0 : page?.height ?? 0
     const crop = this.snapshot.cropForPage(index)
+    const usePreview = this.snapshot.kind === 'original' && page?.hasWholePagePreviewGeometry() === true &&
+      ((page?.width ?? 0) <= 0 || (page?.height ?? 0) <= 0) &&
+      crop.left === 0 && crop.top === 0 && crop.right === 0 && crop.bottom === 0
+    const width = this.snapshot.kind === 'thumbnail' ? page?.thumbnail.width ?? 0 :
+      usePreview ? page?.previewWidth ?? 0 : page?.width ?? 0
+    const height = this.snapshot.kind === 'thumbnail' ? page?.thumbnail.height ?? 0 :
+      usePreview ? page?.previewHeight ?? 0 : page?.height ?? 0
     const heightRatio = this.snapshot.kind === 'original'
       ? (1 - crop.top - crop.bottom) / (1 - crop.left - crop.right) : 1
     const ratio = width > 0 && height > 0 ? width / height / heightRatio : 0.75
