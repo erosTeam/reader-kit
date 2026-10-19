@@ -222,6 +222,7 @@ export class ReaderPagedSession {
   private pages: Map<number, ReaderPage> = new Map()
   private cropPages: Map<number, ReaderImageCropBounds> = new Map()
   private slots: ReaderPageSlot[] = []
+  private reconcileDepth: number = 0
   private assetPlans: Map<number, ReaderResolvedAssetPlan> = new Map()
   private originalPreparations: Map<number, ReaderCancellation> = new Map()
   private preparationVariants: Map<number, ReaderAssetVariant> = new Map()
@@ -728,7 +729,9 @@ export class ReaderPagedSession {
     this.autoReadSourcePreparations.clear()
   }
 
-  private emit(): void { if (this.listener !== null) this.listener(this.snapshot()) }
+  private emit(): void {
+    if (this.reconcileDepth === 0 && this.listener !== null) this.listener(this.snapshot())
+  }
 
   async open(key: ReaderUnitKey, index: number = 0): Promise<void> {
     if (this.disposed) return
@@ -1037,6 +1040,19 @@ export class ReaderPagedSession {
   }
 
   private reconcile(): void {
+    if (this.state.unit === null) return
+    // Publish one coherent window after synchronous slot setup. Asset promises
+    // keep their existing schedule and publish each later progress/result normally.
+    this.reconcileDepth += 1
+    try {
+      this.reconcileSlots()
+    } finally {
+      this.reconcileDepth -= 1
+      if (this.reconcileDepth === 0) this.emit()
+    }
+  }
+
+  private reconcileSlots(): void {
     const unit = this.state.unit
     const parts: ReaderDisplayPart[] = []
     this.windowIndexes().forEach((index: number) => {
@@ -1079,9 +1095,9 @@ export class ReaderPagedSession {
 
   private slotChanged(slot: ReaderPageSlot, snapshot: ReaderSnapshot): void {
     if (this.disposed || !this.slots.includes(slot)) return
-    // reconcile() already published each newly allocated idle slot. subscribe()
-    // immediately echoes that unchanged constructor state before openPrepared;
-    // it is not another resource update or render revision.
+    // subscribe() echoes the unchanged constructor state before openPrepared.
+    // It is not a resource update; reconcile publishes the completed synchronous
+    // slot setup once, and later asset progress keeps its normal notifications.
     if (snapshot.phase === 'idle' && snapshot.requestId === 0) return
     this.requestCrop(slot, snapshot)
     const page = snapshot.page
