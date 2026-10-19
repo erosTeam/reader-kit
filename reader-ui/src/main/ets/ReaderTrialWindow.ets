@@ -176,9 +176,15 @@ export class ReaderTrialWindow {
       this.mainWindow = mainWindow
       this.previous = mainWindow.getWindowSystemBarProperties()
       this.observe(`saved ${JSON.stringify(this.previous)}`)
+      // When the host opens directly into fullscreen, writing white content
+      // first can expose white status text before the later visibility write.
+      const hiddenBeforeColor = this.restoreStatusVisible !== null && !this.desiredStatusVisible
+      if (hiddenBeforeColor) await this.writeStatusVisible(false)
+      if (this.closed) return
       await mainWindow.setWindowSystemBarProperties({ statusBarContentColor: '#FFFFFFFF' })
       console.info('[ReaderTrialWindow] status_content=light')
-      if (!this.closed && this.restoreStatusVisible !== null) {
+      if (!this.closed && this.restoreStatusVisible !== null &&
+        (!hiddenBeforeColor || this.desiredStatusVisible)) {
         await this.writeStatusVisible(this.desiredStatusVisible)
       }
     }, 'open_failed')

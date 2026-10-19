@@ -602,3 +602,33 @@ test('prepare read, subscription and setter failures return false and remain obs
     await lease.close()
   }
 })
+
+test('fullscreen open hides status before writing white content and restores the host state', async () => {
+  const main = mainWindow(), { Lease } = fixture(async () => main)
+  const lease = new Lease(null, true)
+  lease.setStatusBarVisible(false)
+  lease.open({}); await drain()
+  assert.deepEqual(main.calls.slice(0, 3), [
+    ['read', main.original],
+    ['visibility', 'status', false, false],
+    ['write', { statusBarContentColor: '#FFFFFFFF' }],
+  ])
+  await lease.close()
+  assert.deepEqual(main.calls.slice(-2), [
+    ['write', main.original],
+    ['visibility', 'status', true, false],
+  ])
+})
+
+test('closing during the preliminary hide never applies the white color', async () => {
+  const hidden = deferred(), main = mainWindow(undefined, visible =>
+    visible ? Promise.resolve() : hidden.promise)
+  const { Lease } = fixture(async () => main)
+  const lease = new Lease(null, true)
+  lease.setStatusBarVisible(false)
+  lease.open({}); await drain()
+  const closing = lease.close()
+  hidden.resolve(); await closing
+  assert.deepEqual(main.calls.map(call => call[0]), ['read', 'visibility', 'write', 'visibility'])
+  assert.deepEqual(main.calls[2], ['write', main.original])
+})
