@@ -1013,6 +1013,12 @@ export class ReaderPagedSession {
       this.topologyRevision += 1
       this.displayKeys = keys
     }
+    this.resolvePosition()
+  }
+
+  /** Position changes reuse the current topology; only structural changes rebuild it. */
+  private resolvePosition(): void {
+    if (this.map === null || this.state.anchor === null) return
     const resolved = this.map.resolve(this.state.anchor)
     if (!resolved.resolved()) {
       this.state.error = 'reader_anchor_unresolved'
@@ -1073,6 +1079,10 @@ export class ReaderPagedSession {
 
   private slotChanged(slot: ReaderPageSlot, snapshot: ReaderSnapshot): void {
     if (this.disposed || !this.slots.includes(slot)) return
+    // reconcile() already published each newly allocated idle slot. subscribe()
+    // immediately echoes that unchanged constructor state before openPrepared;
+    // it is not another resource update or render revision.
+    if (snapshot.phase === 'idle' && snapshot.requestId === 0) return
     this.requestCrop(slot, snapshot)
     const page = snapshot.page
     const previous = page === null ? undefined : this.pages.get(page.sourceIndex)?.copy()
@@ -1080,8 +1090,7 @@ export class ReaderPagedSession {
       this.emit()
       return
     }
-    if (this.pageTopologyChanged(previous, this.pages.get(page.sourceIndex) as ReaderPage)) this.rebuild()
-    else this.emit()
+    this.publishPageMetadata(previous, this.pages.get(page.sourceIndex) as ReaderPage)
   }
 
   /** A slot can refresh host metadata for a page retained outside the native window. */
@@ -1114,9 +1123,21 @@ export class ReaderPagedSession {
       a.spriteHeight === b.spriteHeight && a.offsetX === b.offsetX && a.offsetY === b.offsetY
   }
 
-  private pageTopologyChanged(previous: ReaderPage | undefined, current: ReaderPage): boolean {
-    return previous === undefined || !previous.unit.equals(current.unit) || previous.key !== current.key ||
-      previous.sourceIndex !== current.sourceIndex || previous.width !== current.width || previous.height !== current.height
+  private publishPageMetadata(previous: ReaderPage | undefined, page: ReaderPage): void {
+    const geometryChanged = previous === undefined || previous.key !== page.key ||
+      previous.width !== page.width || previous.height !== page.height
+    const displayed = (this.map?.item(this.state.displayIndex)?.parts ?? [])
+      .some(part => part.sourceIndex === page.sourceIndex)
+    // Metadata changes do not change page grouping unless wide-page splitting
+    // changes. Keep the existing selected-position reconciliation (including its
+    // selection receipt invalidation) without rebuilding every display item.
+    if (this.map === null || !this.map.updatePage(page)) {
+      this.rebuild()
+    } else if (displayed && geometryChanged) {
+      this.resolvePosition()
+    } else {
+      this.emit()
+    }
   }
 
   reportPresentation(slotId: number, requestId: number, success: boolean, width: number = 0, height: number = 0): void {
@@ -1140,8 +1161,7 @@ export class ReaderPagedSession {
     }
     const previous = this.pages.get(page.sourceIndex)?.copy()
     if (!this.installSlotPage(page)) return
-    if (this.pageTopologyChanged(previous, this.pages.get(page.sourceIndex) as ReaderPage)) this.rebuild()
-    else this.emit()
+    this.publishPageMetadata(previous, this.pages.get(page.sourceIndex) as ReaderPage)
   }
 
   private currentRenderSlot(selectionId: number, slotId: number, requestId: number,

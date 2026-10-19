@@ -126,8 +126,8 @@ export class ReaderAnchorResolution {
 }
 
 /**
- * Single-unit, platform-free display topology. Rebuild from late metadata or a
- * layout change, then resolve the old anchor; neither operation writes progress.
+ * Single-unit, platform-free display topology. Metadata updates retain topology
+ * unless wide-page splitting changes. Layout changes resolve the old anchor; neither writes progress.
  * Pairing follows E/N's cover-alignment rule. Splitting follows Koma's paged-only
  * left/right expansion; spread and continuous layouts never silently split.
  */
@@ -162,7 +162,30 @@ export class ReaderDisplayMap {
   count(): number { return this.items.length }
 
   item(index: number): ReaderDisplayItem | null {
-    return Number.isInteger(index) && index >= 0 && index < this.items.length ? this.items[index].copy() : null
+    if (!Number.isInteger(index) || index < 0 || index >= this.items.length) return null
+    const value = this.items[index].copy()
+    value.parts.forEach((part: ReaderDisplayPart): void => {
+      part.pageKey = this.metadata.get(part.sourceIndex)?.key ?? null
+    })
+    return value
+  }
+
+  /** Returns false without mutation only when the page changes display topology. */
+  updatePage(page: ReaderPage): boolean {
+    const existingIndex = this.pageIndexes.get(page.key)
+    if (!page.unit.equals(this.unit.key) || !Number.isInteger(page.sourceIndex) ||
+      page.sourceIndex < 0 || page.sourceIndex >= this.unit.pageCount || page.key.length === 0 ||
+      (existingIndex !== undefined && existingIndex !== page.sourceIndex)) {
+      throw new Error('reader_invalid_page_metadata')
+    }
+    const previous = this.metadata.get(page.sourceIndex)
+    if (this.policy.layout === 'single' && this.policy.splitWidePages &&
+      readerPageIsWide(previous ?? null, this.policy.widePageRatio) !==
+      readerPageIsWide(page, this.policy.widePageRatio)) return false
+    if (previous !== undefined && previous.key !== page.key) this.pageIndexes.delete(previous.key)
+    this.metadata.set(page.sourceIndex, page.copy())
+    this.pageIndexes.set(page.key, page.sourceIndex)
+    return true
   }
 
   /** Logical next/previous stays the same in RTL and never crosses a unit. */
@@ -246,7 +269,7 @@ export class ReaderDisplayMap {
         const result = new ReaderAnchorResolution(match)
         result.displayIndex = displayIndex
         result.partIndex = partIndex
-        result.anchor = new ReaderReadingAnchor(this.unit.key, part.pageKey, index,
+        result.anchor = new ReaderReadingAnchor(this.unit.key, this.metadata.get(index)?.key ?? null, index,
           anchor.x, anchor.y, part.fragment === 'whole' ? anchor.fragment : part.fragment)
         result.localX = normalized((anchor.x - part.left()) / part.width(), 0.5)
         result.localY = normalized(anchor.y, 0)
