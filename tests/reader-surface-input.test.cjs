@@ -51,6 +51,7 @@ const source = fs.readFileSync(path.join(uiPath, 'ReaderSurface.ets'), 'utf8')
 const methods = source.slice(0, source.indexOf('\n  build() {'))
   .replace('export struct ReaderSurface {', 'export class ReaderSurface {') + '\n}\n'
 const { ReaderSurface } = evaluate(methods)
+ReaderSurface.prototype.getUIContext = () => ({ getComponentUtils() { throw new Error("No viewport in non-rendering test") } })
 function scenario(phase = null) {
   const surface = new ReaderSurface()
   surface.active = true; surface.state.phase = 'ready'; surface.state.topologyRevision = 7

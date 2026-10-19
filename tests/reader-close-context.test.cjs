@@ -80,7 +80,50 @@ test('surface captures close context before invalidating requests and hands it t
   const start = source.indexOf('  private requestClose(): void {')
   const end = source.indexOf('\n  }', start)
   const body = source.slice(start, end)
-  assert.ok(body.indexOf('ReaderCloseContext.from(this.state)') < body.indexOf('cancelOriginalPreparations()'))
+  assert.ok(body.indexOf('ReaderCloseContext.fromViewport(this.state,') < body.indexOf('cancelOriginalPreparations()'))
   assert.match(body, /this\.onClose\(context\)/)
   assert.match(source, /@Event onClose: \(context: ReaderCloseContext \| null\) => void/)
+})
+
+
+test('continuous return selects dominant current pixels without changing progress anchor', () => {
+  const { key, value } = snapshot('continuous')
+  value.visibleDisplayStart = 3; value.visibleDisplayEnd = 5
+  value.window = [3,4,5].map(i => new core.ReaderPagedItemSnapshot(String(i), i, [frame(key, i, 'whole', 30+i)]))
+  const before = value.observedAnchor
+  const areas = { 'rkit-continuous-page-3': 40, 'rkit-continuous-page-4': 1800, 'rkit-continuous-page-5': 800 }
+  const context = ReaderCloseContext.from(value, id => areas[id])
+  assert.equal(context.part.sourceIndex, 4)
+  assert.equal(context.captureComponentId, 'rkit-continuous-page-4')
+  assert.equal(value.observedAnchor, before)
+  assert.equal(value.observedAnchor.sourceIndexHint, 3)
+  assert.equal(context.matches(value), true)
+  value.window[1].frames[0].asset.assetRequestId++
+  assert.equal(context.matches(value), false)
+})
+
+test('continuous close never promotes cached offscreen, failed or unmeasurable images', () => {
+  const { key, value } = snapshot('continuous')
+  value.visibleDisplayStart = 3; value.visibleDisplayEnd = 4
+  value.window = [2,3,4].map(i => new core.ReaderPagedItemSnapshot(String(i), i, [frame(key, i, 'whole', 30+i)]))
+  value.window[2].frames[0].asset.phase = 'failed'
+  const seen = []
+  const context = ReaderCloseContext.from(value, id => { seen.push(id); return 80 })
+  assert.equal(context.part.sourceIndex, 3)
+  assert.deepEqual(seen, ['rkit-continuous-page-3'])
+  for (const area of [0,-1,NaN,Infinity]) assert.equal(ReaderCloseContext.from(value, () => area), null)
+  assert.equal(ReaderCloseContext.from(value, () => { throw Error('missing node') }), null)
+})
+
+test('continuous close measures viewport intersections, not full cached row sizes', () => {
+  const rects = {
+    'rkit-continuous-list': { windowOffset: { x: 10, y: 100 }, size: { width: 300, height: 800 } },
+    tail: { windowOffset: { x: 10, y: -460 }, size: { width: 300, height: 600 } },
+    dominant: { windowOffset: { x: 10, y: 140 }, size: { width: 300, height: 600 } },
+    cached: { windowOffset: { x: 10, y: 1000 }, size: { width: 300, height: 900 } },
+  }
+  const ui = { getComponentUtils: () => ({ getRectangleById: id => rects[id] }) }
+  assert.equal(ReaderCloseContext.continuousVisibleArea(ui, 'tail'), 12000)
+  assert.equal(ReaderCloseContext.continuousVisibleArea(ui, 'dominant'), 180000)
+  assert.equal(ReaderCloseContext.continuousVisibleArea(ui, 'cached'), 0)
 })

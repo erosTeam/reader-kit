@@ -635,7 +635,7 @@ export struct ReaderSurface {
   }
 
   private requestClose(): void {
-    const context = ReaderCloseContext.from(this.state)
+    const context = ReaderCloseContext.fromViewport(this.state, this.getUIContext())
     this.chromeCloseRequested = true
     this.originalFeedbackEpoch += 1
     this.session.cancelOriginalPreparations()
