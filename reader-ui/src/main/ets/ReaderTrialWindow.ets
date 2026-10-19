@@ -1,7 +1,9 @@
+import { ReaderSystemBarController } from './ReaderSystemBarController'
+import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { common } from '@kit.AbilityKit'
 import { window } from '@kit.ArkUI'
 
-export type ReaderTrialCloseSystemAvoidAreaResult = 'pending' | 'not-required' | 'already-visible' | 'ready' | 'failed'
+export type ReaderTrialCloseSystemAvoidAreaResult = 'pending' | 'not-required' | 'already-visible' | 'source-area-unchanged' | 'ready' | 'failed'
 
 /** Optional host-owned window lease, separate from the reader surface/session.
  * Restore exactly the pre-trial colors, including if close races window lookup.
@@ -10,6 +12,7 @@ export type ReaderTrialCloseSystemAvoidAreaResult = 'pending' | 'not-required' |
  */
 export class ReaderTrialWindow {
   private static operations: Promise<void> = Promise.resolve()
+  readonly presentation: ReaderSystemBarController
   private started: boolean = false
   private closed: boolean = false
   private mainWindow: window.Window | null = null
@@ -25,8 +28,11 @@ export class ReaderTrialWindow {
   private async restoreVisibleStatus(restoring: boolean = true): Promise<void> {
     const win = this.mainWindow
     if (win === null) return
+    let sourceAreaUnchanged: boolean = false
     const visibleTop = (): boolean => {
-      return win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM).topRect.height > 0
+      const top = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM).topRect.height
+      sourceAreaUnchanged = restoring && top === 0 && this.presentation.sourceAllowsEmptyStatusArea(win, true)
+      return top > 0 || sourceAreaUnchanged
     }
     let alreadyVisible: boolean = false
     try { alreadyVisible = visibleTop() } catch (error) {
@@ -36,7 +42,7 @@ export class ReaderTrialWindow {
     }
     if (alreadyVisible) {
       await this.writeStatusVisible(true)
-      if (restoring) this.closeSystemAvoidAreaResult = 'already-visible'
+      if (restoring) this.closeSystemAvoidAreaResult = sourceAreaUnchanged ? 'source-area-unchanged' : 'already-visible'
       return
     }
     await new Promise<void>((resolve: () => void, reject: (error: Error) => void): void => {
@@ -50,7 +56,7 @@ export class ReaderTrialWindow {
         settled = true
         if (timer >= 0) clearTimeout(timer)
         try { win.off('avoidAreaChange', changed) } catch (_) {}
-        if (restoring) this.closeSystemAvoidAreaResult = ready ? 'ready' : 'failed'
+        if (restoring) this.closeSystemAvoidAreaResult = ready ? (sourceAreaUnchanged ? 'source-area-unchanged' : 'ready') : 'failed'
         this.observe(`${restoring ? 'close' : 'prepare'}_system_avoid_area_${ready ? 'ready' : 'failed'} ${message}`)
         if (ready) resolve()
         else if (setterCompleted) reject(new Error(message))
@@ -99,30 +105,15 @@ export class ReaderTrialWindow {
 
   private observer: ((event: string) => void) | null = null
   private restoreStatusVisible: boolean | null
-  private desiredStatusVisible: boolean = true
 
-  /** System top-area readiness only; callers must separately await their layout. */
-  async prepareStatusBarVisible(): Promise<boolean> {
-    if (this.closed || this.restoreStatusVisible === null || !this.started) return false
-    let ready: boolean = false
-    await ReaderTrialWindow.enqueue(async (): Promise<void> => {
-      if (this.closed || this.mainWindow === null) return
-      this.desiredStatusVisible = true
-      this.observe('prepare_system_avoid_area_requested')
-      try {
-        await this.restoreVisibleStatus(false)
-        ready = !this.closed
-        this.observe(`prepare_status_visibility_completed ready=${ready}`)
-      } catch (error) {
-        this.observe(`prepare_status_visibility_failed ${(error as Error).message}`)
-      }
-    }, 'prepare_status_visibility_failed')
-    return ready
-  }
-
-  constructor(observer: ((event: string) => void) | null = null, restoreStatusVisible: boolean | null = null) {
+  constructor(observer: ((event: string) => void) | null = null, restoreStatusVisible: boolean | null = null,
+    entry: () => ReaderEntryTransition | null = (): ReaderEntryTransition | null => null,
+    rootPresentationSettled: () => boolean = (): boolean => true) {
     this.observer = observer
     this.restoreStatusVisible = restoreStatusVisible
+    this.presentation = new ReaderSystemBarController(async (): Promise<window.Window | null> => this.mainWindow,
+      (): boolean => this.started && !this.closed && rootPresentationSettled() && entry()?.pending() !== true,
+      undefined, restoreStatusVisible !== null)
   }
 
   private async writeStatusVisible(visible: boolean): Promise<void> {
@@ -132,14 +123,9 @@ export class ReaderTrialWindow {
     this.observe(`status_visibility_succeeded visible=${visible}`)
   }
 
-  setStatusBarVisible(visible: boolean): void {
+  setStatusBarVisible(visible: boolean, isCurrent: () => boolean = (): boolean => true): void {
     if (this.closed) return
-    this.desiredStatusVisible = visible
-    if (this.restoreStatusVisible === null || !this.started) return
-    ReaderTrialWindow.enqueue(async (): Promise<void> => {
-      if (this.closed || this.mainWindow === null) return
-      await this.writeStatusVisible(this.desiredStatusVisible)
-    }, 'status_visibility_failed')
+    void this.presentation.requestVisible(visible, true, isCurrent)
   }
 
   private observe(event: string): void {
@@ -175,18 +161,9 @@ export class ReaderTrialWindow {
       if (this.closed) return
       this.mainWindow = mainWindow
       this.previous = mainWindow.getWindowSystemBarProperties()
+      this.presentation.captureSourceLayout(mainWindow, this.restoreStatusVisible)
       this.observe(`saved ${JSON.stringify(this.previous)}`)
-      // When the host opens directly into fullscreen, writing white content
-      // first can expose white status text before the later visibility write.
-      const hiddenBeforeColor = this.restoreStatusVisible !== null && !this.desiredStatusVisible
-      if (hiddenBeforeColor) await this.writeStatusVisible(false)
-      if (this.closed) return
-      await mainWindow.setWindowSystemBarProperties({ statusBarContentColor: '#FFFFFFFF' })
-      console.info('[ReaderTrialWindow] status_content=light')
-      if (!this.closed && this.restoreStatusVisible !== null &&
-        (!hiddenBeforeColor || this.desiredStatusVisible)) {
-        await this.writeStatusVisible(this.desiredStatusVisible)
-      }
+      await this.presentation.replay()
     }, 'open_failed')
   }
 
@@ -211,8 +188,10 @@ export class ReaderTrialWindow {
   close(beforeRestoreColors: (() => Promise<boolean>) | null = null): Promise<void> {
     if (this.closing !== null) return this.closing
     this.closed = true
+    const presentationSettled = this.presentation.cancel()
     this.closeSystemAvoidAreaResult = this.restoreStatusVisible === true ? 'pending' : 'not-required'
     this.closing = ReaderTrialWindow.enqueue(async (): Promise<void> => {
+      await presentationSettled
       if (this.mainWindow !== null && this.previous !== null) {
         let restoreError: Error | null = null
         const layoutBeforeColors = this.restoreStatusVisible === true && beforeRestoreColors !== null
