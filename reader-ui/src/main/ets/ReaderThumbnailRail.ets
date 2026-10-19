@@ -24,34 +24,31 @@ export struct ReaderThumbnailRail {
   private source: ThumbnailIndexSource = new ThumbnailIndexSource(0)
   private resources: ReaderThumbnailWindow | null = null
   private scroller: ListScroller = new ListScroller()
-  private navigation: number = -1
+  private initialIndex: number = 0
+  private scrollTarget: number = -1
   private alive: boolean = false
 
   aboutToAppear(): void {
     this.alive = true
     this.source = new ThumbnailIndexSource(this.snapshot.unit?.pageCount ?? 0)
-    this.navigation = this.snapshot.navigationRevision
+    this.initialIndex = this.current()
+    this.scrollTarget = this.initialIndex
     this.resources = this.session.createThumbnailWindow()
     this.resources.subscribe((frames: ReaderThumbnailFrame[]): void => { this.frames = frames })
     this.range(this.current(), this.current())
   }
   aboutToDisappear(): void { this.alive = false; this.resources?.close(); this.resources = null }
 
-  @Monitor('snapshot')
-  onSnapshotChanged(): void {
-    if (this.alive && this.navigation !== this.snapshot.navigationRevision) {
-      this.navigation = this.snapshot.navigationRevision
-      this.scroller.scrollToIndex(this.current(), false, ScrollAlign.START)
-    }
-  }
-
-  @Monitor('previewIndex')
-  onPreviewChanged(): void {
+  @Monitor('snapshot', 'previewIndex')
+  onPositionChanged(): void {
     if (!this.alive) return
     const previewing = this.previewIndex >= 0 && this.previewIndex < this.source.totalCount()
-    // The gesture supplies the moving target. Retargeted scroll animations can lag until
-    // release on long lists; position this preview directly and keep native range ownership.
-    this.scroller.scrollToIndex(previewing ? this.previewIndex : this.current(), false)
+    const target = previewing ? this.previewIndex : this.current()
+    // Asset receipts and preview retirement must not interrupt the same native scroll.
+    if (target === this.scrollTarget) return
+    this.scrollTarget = target
+    // Page changes animate; slider previews follow the finger directly.
+    this.scroller.scrollToIndex(target, !previewing, ScrollAlign.START)
   }
 
   private current(): number { return this.snapshot.anchor?.sourceIndexHint ?? 0 }
@@ -68,7 +65,7 @@ export struct ReaderThumbnailRail {
   }
 
   build() {
-    List({ space: 8, initialIndex: this.current(), scroller: this.scroller }) {
+    List({ space: 8, initialIndex: this.initialIndex, scroller: this.scroller }) {
       LazyForEach(this.source, (index: number) => {
         ListItem() {
           ReaderThumbnailRailTile({
