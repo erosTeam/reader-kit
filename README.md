@@ -1,11 +1,12 @@
 # Reader Kit
 
-Shared HarmonyOS reader integration for NextN, NextE and Koma. The current
-host integrations include ordinary Shared routes and retained Legacy fallback;
-the early D1 claim that only Debug routes exist is historical. Full replacement,
-all-provider coverage and performance superiority are not established by this
-README. Runtime acceptance belongs to the active host work order and its bound
-receipts, not a test count or a package version.
+Shared HarmonyOS reader integration for NextN, NextE and Koma. Ordinary Shared
+routing and retained Legacy fallback belong to each host, not to this package.
+In the current Koma checkout, ordinary opens still mount Legacy even with a saved
+`shared` preference; only its existing Debug entry reaches Shared. Restoring the
+ordinary Koma route remains OPEN. A common package revision does not establish
+host reachability, full replacement, all-provider coverage or performance.
+Runtime acceptance belongs to the active host work order and its bound receipts.
 
 ## Consumer contract
 
