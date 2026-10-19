@@ -340,7 +340,9 @@ struct ReaderNativePager {
     .vertical(this.snapshot.policy.pagingAxis === 'vertical')
     .direction(this.snapshot.policy.pagingAxis !== 'vertical' && this.snapshot.policy.direction === 'rtl' ?
       Direction.Rtl : Direction.Ltr)
-    .loop(false).indicator(false).cachedCount(1)
+    // Window resources resolve after cached cells are created. Keep those cells
+    // on the render tree so their Image branches decode before a swipe reveals them.
+    .loop(false).indicator(false).cachedCount(this.snapshot.nativeCacheDepth, true)
     .disableSwipe(!this.active || this.snapshot.phase !== 'ready' || this.inputLocked)
     .width('100%').height('100%').id('rkit-native-pager')
     .onTouch((event: TouchEvent): void => { this.handleBoundaryTouch(event) })

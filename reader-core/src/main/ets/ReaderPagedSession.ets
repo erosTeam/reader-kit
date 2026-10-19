@@ -86,6 +86,7 @@ export class ReaderObservedPosition {
 }
 
 export class ReaderPagedSnapshot {
+  nativeCacheDepth: number = 1
   unit: ReaderUnit | null = null
   phase: 'idle' | 'catalog' | 'ready' | 'failed' | 'closed' = 'idle'
   error: string = ''
@@ -156,6 +157,7 @@ export class ReaderPagedSnapshot {
   forItem(key: string): ReaderPagedSnapshot {
     const value = new ReaderPagedSnapshot()
     value.unit = this.unit?.copy() ?? null
+    value.nativeCacheDepth = this.nativeCacheDepth
     value.phase = this.phase
     value.policy = this.policy.copy()
     value.kind = this.kind
@@ -223,11 +225,14 @@ export class ReaderPagedSession {
   private cropPages: Map<number, ReaderImageCropBounds> = new Map()
   private slots: ReaderPageSlot[] = []
   private reconcileDepth: number = 0
+  /** Requested native window plus at most one already-leased reverse edge. */
+  private resourceWindowIndexes: number[] = []
   private assetPlans: Map<number, ReaderResolvedAssetPlan> = new Map()
   private originalPreparations: Map<number, ReaderCancellation> = new Map()
   private preparationVariants: Map<number, ReaderAssetVariant> = new Map()
   private prefetchNeighbors: boolean = false
   private preloadDepth: number = 0
+  private pagedPreloadDepth: number | null = null
   private preloadEpoch: number = 0
   private preloadSignature: string = ''
   private preloadCancellation: ReaderCancellation = new ReaderCancellation()
@@ -514,6 +519,13 @@ export class ReaderPagedSession {
   snapshot(): ReaderPagedSnapshot {
     const value = new ReaderPagedSnapshot()
     value.unit = this.state.unit?.copy() ?? null
+    value.nativeCacheDepth = this.pagedPreloadDepth === null
+      ? 1 : this.prefetchNeighbors ? this.pagedPreloadDepth : 0
+    if (this.pagedPreloadDepth !== null && value.nativeCacheDepth > 0 &&
+      this.state.policy.layout !== 'continuous' && this.resourceWindowIndexes.some((index: number): boolean =>
+        Math.abs(index - this.state.displayIndex) === value.nativeCacheDepth + 1)) {
+      value.nativeCacheDepth += 1
+    }
     value.phase = this.state.phase
     value.canShiftSpread = this.spreadShiftTarget() !== null
     value.error = this.state.error
@@ -548,7 +560,7 @@ export class ReaderPagedSession {
       })
     }
     value.frames = this.framesAt(this.state.displayIndex)
-    value.window = this.windowIndexes().map((index: number) =>
+    value.window = this.resourceWindowIndexes.map((index: number) =>
       new ReaderPagedItemSnapshot(this.displayKeys[index], index, this.framesAt(index)))
     return value
   }
@@ -579,14 +591,22 @@ export class ReaderPagedSession {
     if (this.state.policy.layout === 'continuous' && this.continuousStart >= 0) {
       const indexes: number[] = []
       for (let index = this.continuousStart; index <= this.continuousEnd; index++) indexes.push(index)
-      if (this.prefetchNeighbors && this.continuousStart > 0) indexes.push(this.continuousStart - 1)
-      if (this.prefetchNeighbors && this.continuousEnd + 1 < this.map.count()) indexes.push(this.continuousEnd + 1)
+      if (this.prefetchNeighbors) {
+        const depth = this.pagedPreloadDepth ?? 1
+        for (let offset = 1; offset <= depth; offset++) {
+          if (this.continuousStart - offset >= 0) indexes.push(this.continuousStart - offset)
+          if (this.continuousEnd + offset < this.map.count()) indexes.push(this.continuousEnd + offset)
+        }
+      }
       return indexes
     }
     const indexes: number[] = [this.state.displayIndex]
     if (this.prefetchNeighbors) {
-      if (this.state.displayIndex > 0) indexes.push(this.state.displayIndex - 1)
-      if (this.state.displayIndex + 1 < this.map.count()) indexes.push(this.state.displayIndex + 1)
+      const depth = this.pagedPreloadDepth ?? 1
+      for (let offset = 1; offset <= depth; offset++) {
+        if (this.state.displayIndex - offset >= 0) indexes.push(this.state.displayIndex - offset)
+        if (this.state.displayIndex + offset < this.map.count()) indexes.push(this.state.displayIndex + offset)
+      }
     }
     if (this.outgoingPositionKey !== null) {
       const outgoing = this.displayKeys.indexOf(this.outgoingPositionKey)
@@ -598,6 +618,14 @@ export class ReaderPagedSession {
   setNeighborPreload(enabled: boolean): void {
     if (this.disposed || enabled === this.prefetchNeighbors) return
     this.prefetchNeighbors = enabled
+    if (this.state.phase === 'ready') this.reconcile()
+  }
+
+  setPagedPreloadDepth(depth: number): void {
+    if (this.disposed) return
+    const normalized = Number.isFinite(depth) ? Math.max(0, Math.min(5, Math.round(depth))) : 0
+    if (normalized === this.pagedPreloadDepth) return
+    this.pagedPreloadDepth = normalized
     if (this.state.phase === 'ready') this.reconcile()
   }
 
@@ -622,7 +650,9 @@ export class ReaderPagedSession {
     for (let display = from; display < this.map.count() && display < from + this.preloadDepth; display += 1) {
       const parts = this.map.item(display)?.parts ?? []
       parts.forEach((part: ReaderDisplayPart): void => {
-        if (!indexes.includes(part.sourceIndex)) indexes.push(part.sourceIndex)
+        const preparedByWindow = this.pagedPreloadDepth !== null &&
+          this.slots.some((slot: ReaderPageSlot): boolean => slot.index === part.sourceIndex)
+        if (!preparedByWindow && !indexes.includes(part.sourceIndex)) indexes.push(part.sourceIndex)
       })
     }
     return indexes
@@ -1015,6 +1045,7 @@ export class ReaderPagedSession {
       this.topologySignature = signature
       this.topologyRevision += 1
       this.displayKeys = keys
+      this.resourceWindowIndexes = []
     }
     this.resolvePosition()
   }
@@ -1054,8 +1085,19 @@ export class ReaderPagedSession {
 
   private reconcileSlots(): void {
     const unit = this.state.unit
+    const requested = this.windowIndexes()
+    const canRetainEdge = this.prefetchNeighbors && this.pagedPreloadDepth !== null &&
+      this.pagedPreloadDepth > 0 && this.state.policy.layout !== 'continuous'
+    const spare = canRetainEdge ? this.resourceWindowIndexes.filter((index: number): boolean =>
+      !requested.includes(index) && (this.map?.item(index)?.parts ?? []).length > 0 &&
+      (this.map?.item(index)?.parts ?? []).every((part: ReaderDisplayPart): boolean =>
+        this.slots.some((slot: ReaderPageSlot): boolean =>
+          slot.index === part.sourceIndex && slot.kind === this.state.kind)))
+      .sort((left: number, right: number): number =>
+        Math.abs(left - this.state.displayIndex) - Math.abs(right - this.state.displayIndex)).slice(0, 1) : []
+    this.resourceWindowIndexes = requested.concat(spare)
     const parts: ReaderDisplayPart[] = []
-    this.windowIndexes().forEach((index: number) => {
+    this.resourceWindowIndexes.forEach((index: number) => {
       (this.map?.item(index)?.parts ?? []).forEach((part: ReaderDisplayPart) => {
         if (!parts.some((other: ReaderDisplayPart) => other.sourceIndex === part.sourceIndex)) parts.push(part)
       })
@@ -1271,6 +1313,7 @@ export class ReaderPagedSession {
   private releaseSlots(): void {
     const slots = this.slots
     this.slots = []
+    this.resourceWindowIndexes = []
     slots.forEach((slot: ReaderPageSlot) => slot.session.close())
   }
 

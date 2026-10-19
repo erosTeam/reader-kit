@@ -1229,3 +1229,111 @@ test('shift-spread stays disabled at the single-page and stale-revision boundari
   assert.equal(session.shiftSpread(key, ready.topologyRevision + 1, ready.navigationRevision), false)
   session.close()
 })
+
+test('explicit paged depth prepares complete neighboring cells once and reuses slots on selection', async () => {
+  const {session,key,calls}=setup({count:12,preload:true})
+  session.setNeighborPreload(true); session.setPagedPreloadDepth(2); session.setPreloadDepth(2)
+  await session.open(key,4); await tick()
+  let s=session.snapshot()
+  assert.equal(s.nativeCacheDepth,2)
+  assert.deepEqual(s.window.map(w=>w.index),[4,3,5,2,6])
+  assert.equal(calls.load.length,5); assert.deepEqual(calls.preload,[])
+  const target=s.window.find(w=>w.index===5).frames[0]
+  assert.equal(session.selectDisplay(5,s.topologyRevision,s.navigationRevision),true); await tick()
+  s=session.snapshot()
+  assert.equal(s.frames[0].slotId,target.slotId)
+  assert.equal(s.frames[0].asset.assetRequestId,target.asset.assetRequestId)
+  assert.equal(calls.load.length,6)
+  assert.equal(calls.load.filter(c=>c[0]==='A-5').length,1)
+  assert.equal(s.forItem(s.displayKeys[5]).nativeCacheDepth,3)
+  session.close()
+})
+
+test('explicit paged depth clamps demand and preserves the observed outgoing lease', async () => {
+  const {session,key,calls}=setup({count:20,preload:true})
+  session.setNeighborPreload(true); session.setPagedPreloadDepth(99)
+  await session.open(key,8); await tick()
+  let s=session.snapshot(); assert.equal(s.nativeCacheDepth,5); assert.equal(s.window.length,11)
+  const frame=s.frames[0]; decode(session,frame)
+  s=session.snapshot(); session.reportVisible(s.selectionId,frame.slotId,frame.asset.assetRequestId,frame.part.fragment)
+  session.setPagedPreloadDepth(0); s=session.snapshot()
+  assert.equal(s.nativeCacheDepth,0); assert.equal(s.window.length,1)
+  session.selectDisplay(16,s.topologyRevision,s.navigationRevision); await tick()
+  s=session.snapshot(); assert.deepEqual(s.window.map(w=>w.index),[16,8])
+  session.setPagedPreloadDepth(NaN); assert.equal(session.snapshot().nativeCacheDepth,0)
+  session.close(); const count=calls.load.length
+  session.setPagedPreloadDepth(5); await tick(); assert.equal(calls.load.length,count)
+})
+
+test('continuous native window honors depth and retains decoded neighbors across a fast roundtrip', async () => {
+  const {session,key,calls}=setup({count:20,preload:true})
+  session.setPolicy(policy({layout:'continuous'})); session.setNeighborPreload(true)
+  session.setPagedPreloadDepth(4); session.setPreloadDepth(4)
+  await session.open(key,4); await tick()
+  let s=session.snapshot(); assert.equal(s.nativeCacheDepth,4)
+  const original=s.frames[0]; decode(session,original)
+  session.setContinuousRange(4,6,s.topologyRevision,s.navigationRevision); await tick()
+  s=session.snapshot(); assert.deepEqual(s.window.map(w=>w.index),[4,5,6,3,7,2,8,1,9,0,10])
+  session.setContinuousRange(6,7,s.topologyRevision,s.navigationRevision); await tick()
+  s=session.snapshot(); session.setContinuousRange(4,6,s.topologyRevision,s.navigationRevision); await tick()
+  s=session.snapshot(); assert.equal(s.frames[0].slotId,original.slotId)
+  assert.equal(s.frames[0].asset.assetRequestId,original.asset.assetRequestId)
+  assert.equal(s.frames[0].asset.phase,'displayed')
+  assert.equal(calls.load.filter(call=>call[0]==='A-4').length,1)
+  assert.equal(calls.preload.length,0,'native-owned sources must not be loaded again by cache warmer')
+  session.setPagedPreloadDepth(0); s=session.snapshot()
+  assert.equal(s.nativeCacheDepth,0); assert.deepEqual(s.window.map(w=>w.index),[4,5,6])
+  assert.equal(s.frames[0].slotId,original.slotId)
+  session.close()
+})
+
+test('explicit paging prepares spread sources once and honors neighbor disable', async () => {
+  const {session,key,calls}=setup({count:12,preload:true})
+  session.setPolicy(policy({layout:'spread'})); session.setNeighborPreload(true)
+  session.setPagedPreloadDepth(2); session.setPreloadDepth(2)
+  await session.open(key); await tick()
+  assert.deepEqual(session.snapshot().window.map(w=>w.index),[0,1,2])
+  assert.equal(calls.load.length,6); assert.deepEqual(calls.preload,[])
+  session.setNeighborPreload(false); await tick()
+  assert.equal(session.snapshot().window.length,1); assert.equal(session.snapshot().nativeCacheDepth,0)
+  session.close()
+})
+
+test('rapid reversals reuse the exited preload edge without growing the leased window', async () => {
+  for (const layout of ['single', 'spread']) {
+    const { session, key, calls } = setup({ count: 80 })
+    session.setPolicy(policy({ layout }))
+    session.setNeighborPreload(true)
+    session.setPagedPreloadDepth(5)
+    await session.open(key, layout === 'spread' ? 16 : 8); await tick()
+    const start = session.snapshot().displayIndex
+    const initialSlots = new Map(session.snapshot().window.flatMap(item =>
+      item.frames.map(frame => [frame.part.sourceIndex, frame.slotId])))
+    for (let step = 0; step < 12; step++) {
+      const before = session.snapshot()
+      assert.equal(session.selectDisplay(start + (step % 2 === 0 ? 1 : 0),
+        before.topologyRevision, before.navigationRevision), true)
+      await tick()
+      const current = session.snapshot()
+      assert.ok(current.window.length <= 12)
+      for (const item of current.window) for (const frame of item.frames) {
+        if (initialSlots.has(frame.part.sourceIndex)) {
+          assert.equal(frame.slotId, initialSlots.get(frame.part.sourceIndex))
+        }
+      }
+    }
+    const uniqueLoads = new Set(calls.load.map(call => call[0]))
+    assert.equal(calls.load.length, uniqueLoads.size, 'a reverse swipe must not reload an already leased edge')
+    for (let index = start + 2; index < start + 12; index++) {
+      const before = session.snapshot()
+      session.selectDisplay(index, before.topologyRevision, before.navigationRevision)
+      await tick()
+      assert.ok(session.snapshot().window.length <= 12, 'forward travel must release older edges')
+    }
+    assert.ok(calls.release.length > 0)
+    session.setNeighborPreload(false)
+    assert.equal(session.snapshot().window.length, 1)
+    session.close()
+    assert.equal(calls.release.length, calls.load.length)
+  }
+})

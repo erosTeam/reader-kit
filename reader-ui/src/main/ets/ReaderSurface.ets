@@ -259,6 +259,7 @@ export struct ReaderSurface {
     // commitChromeVisible.
     this.activitySink?.chromeChanged(this.chromeVisible)
     this.session.setNeighborPreload(true)
+    this.session.setPagedPreloadDepth(this.preloadDepth)
     this.session.setPreloadDepth(this.preloadDepth)
     this.appliedCropSourceRevision = this.cropPolicy?.sourceRevision ?? ''
     this.session.setCropEnabled(this.cropPolicy?.enabled ?? false)
@@ -290,7 +291,10 @@ export struct ReaderSurface {
   }
 
   @Monitor('preloadDepth')
-  onPreloadDepthChanged(): void { this.session.setPreloadDepth(this.preloadDepth) }
+  onPreloadDepthChanged(): void {
+    this.session.setPagedPreloadDepth(this.preloadDepth)
+    this.session.setPreloadDepth(this.preloadDepth)
+  }
 
   @Monitor('chromeRepublishToken')
   onChromeRepublishTokenChanged(): void {

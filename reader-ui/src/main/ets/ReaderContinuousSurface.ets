@@ -469,7 +469,7 @@ struct ReaderContinuousList {
           .zIndex(this.lockedKey === key ? 1 : 0)
       }, (key: string): string => readerElementKey(key))
     }
-    .width('100%').height('100%').cachedCount(1)
+    .width('100%').height('100%').cachedCount(this.snapshot.nativeCacheDepth)
     .scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
     .enableScrollInteraction(this.active && this.snapshot.phase === 'ready' && !this.pendingPosition && this.lockedKey.length === 0)
     .id('rkit-continuous-list')
