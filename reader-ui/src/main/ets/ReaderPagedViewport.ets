@@ -39,6 +39,12 @@ function rotatedFrame(frame: ReaderPagedFrame, policy: ReaderDisplayPolicy): boo
 
 /** Entry eligibility only; ordinary image layout keeps its existing fallback. */
 export class ReaderEntryGeometryGate {
+  static sameRect(a: ReaderEntryRect, b: ReaderEntryRect, tolerance: number): boolean {
+    return a.valid() && b.valid() && Number.isFinite(tolerance) && tolerance >= 0 &&
+      Math.abs(a.x - b.x) <= tolerance && Math.abs(a.y - b.y) <= tolerance &&
+      Math.abs(a.width - b.width) <= tolerance && Math.abs(a.height - b.height) <= tolerance
+  }
+
   static dimensions(width: number, height: number): 'invalid' | 'unknown' | 'ready' {
     if (!Number.isFinite(width) || !Number.isFinite(height) || width < 0 || height < 0) return 'invalid'
     return width === 0 || height === 0 ? 'unknown' : 'ready'
@@ -957,7 +963,7 @@ export struct ReaderPagedImage {
         }
       }
       const viewport = context.getComponentUtils().getRectangleById(position === null ? 'rkit-image-viewport' : 'rkit-continuous-list')
-      const rect = new ReaderEntryRect(context.px2vp(leaf.windowOffset.x), context.px2vp(leaf.windowOffset.y),
+      let rect = new ReaderEntryRect(context.px2vp(leaf.windowOffset.x), context.px2vp(leaf.windowOffset.y),
         context.px2vp(leaf.size.width), context.px2vp(leaf.size.height))
       if (!rect.valid()) return
       // Parent/child area callbacks have no guaranteed order. Wait until this
@@ -994,8 +1000,11 @@ export struct ReaderPagedImage {
       const inheritedRect = this.entryMeasurement?.entryId === transition.entryId ?
         this.entryMeasurement.contentRect : null
       const priorRect = previous?.contentRect ?? this.measuredEntryRect ?? inheritedRect
-      const moved = priorRect !== null && (priorRect.x !== rect.x || priorRect.y !== rect.y ||
-        priorRect.width !== rect.width || priorRect.height !== rect.height)
+      // Preview metadata and decoded dimensions can differ by native pixel rounding.
+      // Keep the already-owned endpoint within the same one-pixel measurement
+      // tolerance used above; real movement must still cancel the flight.
+      const moved = priorRect !== null && !ReaderEntryGeometryGate.sameRect(priorRect, rect, context.px2vp(1) + 0.000001)
+      if (priorRect !== null && !moved) rect = priorRect.copy()
       const oldClip = previous?.clipRect ?? null
       const clipChanged = previous !== null && ((oldClip === null) !== (target.clipRect === null) ||
         (oldClip !== null && target.clipRect !== null &&

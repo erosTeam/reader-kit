@@ -225,3 +225,12 @@ test('real session presentation refines zero metadata without changing navigatio
   assert.ok(observed.every(snapshot => !gate.cancel(snapshot.frames, 'layout')))
   session.close()
 })
+
+test('entry rectangle identity tolerates one physical pixel, not real movement or invalid geometry', () => {
+  const a = new entry.ReaderEntryRect(192.30769230769232,288,195.28739107572116,260.7086838942308)
+  const b = new entry.ReaderEntryRect(192.30769230769232,288.3076923076923,195.30994591346155,260.41323617788464)
+  assert.equal(gate.sameRect(a,b,1/3.25 + .000001), true)
+  b.y += .01; assert.equal(gate.sameRect(a,b,1/3.25 + .000001), false)
+  assert.equal(gate.sameRect(a,new entry.ReaderEntryRect(),1), false)
+  assert.equal(gate.sameRect(a,a,NaN), false)
+})

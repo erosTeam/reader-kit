@@ -199,3 +199,16 @@ test('continuous original uses attested whole-page preview geometry until native
   f.state.cropForPage = () => ({ left: 0.1, top: 0, right: 0, bottom: 0 })
   assert.equal(f.list.imageAspectRatio(page.sourceIndex), 0.75)
 })
+
+test('native pixel rounding retains the committed target while later real movement still cancels', () => {
+  const f = imageFixture(); f.image.publishEntryTarget(); f.callbacks.shift()()
+  const original = f.transition.target.contentRect.copy()
+  f.transition.phase = 'waiting'
+  f.rectangles.image.windowOffset.y += 1; f.rectangles.content.windowOffset.y += 1
+  f.image.publishEntryTarget(); f.callbacks.shift()()
+  assert.equal(f.transition.phase, 'waiting')
+  assert.equal(f.transition.target.contentRect.y, original.y)
+  f.rectangles.image.windowOffset.y += .1; f.rectangles.content.windowOffset.y += .1
+  f.image.publishEntryTarget(); f.callbacks.shift()()
+  assert.equal(f.transition.phase, 'cancelled')
+})
