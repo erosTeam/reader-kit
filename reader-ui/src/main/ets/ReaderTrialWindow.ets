@@ -1,3 +1,4 @@
+import { ReaderSystemBarController } from './ReaderSystemBarController'
 import { common } from '@kit.AbilityKit'
 import { window } from '@kit.ArkUI'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
@@ -15,32 +16,20 @@ export function readerEntryStatusBarStyle(entry: ReaderEntryTransition | null, r
     ? readerContentColor : sourceContentColor }
 }
 
-/** Host queue owns ordering; the shared writer owns entry admission at dispatch. */
+/** Compatibility entrypoint; all callers use the same ordered shared controller. */
 export async function applyReaderStatusBar(context: common.UIAbilityContext, visible: boolean,
   properties: window.SystemBarProperties, entry: () => ReaderEntryTransition | null,
   rootPresentationSettled: () => boolean, isCurrent: () => boolean, restoringSource: boolean = false): Promise<void> {
-  const admitted = (): boolean => isCurrent() && readerEntryWindowReady(entry(), rootPresentationSettled())
-  if (!admitted()) return
-  const win = await window.getLastWindow(context)
-  if (!admitted()) return
-  if (visible || restoringSource) await win.setWindowSystemBarProperties(properties)
-  if (!admitted()) return
-  await writeReaderSystemBarVisibility(win, restoringSource ? readerSourceStatusBarVisible() : visible,
-    !restoringSource, admitted)
+  const controller = new ReaderSystemBarController(
+    (): Promise<window.Window> => window.getLastWindow(context),
+    (): boolean => readerEntryWindowReady(entry(), rootPresentationSettled()),
+    (win: window.Window, statusVisible: boolean, restoring: boolean, current: () => boolean): Promise<void> =>
+      writeReaderSystemBarVisibility(win, statusVisible, !restoring, current))
+  await controller.request(restoringSource ? readerSourceStatusBarVisible() : visible,
+    properties, isCurrent, restoringSource)
 }
 
-export type ReaderTrialCloseSystemAvoidAreaResult = 'pending' | 'not-required' | 'already-visible' | 'ready' | 'failed'
-
-@ObservedV2
-class ReaderStatusVisibilityRequest {
-  @Trace visible: boolean
-  isCurrent: () => boolean
-
-  constructor(visible: boolean, isCurrent: () => boolean) {
-    this.visible = visible
-    this.isCurrent = isCurrent
-  }
-}
+export type ReaderTrialCloseSystemAvoidAreaResult = 'pending' | 'not-required' | 'already-visible' | 'source-area-unchanged' | 'ready' | 'failed'
 
 /** Optional host-owned window lease, separate from the reader surface/session.
  * Restore exactly the pre-trial colors, including if close races window lookup.
@@ -49,6 +38,7 @@ class ReaderStatusVisibilityRequest {
  */
 export class ReaderTrialWindow {
   private static operations: Promise<void> = Promise.resolve()
+  readonly presentation: ReaderSystemBarController
   private started: boolean = false
   private closed: boolean = false
   private mainWindow: window.Window | null = null
@@ -64,8 +54,12 @@ export class ReaderTrialWindow {
   private async restoreStatus(visible: boolean, restoring: boolean = true, isCurrent: () => boolean = (): boolean => true): Promise<void> {
     const win = this.mainWindow
     if (win === null) return
+    let sourceAreaUnchanged: boolean = false
     const visibleTop = (): boolean => {
-      return (win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM).topRect.height > 0) === visible
+      const top = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM).topRect.height
+      sourceAreaUnchanged = restoring && visible && top === 0 &&
+        this.presentation.sourceAllowsEmptyStatusArea(win, visible)
+      return (top > 0) === visible || sourceAreaUnchanged
     }
     let alreadyVisible: boolean = false
     try { alreadyVisible = visibleTop() } catch (error) {
@@ -75,7 +69,8 @@ export class ReaderTrialWindow {
     }
     if (alreadyVisible) {
       await this.writeStatusVisible(visible, restoring, isCurrent)
-      if (restoring) this.closeSystemAvoidAreaResult = visible ? 'already-visible' : 'ready'
+      if (restoring) this.closeSystemAvoidAreaResult = sourceAreaUnchanged ? 'source-area-unchanged' :
+        visible ? 'already-visible' : 'ready'
       return
     }
     await new Promise<void>((resolve: () => void, reject: (error: Error) => void): void => {
@@ -89,7 +84,7 @@ export class ReaderTrialWindow {
         settled = true
         if (timer >= 0) clearTimeout(timer)
         try { win.off('avoidAreaChange', changed) } catch (_) {}
-        if (restoring) this.closeSystemAvoidAreaResult = ready ? 'ready' : 'failed'
+        if (restoring) this.closeSystemAvoidAreaResult = ready ? (sourceAreaUnchanged ? 'source-area-unchanged' : 'ready') : 'failed'
         this.observe(`${restoring ? 'close' : 'prepare'}_system_avoid_area_${ready ? 'ready' : 'failed'} ${message}`)
         if (ready) resolve()
         else if (setterCompleted) reject(new Error(message))
@@ -138,8 +133,6 @@ export class ReaderTrialWindow {
 
   private observer: ((event: string) => void) | null = null
   private restoreStatusVisible: boolean | (() => boolean) | null
-  private desiredStatus: ReaderStatusVisibilityRequest = new ReaderStatusVisibilityRequest(true,
-    (): boolean => this.canPresent())
   private entry: () => ReaderEntryTransition | null
   private rootPresentationSettled: () => boolean
 
@@ -148,29 +141,7 @@ export class ReaderTrialWindow {
   }
 
   /** Navigation colors consume the same intent as the serialized Window writer. */
-  statusBarVisible(): boolean { return this.desiredStatus.visible }
-
-  /** System top-area readiness only; callers must separately await their layout. */
-  async prepareStatusBarVisible(isCurrent: () => boolean): Promise<boolean> {
-    if (!isCurrent() || !this.canPresent() || this.restoreStatusVisible === null || !this.started || this.mainWindow === null) return false
-    let ready: boolean = false
-    await ReaderTrialWindow.enqueue(async (): Promise<void> => {
-      if (!isCurrent() || !this.canPresent() || this.mainWindow === null) return
-      this.desiredStatus.isCurrent = isCurrent
-      this.desiredStatus.visible = true
-      this.observe('prepare_system_avoid_area_requested')
-      try {
-        await this.mainWindow.setWindowSystemBarProperties({ statusBarContentColor: '#FFFFFFFF' })
-        if (!isCurrent() || !this.canPresent()) return
-        await this.restoreStatus(true, false, isCurrent)
-        ready = isCurrent() && this.canPresent()
-        this.observe(`prepare_status_visibility_completed ready=${ready}`)
-      } catch (error) {
-        this.observe(`prepare_status_visibility_failed ${(error as Error).message}`)
-      }
-    }, 'prepare_status_visibility_failed')
-    return ready
-  }
+  statusBarVisible(): boolean { return this.presentation.visible }
 
   constructor(observer: ((event: string) => void) | null, restoreStatusVisible: boolean | (() => boolean) | null,
     entry: () => ReaderEntryTransition | null, rootPresentationSettled: () => boolean) {
@@ -178,6 +149,10 @@ export class ReaderTrialWindow {
     this.restoreStatusVisible = restoreStatusVisible
     this.entry = entry
     this.rootPresentationSettled = rootPresentationSettled
+    this.presentation = new ReaderSystemBarController(async (): Promise<window.Window | null> => this.mainWindow,
+      (): boolean => this.started && this.canPresent(),
+      (win: window.Window, visible: boolean, restoring: boolean, current: () => boolean): Promise<void> =>
+        writeReaderSystemBarVisibility(win, visible, !restoring, current), restoreStatusVisible !== null)
   }
 
   private async writeStatusVisible(visible: boolean, restoring: boolean = false,
@@ -189,16 +164,9 @@ export class ReaderTrialWindow {
     this.observe(`status_visibility_succeeded visible=${visible}`)
   }
 
-  setStatusBarVisible(visible: boolean, isCurrent: () => boolean): void {
-    if (this.closed || !isCurrent()) return
-    this.desiredStatus.isCurrent = isCurrent
-    this.desiredStatus.visible = visible
-    if (this.restoreStatusVisible === null || !this.started) return
-    ReaderTrialWindow.enqueue(async (): Promise<void> => {
-      if (!isCurrent() || !this.canPresent() || this.mainWindow === null) return
-      const request = this.desiredStatus
-      await this.writeStatusVisible(request.visible, false, request.isCurrent)
-    }, 'status_visibility_failed')
+  setStatusBarVisible(visible: boolean, isCurrent: () => boolean = (): boolean => true): void {
+    if (this.closed) return
+    void this.presentation.requestVisible(visible, true, isCurrent)
   }
 
   private observe(event: string): void {
@@ -237,18 +205,12 @@ export class ReaderTrialWindow {
         if (this.closed) { this.started = false; return }
         this.mainWindow = mainWindow
         this.previous = mainWindow.getWindowSystemBarProperties()
+        this.presentation.captureSourceLayout(mainWindow, typeof this.restoreStatusVisible === 'function'
+          ? this.restoreStatusVisible() : this.restoreStatusVisible)
         this.observe(`saved ${JSON.stringify(this.previous)}`)
       }
       if (!this.canPresent()) { this.started = false; return }
-      const mainWindow = this.mainWindow
-      if (this.restoreStatusVisible === null || this.desiredStatus.visible) {
-        await mainWindow.setWindowSystemBarProperties({ statusBarContentColor: '#FFFFFFFF' })
-        console.info('[ReaderTrialWindow] status_content=light')
-      }
-      if (this.canPresent() && this.restoreStatusVisible !== null) {
-        const request = this.desiredStatus
-        await this.writeStatusVisible(request.visible, false, request.isCurrent)
-      }
+      await this.presentation.replay()
     }, 'open_failed')
   }
 
@@ -259,8 +221,10 @@ export class ReaderTrialWindow {
   close(beforeRestoreColors: (() => Promise<boolean>) | null = null): Promise<void> {
     if (this.closing !== null) return this.closing
     this.closed = true
+    const presentationSettled = this.presentation.cancel()
     this.closeSystemAvoidAreaResult = this.restoreStatusVisible !== null ? 'pending' : 'not-required'
     this.closing = ReaderTrialWindow.enqueue(async (): Promise<void> => {
+      await presentationSettled
       if (this.mainWindow !== null && this.previous !== null) {
         let restoreError: Error | null = null
         const restoreVisible: boolean | null = typeof this.restoreStatusVisible === 'function'
