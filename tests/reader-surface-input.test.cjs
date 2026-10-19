@@ -34,7 +34,7 @@ function evaluate(source) {
       assert.fail(`unexpected import: ${name}`)
     },
     ObservedV2: value => value, ComponentV2: value => value,
-    Trace() {}, Param() {}, Require() {}, Event() {}, Local() {}, Computed() {}, BuilderParam() {}, Monitor: () => () => {},
+    Builder() {}, Trace() {}, Param() {}, Require() {}, Event() {}, Local() {}, Computed() {}, BuilderParam() {}, Monitor: () => () => {},
     ImageInterpolation: { Low: 'low', Medium: 'medium', High: 'high' },
     Curve: { FastOutSlowIn: 'curve' },
     Color: { Black: '#000000', White: '#FFFFFF' },

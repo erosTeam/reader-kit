@@ -1,3 +1,4 @@
+import { ReaderModeControlParams } from './ReaderModeControl'
 import { UIUtils } from '@kit.ArkUI'
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy, ReaderLayout,
   ReaderVariantPreference, ReaderPage, ReaderTemporaryVariantScope, ReaderTemporaryVariantOverride,
@@ -110,6 +111,7 @@ export struct ReaderSurface {
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPreview: ReaderEntryPreviewSource | null = null
   @Param contentOpacity: number = 1
+  @BuilderParam modeControl?: (params: ReaderModeControlParams) => void
   @BuilderParam openingPlaceholder: () => void = this.DefaultOpeningPlaceholder
   @Event onClose: (context: ReaderCloseContext | null) => void = () => {}
   /** Raw Image presentation, before core incorporates the measured original geometry. */
@@ -883,6 +885,11 @@ export struct ReaderSurface {
     this.syncAutoRead()
   }
 
+  @Builder
+  private HostModeControl(params: ReaderModeControlParams) {
+    if (this.modeControl !== undefined) this.modeControl(params)
+  }
+
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
       // The canvas and Reader body have distinct transition owners. A host can
@@ -1022,7 +1029,9 @@ export struct ReaderSurface {
           .id('rkit-thumbnail-rail-wrapper')
       }
       if (this.chromeVisible) {
-        ReaderChrome({ snapshot: this.state, active: this.active, topInset: this.topInset,
+        ReaderChrome({ hostModeControlAvailable: this.modeControl !== undefined,
+          modeControl: (params: ReaderModeControlParams): void => { this.HostModeControl(params) },
+          snapshot: this.state, active: this.active, topInset: this.topInset,
           bottomInset: this.bottomInset, accent: this.accent, onClose: (): void => this.requestClose(),
           thumbnailsVisible: this.thumbnailsVisible,
           chapterNavigationAvailable: this.chapterNavigation !== null,

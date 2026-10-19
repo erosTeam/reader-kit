@@ -1,3 +1,4 @@
+import { ReaderModeControlParams } from './ReaderModeControl'
 import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPolicy, ReaderUnitKey,
   ReaderImageSaveChoice, ReaderImageSaveTarget } from '@reader-kit/core'
 import { uiMaterial } from '@kit.ArkUI'
@@ -7,12 +8,14 @@ import { ReaderHostAction } from './ReaderHostAction'
 import { readerElementKey } from './ReaderElementKey'
 import { ReaderEnhancementStatus } from './ReaderEnhancementStatus'
 
-export type ReaderRuntimePolicyIntent = 'layout' | 'direction' | 'spread_layout' |
+export type ReaderRuntimePolicyIntent = 'layout' | 'direction' | 'reading_mode' | 'spread_layout' |
   'first_page_alone' | 'split_wide_pages'
 
 /** Default overlay chrome. It emits intentions; it never opens a catalog or writes preferences. */
 @ComponentV2
 export struct ReaderChrome {
+  @Param hostModeControlAvailable: boolean = false
+  @BuilderParam modeControl: (params: ReaderModeControlParams) => void = this.EmptyModeControl
   @Require @Param snapshot: ReaderPagedSnapshot
   @Param active: boolean = true
   @Param topInset: number = 0
@@ -143,6 +146,9 @@ export struct ReaderChrome {
     policy.pagingAxis = axis
     this.onPolicy(policy, 'layout')
   }
+
+  @Builder
+  private EmptyModeControl(_params: ReaderModeControlParams) {}
 
   private toggleSpreadLayout(): void {
     const policy = this.snapshot.policy.copy()
@@ -643,17 +649,26 @@ export struct ReaderChrome {
             .enabled(this.active && this.snapshot.phase === 'ready' && this.snapshot.policy.layout !== 'continuous')
             .id('rkit-toggle-spread').accessibilityText($r('app.string.rkit_spread'))
             .onClick((): void => { this.setLayout(this.snapshot.policy.layout === 'spread' ? 'single' : 'spread') })
-          Button({ type: ButtonType.Circle }) {
-            SymbolGlyph(this.snapshot.policy.layout === 'continuous' || this.snapshot.policy.pagingAxis === 'vertical' ?
-              $r('sys.symbol.scroll_vertical') :
-              this.snapshot.policy.direction === 'rtl' ? $r('sys.symbol.arrow_left_and_square') : $r('sys.symbol.arrow_right_and_square')).fontSize(22).fontColor([Color.White])
-          }.width(44).height(44).backgroundColor(Color.Transparent)
-            .enabled(this.active && this.snapshot.phase === 'ready')
-            .id('rkit-reading-mode').accessibilityText($r('app.string.rkit_runtime_settings'))
-            .bindMenu(this.RuntimeMenu, {
-              aboutToAppear: (): void => { this.onMenuVisible(true) },
-              onDisappear: (): void => { this.onMenuVisible(false) },
+          if (this.hostModeControlAvailable) {
+            this.modeControl({ policy: this.snapshot.policy, enabled: this.active && this.snapshot.phase === 'ready',
+              onChange: (policy: ReaderDisplayPolicy): void => {
+                if (this.active && this.snapshot.phase === 'ready') this.onPolicy(policy, 'reading_mode')
+              },
+              onMenuVisible: this.onMenuVisible,
             })
+          } else {
+            Button({ type: ButtonType.Circle }) {
+              SymbolGlyph(this.snapshot.policy.layout === 'continuous' || this.snapshot.policy.pagingAxis === 'vertical' ?
+                $r('sys.symbol.scroll_vertical') :
+                this.snapshot.policy.direction === 'rtl' ? $r('sys.symbol.arrow_left_and_square') : $r('sys.symbol.arrow_right_and_square')).fontSize(22).fontColor([Color.White])
+            }.width(44).height(44).backgroundColor(Color.Transparent)
+              .enabled(this.active && this.snapshot.phase === 'ready')
+              .id('rkit-reading-mode').accessibilityText($r('app.string.rkit_runtime_settings'))
+              .bindMenu(this.RuntimeMenu, {
+                aboutToAppear: (): void => { this.onMenuVisible(true) },
+                onDisappear: (): void => { this.onMenuVisible(false) },
+              })
+          }
         }.width('100%').alignItems(VerticalAlign.Center)
       }.width('100%').height(this.bottomInset + 112)
         .padding({ left: 16, right: 16, top: 8, bottom: this.bottomInset + 8 })

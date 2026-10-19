@@ -30,6 +30,7 @@ export { ReaderSystemImageSaveHost } from './src/main/ets/ReaderSystemImageSaveH
 export { ReaderFileInformation } from './src/main/ets/ReaderFileInformation'
 export { ReaderFileCropSource } from './src/main/ets/ReaderFileCropSource'
 export { ReaderChrome, ReaderRuntimePolicyIntent } from './src/main/ets/ReaderChrome'
+export { ReaderModeControlParams } from './src/main/ets/ReaderModeControl'
 export { ReaderEnhancementStatus } from './src/main/ets/ReaderEnhancementStatus'
 export { ReaderTrialWindow } from './src/main/ets/ReaderTrialWindow'
 export { ReaderKeepScreenOn } from './src/main/ets/ReaderKeepScreenOn'
