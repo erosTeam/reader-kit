@@ -45,6 +45,7 @@ export class ReaderRootEntryHandoff {
     if (!reverseProxy()) return false
     this.reverseRequested = true
     // Fence late forward arrival/reveal callbacks at their existing phase checks.
+    entry?.releaseNeighbor()
     entry?.cancel()
     return true
   }
@@ -63,9 +64,11 @@ export class ReaderRootEntryHandoff {
         host.startOpening(null)
         return
       }
+      entry.holdNeighborUntilArrival()
       entry.beginMove()
       host.startOpening((): void => {
-        if (this.entryId === entry.entryId && !this.reverseRequested && entry.phase === 'moving') entry.arrived()
+        if (this.entryId === entry.entryId && !this.reverseRequested &&
+          (entry.phase === 'moving' || entry.phase === 'cancelled')) entry.arrived()
       })
       return
     }

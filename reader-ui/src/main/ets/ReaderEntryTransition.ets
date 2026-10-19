@@ -65,6 +65,7 @@ export class ReaderEntryTransition {
   @Trace phase: ReaderEntryPhase = 'layout'
   @Trace selectedOpacity: number = 0
   @Trace neighborOpacity: number = 0
+  private neighborArrivalPending: boolean = false
   private navigation: number = -1
   private selection: number = -1
   private topology: number = -1
@@ -138,7 +139,12 @@ export class ReaderEntryTransition {
       console.info(`[ReaderEntry] id=${this.entryId} phase=moving source=${this.requestedPart.sourceIndex}`)
     }
   }
+  /** A retained host flight can outlive cancellation of its image handoff. */
+  holdNeighborUntilArrival(): void { this.neighborArrivalPending = true }
+  releaseNeighbor(): void { this.neighborArrivalPending = false; this.neighborOpacity = 1 }
+
   arrived(): void {
+    if (this.neighborArrivalPending) this.releaseNeighbor()
     if (this.phase === 'moving') {
       this.phase = 'waiting'; this.neighborOpacity = 1
       console.info(`[ReaderEntry] id=${this.entryId} phase=waiting`)
@@ -159,6 +165,7 @@ export class ReaderEntryTransition {
   cancel(): void {
     if (!this.pending()) return
     console.info(`[ReaderEntry] id=${this.entryId} cancelled_from=${this.phase}`)
-    this.phase = 'cancelled'; this.selectedOpacity = 1; this.neighborOpacity = 1
+    this.phase = 'cancelled'; this.selectedOpacity = 1
+    if (!this.neighborArrivalPending) this.neighborOpacity = 1
   }
 }
