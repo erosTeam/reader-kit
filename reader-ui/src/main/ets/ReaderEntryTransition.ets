@@ -89,6 +89,43 @@ export class ReaderEntryTransition {
       (this.requestedPart.pageKey === null || part.pageKey === this.requestedPart.pageKey)
   }
 
+  /** Exact decoder evidence for entry geometry; not the image placeholder's lifetime. */
+  hasDecodedFrame(frame: ReaderPagedFrame): boolean {
+    const target = this.target
+    return target !== null && target.decodedReady && !target.failed && this.matches(frame.part) &&
+      target.slotId === frame.slotId && target.requestId === frame.asset.requestId &&
+      target.assetRequestId === frame.asset.assetRequestId
+  }
+
+  /** Preview material belongs to this image epoch until its placeholder ends, even if motion stops. */
+  hasLoadingBackdrop(frame: ReaderPagedFrame): boolean {
+    return frame.asset.needsImagePlaceholder() && this.matches(frame.part) &&
+      this.slot === frame.slotId && this.loadRequest === frame.asset.requestId
+  }
+
+  /** Reuse real visible-content evidence after motion ends, without replaying progress. */
+  hasObservedInitialContent(snapshot: ReaderPagedSnapshot): boolean {
+    if (snapshot.navigationRevision !== this.navigation || snapshot.selectionId !== this.selection ||
+      snapshot.topologyRevision !== this.topology) return false
+    const position = snapshot.observedPosition()
+    if (position === null || !position.displayedSourceIndexes.includes(this.requestedPart.sourceIndex)) return false
+    if (snapshot.policy.layout === 'continuous') {
+      return snapshot.window.some((item): boolean => item.index >= snapshot.visibleDisplayStart &&
+        item.index <= snapshot.visibleDisplayEnd && item.frames.some((frame: ReaderPagedFrame): boolean =>
+          this.isObservedInitialFrame(frame)))
+    }
+    return snapshot.frames.some((frame: ReaderPagedFrame): boolean => this.isObservedInitialFrame(frame))
+  }
+
+  private isObservedInitialFrame(frame: ReaderPagedFrame): boolean {
+    const delivered = this.assetRequest === 0 && frame.asset.assetRequestId === this.loadRequest
+    return this.matches(frame.part) && this.slot === frame.slotId && this.loadRequest > 0 &&
+      this.loadRequest === frame.asset.requestId &&
+      (this.assetRequest === frame.asset.assetRequestId || delivered) && frame.asset.kind === 'original' &&
+      frame.asset.phase === 'displayed' && frame.asset.assetRequestId > 0 &&
+      frame.asset.page?.key === frame.part.pageKey
+  }
+
   /** Called by the actual session owner before any child layout/decode callback. */
   update(snapshot: ReaderPagedSnapshot): void {
     if (!this.pending() || snapshot.phase === 'idle' || snapshot.phase === 'catalog') return

@@ -1,3 +1,4 @@
+import { ReaderPagedSnapshot } from '@reader-kit/core'
 import { ReaderEntryTarget, ReaderEntryTransition } from './ReaderEntryTransition'
 
 /**
@@ -17,12 +18,14 @@ export class ReaderRootEntryHandoff {
   private entryId: number = -1
   private flightStarted: boolean = false
   private revealStarted: boolean = false
+  private contentNotified: boolean = false
   private reverseRequested: boolean = false
 
   reset(): void {
     this.entryId = -1
     this.flightStarted = false
     this.revealStarted = false
+    this.contentNotified = false
     this.reverseRequested = false
   }
 
@@ -34,6 +37,7 @@ export class ReaderRootEntryHandoff {
     this.entryId = entry.entryId
     this.flightStarted = false
     this.revealStarted = false
+    this.contentNotified = false
     this.reverseRequested = false
   }
 
@@ -52,9 +56,16 @@ export class ReaderRootEntryHandoff {
 
   /** Start the retained source proxy only after the actual selected part is laid out. */
   sync(entry: ReaderEntryTransition | null, active: boolean, readerContentWaiting: boolean,
-    host: ReaderRootEntryHandoffHost): void {
+    host: ReaderRootEntryHandoffHost, snapshot: ReaderPagedSnapshot | null = null): void {
     if (entry === null || !active || this.reverseRequested) return
     this.observe(entry)
+    if (entry.phase === 'cancelled') {
+      if (!readerContentWaiting || this.contentNotified || snapshot === null ||
+        !entry.hasObservedInitialContent(snapshot)) return
+      this.contentNotified = true
+      host.notifyReaderImageReady(entry.requestedPart.sourceIndex + 1)
+      return
+    }
     const target = entry.target
     if (entry.phase === 'layout') {
       if (target === null || !target.geometryReady || !target.contentRect.valid() || this.flightStarted) return
@@ -81,6 +92,7 @@ export class ReaderRootEntryHandoff {
     }, (): void => {
       if (this.entryId !== entry.entryId || this.reverseRequested || entry.phase !== 'revealing') return
       entry.finish()
+      this.contentNotified = true
       host.notifyReaderImageReady(target.part.sourceIndex + 1)
     })
   }

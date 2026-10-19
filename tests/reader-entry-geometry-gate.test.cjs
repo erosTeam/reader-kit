@@ -234,3 +234,120 @@ test('entry rectangle identity tolerates one physical pixel, not real movement o
   assert.equal(gate.sameRect(a,new entry.ReaderEntryRect(),1), false)
   assert.equal(gate.sameRect(a,a,NaN), false)
 })
+
+async function observedInitialEntry(layout = 'single') {
+  const unit = new core.ReaderUnitKey('eh', 'observed', 'observed')
+  const catalog = {
+    async open(key) { return new core.ReaderUnit(key, 'observed', 2) },
+    async page(value, index) { return new core.ReaderPage(value.key, `page-${index}`, index) },
+    adjacent() { return null },
+  }
+  const assets = { cancellationMode: 'consumer-only', async load(page) { return new core.ReaderAsset(`file:${page.key}`) } }
+  const session = new core.ReaderPagedSession(catalog, assets)
+  session.setViewportActive(true)
+  const policy = new core.ReaderDisplayPolicy(); policy.layout = layout
+  session.setPolicy(policy)
+  await session.open(unit)
+  await new Promise(resolve => setImmediate(resolve))
+  let state = session.snapshot()
+  const transition = new entry.ReaderEntryTransition(1, state.frames[0].part)
+  transition.update(state)
+  const frame = state.frames[0]
+  session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true, 600, 900)
+  state = session.snapshot(); transition.update(state)
+  assert.equal(transition.hasObservedInitialContent(state), false, 'decode alone is not native visibility')
+  if (layout === 'continuous') {
+    session.setContinuousRange(0, 0, state.topologyRevision, state.navigationRevision)
+    state = session.snapshot()
+    assert.equal(session.reportContinuousVisible(state.topologyRevision, state.navigationRevision,
+      state.displayKeys[0], frame.slotId, frame.asset.assetRequestId, 0.5, 0.5), true)
+  } else {
+    assert.equal(session.reportVisible(state.selectionId, frame.slotId, frame.asset.assetRequestId, frame.part.fragment), true)
+  }
+  state = session.snapshot(); transition.update(state)
+  assert.ok(state.observedPosition())
+  return { session, state, transition }
+}
+
+function cancelledHost(events) {
+  return {
+    authorizeDeparture: () => { throw new Error('cancelled motion cannot authorize another flight') },
+    setOpeningTarget: () => { throw new Error('cancelled motion cannot invent new geometry') },
+    startOpening: () => { events.push('opening') },
+    revealOriginal: () => { throw new Error('cancelled motion cannot start a new reveal') },
+    notifyReaderImageReady: page => { events.push(`ready:${page}`) },
+  }
+}
+
+test('real observed-before-cancel content completes only after root flight and only once', async () => {
+  for (const layout of ['single', 'continuous']) {
+    const { session, state, transition } = await observedInitialEntry(layout)
+    transition.cancel()
+    const controller = new handoff.ReaderRootEntryHandoff()
+    const events = []; const host = cancelledHost(events)
+    controller.startCancelledFlight(transition, true, host)
+    controller.sync(transition, true, false, host, state)
+    controller.sync(transition, false, true, host, state)
+    assert.deepEqual(events, ['opening'])
+    controller.sync(transition, true, true, host, state)
+    controller.sync(transition, true, true, host, state)
+    controller.startCancelledFlight(transition, true, host)
+    assert.deepEqual(events, ['opening', 'ready:1'])
+    session.close()
+  }
+})
+
+test('cancelled readiness rejects stale identity, retired requests and nonvisible continuous content', async () => {
+  const changes = [s => { s.navigationRevision++ }, s => { s.selectionId++ }, s => { s.topologyRevision++ },
+    s => { s.observedAnchor = null }, s => { s.unit = new core.ReaderUnit(new core.ReaderUnitKey('other', 'work', 'unit'), 'other', 2) },
+    s => { s.frames[0].slotId++ }, s => { s.frames[0].asset.requestId++ },
+    s => { s.frames[0].asset.assetRequestId++ }, s => { s.frames[0].asset.assetRequestId = 0 },
+    s => { s.frames[0].asset.phase = 'decoding' }, s => { s.frames[0].asset.kind = 'thumbnail' }]
+  for (const change of changes) {
+    const { session, state, transition } = await observedInitialEntry()
+    transition.cancel(); change(state)
+    const events = []; const controller = new handoff.ReaderRootEntryHandoff()
+    controller.sync(transition, true, true, cancelledHost(events), state)
+    assert.deepEqual(events, [])
+    session.close()
+  }
+  const { session, state, transition } = await observedInitialEntry('continuous')
+  transition.cancel(); state.visibleDisplayStart = 1; state.visibleDisplayEnd = 1
+  assert.equal(transition.hasObservedInitialContent(state), false, 'selected/prefetched pixels do not prove visibility')
+  session.close()
+})
+
+test('cancellation during reveal consumes actual observed content but fences late animation completion', async () => {
+  const { session, state, transition } = await observedInitialEntry()
+  const target = new entry.ReaderEntryTarget(state.frames[0].part)
+  target.selectionId = state.selectionId; target.topologyRevision = state.topologyRevision
+  target.navigationRevision = state.navigationRevision; target.slotId = state.frames[0].slotId
+  target.requestId = state.frames[0].asset.requestId; target.assetRequestId = state.frames[0].asset.assetRequestId
+  target.geometryReady = true; target.decodedReady = true
+  target.contentRect = new entry.ReaderEntryRect(10, 20, 200, 300)
+  transition.publishTarget(target)
+  let arrive; let commit; let finish; const events = []
+  const host = { authorizeDeparture: () => true, setOpeningTarget: () => true,
+    startOpening: value => { arrive = value; events.push('opening') },
+    revealOriginal: (value, callback) => { commit = value; finish = callback; events.push('reveal') },
+    notifyReaderImageReady: page => { events.push(`ready:${page}`) } }
+  const controller = new handoff.ReaderRootEntryHandoff()
+  controller.sync(transition, true, false, host, state); arrive()
+  controller.sync(transition, true, true, host, state); commit()
+  transition.cancel()
+  controller.sync(transition, true, true, host, state); finish()
+  controller.sync(transition, true, true, host, state)
+  assert.equal(transition.phase, 'cancelled')
+  assert.deepEqual(events, ['opening', 'reveal', 'ready:1'])
+  session.close()
+})
+
+test('Back fences cancelled readiness even when exact original content was already observed', async () => {
+  const { session, state, transition } = await observedInitialEntry('continuous')
+  const controller = new handoff.ReaderRootEntryHandoff(); const events = []
+  assert.equal(controller.requestReverse(transition, true, () => true), true)
+  controller.sync(transition, true, true, cancelledHost(events), state)
+  controller.startCancelledFlight(transition, true, cancelledHost(events))
+  assert.deepEqual(events, [])
+  session.close()
+})
