@@ -4,6 +4,7 @@ import { ReaderTapSequence } from './ReaderTapSequence'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
+import { readerRetainedFrame } from './ReaderRetainedFrame'
 
 /** Image interaction only. The parent List owns scrolling, stacking and visible-position reporting. */
 @ComponentV2
@@ -26,6 +27,7 @@ export struct ReaderContinuousZoomImage {
   @Event onFailed: (slot: number, request: number, fragment: ReaderFragment) => void = () => {}
   @Local private imageTransform: ReaderViewportTransform = new ReaderViewportTransform()
   @Local private animating: boolean = false
+  @Local private retainedFrameValue: ReaderPagedFrame | null = null
   private componentWidth: number = 1
   private componentHeight: number = 1
   private measuredImageHeight: number = 1
@@ -56,6 +58,7 @@ export struct ReaderContinuousZoomImage {
 
   @Monitor('frame', 'navigation', 'active', 'interactionAllowed', 'rotateClockwise')
   onContentChanged(): void {
+    this.retainedFrameValue = readerRetainedFrame(this.frame, this.retainedFrameValue)
     const identity = `${this.navigation}:${this.frame.slotId}:${this.frame.asset.assetRequestId}:${this.rotateClockwise}`
     if (identity !== this.identity || this.frame.asset.phase !== 'displayed') {
       if (this.identity.length > 0) this.onLock(this.identity, false)
@@ -85,6 +88,7 @@ export struct ReaderContinuousZoomImage {
   private canTap(): boolean {
     return this.active && this.interactionAllowed && this.componentWidth > 1
   }
+  private presentedFrame(): ReaderPagedFrame { return this.retainedFrameValue ?? this.frame }
 
   private canInteract(): boolean {
     return this.active && this.interactionAllowed && this.frame.asset.phase === 'displayed' && this.componentWidth > 1
@@ -214,20 +218,44 @@ export struct ReaderContinuousZoomImage {
     Stack() {
       ReaderPagedImage({
         imageInterpolation: this.imageInterpolation,
-        frame: this.frame, slotId: this.frame.slotId, assetRequestId: this.frame.asset.assetRequestId,
+        frame: this.presentedFrame(), slotId: this.frame.slotId, assetRequestId: this.presentedFrame().asset.assetRequestId,
         selectionId: 0, renderedFragment: this.frame.part.fragment, active: false,
         rotateClockwise: this.rotateClockwise,
-        entryTransition: this.entryTransition, continuousEntry: this.entryPosition,
-        onDecodedOriginal: this.onDecodedOriginal,
-        onPresented: this.onPresented,
+        entryTransition: this.retainedFrameValue === null ? this.entryTransition : null, continuousEntry: this.entryPosition,
+        onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
+          if (this.retainedFrameValue === null) this.onPresented(slot, request, success, width, height)
+        },
+        onDecodedOriginal: (identity: string): void => {
+          if (this.retainedFrameValue === null) this.onDecodedOriginal(identity)
+        },
         onFailed: (_selection: number, slot: number, request: number, fragment: ReaderFragment): void => {
-          this.onFailed(slot, request, fragment)
+          if (this.retainedFrameValue === null) this.onFailed(slot, request, fragment)
         },
       })
         .width('100%').height('100%')
         .scale({ x: this.imageTransform.scale, y: this.imageTransform.scale })
         .translate({ x: this.imageTransform.x, y: this.imageTransform.y })
         .animation({ duration: this.animating ? 180 : 0, curve: Curve.FastOutSlowIn })
+        .zIndex(this.retainedFrameValue !== null && this.frame.asset.phase === 'decoding' ? 1 : 0)
+      if (this.retainedFrameValue !== null) {
+        ReaderPagedImage({
+          imageInterpolation: this.imageInterpolation,
+          frame: this.frame, slotId: this.frame.slotId, assetRequestId: this.frame.asset.assetRequestId,
+          selectionId: 0, renderedFragment: this.frame.part.fragment, active: false,
+          rotateClockwise: this.rotateClockwise,
+          entryTransition: this.entryTransition, continuousEntry: this.entryPosition,
+          onDecodedOriginal: this.onDecodedOriginal,
+          onPresented: this.onPresented,
+          onFailed: (_selection: number, slot: number, request: number, fragment: ReaderFragment): void => {
+            this.onFailed(slot, request, fragment)
+          },
+        })
+          .width('100%').height('100%')
+          .scale({ x: this.imageTransform.scale, y: this.imageTransform.scale })
+          .translate({ x: this.imageTransform.x, y: this.imageTransform.y })
+          .animation({ duration: this.animating ? 180 : 0, curve: Curve.FastOutSlowIn })
+          .zIndex(this.frame.asset.phase === 'displayed' ? 1 : 0)
+      }
     }
     .width('100%').height('100%')
     .responseRegion(this.interactionRegion())

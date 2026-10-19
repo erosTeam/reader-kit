@@ -10,6 +10,7 @@ import { ReaderTapSequence } from './ReaderTapSequence'
 import { ReaderBoundaryDirection, ReaderBoundarySwipe } from './ReaderBoundarySwipe'
 import { normalizedReaderPageGap } from './ReaderPageGap'
 import { ReaderLoadingStage } from './ReaderLoadingStage'
+import { ReaderImagePlaceholder } from './ReaderImagePlaceholder'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { readerElementKey } from './ReaderElementKey'
 
@@ -636,18 +637,9 @@ struct ReaderContinuousCell {
           })
             .onDisAppear((): void => { this.onRetired(frame.slotId, frame.asset.assetRequestId) })
         }, (frame: ReaderPagedFrame): string =>
-          readerElementKey(`${frame.slotId}:${frame.asset.assetRequestId}`))
-        if (this.loadingVisible()) {
-          ReaderLoadingStage({
-            label: this.snapshot.frames.length === 0 || this.snapshot.frames[0].asset.phase === 'idle'
-              ? $r('app.string.rkit_loading_resolving')
-              : this.snapshot.frames[0].asset.phase === 'decoding'
-                ? $r('app.string.rkit_loading_decoding')
-                  : $r('app.string.rkit_loading_image'),
-            loaded: this.snapshot.frames.length === 0 ? 0 : this.snapshot.frames[0].asset.loadProgressLoaded,
-            total: this.snapshot.frames.length === 0 ? 0 : this.snapshot.frames[0].asset.loadProgressTotal,
-          })
-        }
+          readerElementKey(`${frame.slotId}`))
+        ReaderImagePlaceholder({ frame: this.snapshot.frames[0] ?? null,
+          entryTransition: this.entryTransition }).zIndex(2)
       }.width('100%').aspectRatio(this.imageAspectRatio)
         .id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
     }

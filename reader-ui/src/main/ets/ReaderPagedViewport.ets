@@ -11,6 +11,7 @@ import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { normalizedReaderPageGap } from './ReaderPageGap'
 import { readerElementKey } from './ReaderElementKey'
 import { ReaderLoadingStage } from './ReaderLoadingStage'
+import { ReaderImagePlaceholder } from './ReaderImagePlaceholder'
 
 class ReaderEntryAfterLayout extends FrameCallback {
   private action: () => void
@@ -98,6 +99,10 @@ export class ReaderEntryGeometryGate {
 /** Selected display-item rendering only; no app navigation, settings or progress owner. */
 @ComponentV2
 export struct ReaderPagedViewport {
+  // Cached native items may decode before their own area callback. Use the
+  // current pager constraint for fitting instead of a per-item 1px bootstrap.
+  @Require @Param viewportWidth: number
+  @Require @Param viewportHeight: number
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param pageGap: number = 0
   @Require @Param snapshot: ReaderPagedSnapshot
@@ -114,8 +119,8 @@ export struct ReaderPagedViewport {
   @Event onRetry: (slotId: number, requestId: number) => void = () => {}
   @Event onNoticeAction: (slotId: number, requestId: number, noticeId: string) => Promise<boolean> =
     async (_slotId: number, _requestId: number, _noticeId: string): Promise<boolean> => false
-  @Local private viewportWidth: number = 1
-  @Local private viewportHeight: number = 1
+  private measuredViewportWidth: number = 1
+  private measuredViewportHeight: number = 1
   @Local private entryViewportLaidOut: boolean = false
   @Local private zoomState: ReaderViewportTransform = new ReaderViewportTransform()
   @Local private zoomAnimating: boolean = false
@@ -454,11 +459,11 @@ export struct ReaderPagedViewport {
     .onTouch((event: TouchEvent): void => { this.tapSequence.touch(event) })
     .onAreaChange((_old: Area, area: Area): void => {
       if (this.entryViewportLaidOut && this.entryTransition !== null && this.entryTransition.target !== null &&
-        (this.viewportWidth !== Math.max(1, Number(area.width)) ||
-          this.viewportHeight !== Math.max(1, Number(area.height)))) this.entryTransition.cancel()
+        (this.measuredViewportWidth !== Math.max(1, Number(area.width)) ||
+          this.measuredViewportHeight !== Math.max(1, Number(area.height)))) this.entryTransition.cancel()
       this.cancelGesture()
-      this.viewportWidth = Math.max(1, Number(area.width))
-      this.viewportHeight = Math.max(1, Number(area.height))
+      this.measuredViewportWidth = Math.max(1, Number(area.width))
+      this.measuredViewportHeight = Math.max(1, Number(area.height))
       this.entryViewportLaidOut = true
       this.zoomState = this.zoomState.settled(this.geometry())
     })
@@ -683,18 +688,7 @@ struct ReaderPagedCell {
             .zIndex(this.frame().asset.phase === 'displayed' ? 1 : 0)
         }
       }
-      if ((this.frame().asset.phase === 'idle' || this.frame().asset.phase === 'asset' || this.frame().asset.phase === 'decoding') &&
-        this.retainedFrameValue === null &&
-        !(this.frame().asset.phase === 'decoding' && this.frame().asset.kind === 'original' &&
-          this.decodedOriginalIdentity === this.originalDrawableIdentity())) {
-        ReaderLoadingStage({
-          label: this.frame().asset.phase === 'idle' ? $r('app.string.rkit_loading_resolving')
-            : this.frame().asset.phase === 'decoding' ? $r('app.string.rkit_loading_decoding')
-              : $r('app.string.rkit_loading_image'),
-          loaded: this.frame().asset.loadProgressLoaded,
-          total: this.frame().asset.loadProgressTotal,
-        })
-      }
+      ReaderImagePlaceholder({ frame: this.frame(), entryTransition: this.entryTransition }).zIndex(2)
     }
     .width(this.cellWidth())
     .height(this.frameHeight).clip(true)
