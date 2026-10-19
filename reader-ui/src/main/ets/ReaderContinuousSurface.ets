@@ -532,7 +532,28 @@ struct ReaderContinuousCell {
   @Event onNoticeAction: (slot: number, request: number, noticeId: string) => Promise<boolean> =
     async (_slot: number, _request: number, _noticeId: string): Promise<boolean> => false
   @Local private noticeActionBusy: boolean = false
+  @Local private decodedOriginalIdentity: string = ''
   private terminalTapSequence: ReaderTapSequence = new ReaderTapSequence()
+
+  private originalDrawableIdentity(): string {
+    const frame = this.snapshot.frames[0]
+    if (frame === undefined) return ''
+    return `${frame.slotId}:${frame.asset.assetRequestId}:` +
+      `${frame.part.sourceIndex}:${frame.part.fragment}:${frame.asset.visualRevision}`
+  }
+
+  private originalDecoded(identity: string): void {
+    if (this.snapshot.frames[0]?.asset.kind === 'original' && identity === this.originalDrawableIdentity()) {
+      this.decodedOriginalIdentity = identity
+    }
+  }
+
+  private loadingVisible(): boolean {
+    const asset = this.snapshot.frames[0]?.asset
+    if (asset === undefined || asset.phase === 'idle' || asset.phase === 'asset') return true
+    return asset.phase === 'decoding' && !(asset.kind === 'original' &&
+      this.decodedOriginalIdentity === this.originalDrawableIdentity())
+  }
 
   private terminalTap(event?: GestureEvent): void {
     const location = event?.tapLocation
@@ -603,6 +624,7 @@ struct ReaderContinuousCell {
               onLock: this.onLock,
               onZoomedChange: this.onZoomedChange,
               onTap: this.onTap,
+              onDecodedOriginal: (identity: string): void => { this.originalDecoded(identity) },
               onPresented: this.onPresented,
               onFailed: this.onFailed,
             })
@@ -610,8 +632,7 @@ struct ReaderContinuousCell {
           }
         }, (frame: ReaderPagedFrame): string =>
           readerElementKey(`${frame.slotId}:${frame.asset.assetRequestId}`))
-        if (this.snapshot.frames.length === 0 || this.snapshot.frames[0].asset.phase === 'idle' ||
-          this.snapshot.frames[0].asset.phase === 'asset' || this.snapshot.frames[0].asset.phase === 'decoding') {
+        if (this.loadingVisible()) {
           ReaderLoadingStage({
             label: this.snapshot.frames.length === 0 || this.snapshot.frames[0].asset.phase === 'idle'
               ? $r('app.string.rkit_loading_resolving')

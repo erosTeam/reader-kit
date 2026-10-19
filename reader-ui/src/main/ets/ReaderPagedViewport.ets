@@ -496,6 +496,7 @@ struct ReaderPagedCell {
   @Require @Param frameHeight: number
   @Require @Param active: boolean
   @Local private retainedFrameValue: ReaderPagedFrame | null = null
+  @Local private decodedOriginalIdentity: string = ''
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -504,6 +505,18 @@ struct ReaderPagedCell {
   @Event onNoticeAction: (slotId: number, requestId: number, noticeId: string) => Promise<boolean> =
     async (_slotId: number, _requestId: number, _noticeId: string): Promise<boolean> => false
   @Local private noticeActionBusy: boolean = false
+
+  private originalDrawableIdentity(): string {
+    const frame = this.frame()
+    return `${this.slotId}:${frame.asset.assetRequestId}:` +
+      `${frame.part.sourceIndex}:${this.renderedFragment}:${frame.asset.visualRevision}`
+  }
+
+  private originalDecoded(identity: string): void {
+    if (this.frame().asset.kind === 'original' && identity === this.originalDrawableIdentity()) {
+      this.decodedOriginalIdentity = identity
+    }
+  }
 
   private frame(): ReaderPagedFrame {
     return this.snapshot.frames.find((frame: ReaderPagedFrame) => frame.slotId === this.slotId &&
@@ -612,10 +625,16 @@ struct ReaderPagedCell {
           entryLayoutWidth: this.entryGeometryReady ?
             this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy) : 0,
           entryLayoutHeight: this.entryGeometryReady ? this.imageHeight() : 0,
+          allocatedWidth: this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy),
+          allocatedHeight: this.imageHeight(),
+          geometryAllocationRequired: true,
           slotId: this.slotId, assetRequestId: this.presentedFrame().asset.assetRequestId,
           renderedFragment: this.renderedFragment,
           rotateClockwise: this.rotateClockwise(),
           active: this.retainedFrameValue === null && this.active && this.snapshot.phase === 'ready',
+          onDecodedOriginal: (identity: string): void => {
+            if (this.retainedFrameValue === null) this.originalDecoded(identity)
+          },
           onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number): void => {
             if (this.retainedFrameValue === null) this.onPresented(slotId, requestId, success, width, height)
           },
@@ -643,10 +662,14 @@ struct ReaderPagedCell {
             entryLayoutWidth: this.entryGeometryReady ?
               this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy) : 0,
             entryLayoutHeight: this.entryGeometryReady ? this.imageHeight() : 0,
+            allocatedWidth: this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy),
+            allocatedHeight: this.imageHeight(),
+            geometryAllocationRequired: true,
             slotId: this.slotId, assetRequestId: this.frame().asset.assetRequestId,
             renderedFragment: this.renderedFragment,
             rotateClockwise: this.rotateClockwise(),
             active: this.active && this.snapshot.phase === 'ready',
+            onDecodedOriginal: (identity: string): void => { this.originalDecoded(identity) },
             onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onInvalidDecodedMetrics: this.onInvalidDecodedMetrics,
           }).width(this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy))
@@ -655,7 +678,9 @@ struct ReaderPagedCell {
         }
       }
       if ((this.frame().asset.phase === 'idle' || this.frame().asset.phase === 'asset' || this.frame().asset.phase === 'decoding') &&
-        this.retainedFrameValue === null) {
+        this.retainedFrameValue === null &&
+        !(this.frame().asset.phase === 'decoding' && this.frame().asset.kind === 'original' &&
+          this.decodedOriginalIdentity === this.originalDrawableIdentity())) {
         ReaderLoadingStage({
           label: this.frame().asset.phase === 'idle' ? $r('app.string.rkit_loading_resolving')
             : this.frame().asset.phase === 'decoding' ? $r('app.string.rkit_loading_decoding')
@@ -674,6 +699,8 @@ struct ReaderPagedCell {
 @ComponentV2
 export struct ReaderPagedImage {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
+  @Param quarantineOriginal: boolean = false
+  @Param guardUndecodedOriginal: boolean = false
   @Param continuousEntry: ReaderContinuousEntryPosition | null = null
   @Require @Param frame: ReaderPagedFrame
   @Require @Param slotId: number
@@ -690,7 +717,16 @@ export struct ReaderPagedImage {
   @Param entryPhase: string = 'finished'
   @Param entryLayoutWidth: number = 0
   @Param entryLayoutHeight: number = 0
+  @Param allocatedWidth: number = 0
+  @Param allocatedHeight: number = 0
+  @Param geometryAllocationRequired: boolean = false
+  // Loading feedback follows the actual native decode; stable presentation
+  // remains a separate, post-frame receipt for entry and return ownership.
+  @Event onDecodedOriginal: (identity: string) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
+  @Event onStableNative: (topologyRevision: number, navigationRevision: number, selectionId: number,
+    slotId: number, requestId: number, sourceIndex: number,
+    fragment: ReaderFragment, visualRevision: number, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onInvalidDecodedMetrics: (slotId: number, requestId: number, assetRequestId: number) => void = () => {}
@@ -700,24 +736,132 @@ export struct ReaderPagedImage {
   @Local private sheetHeight: number = 0
   private fullyVisible: boolean = false
   private decoded: boolean = false
+  private decodedRequestId: number = 0
+  @Local private stableNativeIdentity: string = ''
+  @Local private stableDrawableIdentity: string = ''
+  private scheduledNativeIdentity: string = ''
+  private selectedReplayIdentity: string = ''
   private entryContentLaidOut: boolean = false
   private entryLeafLaidOut: boolean = false
   private entryLayoutRevision: number = 0
   private decodedWidth: number = 0
   private decodedHeight: number = 0
+  private decodedGeometryIdentity: string = ''
+  private decodedDrawableIdentity: string = ''
   private scheduledPresentationRequestId: number = 0
+  private scheduledPresentationGeometryIdentity: string = ''
   private entryMounted: boolean = false
   private measuredEntryId: number = -1
   private measuredEntryRect: ReaderEntryRect | null = null
 
-  aboutToAppear(): void { this.entryMounted = true }
+  aboutToAppear(): void {
+    this.entryMounted = true
+    this.scheduleNativeStability()
+  }
   aboutToDisappear(): void { this.entryMounted = false }
 
   @Monitor('active', 'selectionId', 'frame')
-  onSelectionChanged(): void { this.publishEntryTarget(); this.reportVisible() }
+  onSelectionChanged(): void {
+    this.schedulePresentation()
+    this.publishEntryTarget()
+    this.reportVisible()
+    this.scheduleNativeStability()
+    // A cached Swiper neighbor may have completed before the command claim
+    // existed. Re-publish only that same mounted Image's decode when it becomes
+    // the selected native cell; a displayed URI alone cannot create a receipt.
+    const original = this.frame.asset.kind === 'original'
+    const identity = `${this.selectionId}:${this.slotId}:${this.assetRequestId}:` +
+      (original ? this.originalGeometryIdentity() : '')
+    if (!this.active || !this.entryMounted || !this.decoded || this.decodedRequestId !== this.assetRequestId ||
+      (original && (!this.originalGeometryReady() ||
+        this.decodedGeometryIdentity !== this.originalGeometryIdentity())) ||
+      this.frame.asset.phase !== 'displayed' || this.selectedReplayIdentity === identity) return
+    this.selectedReplayIdentity = identity
+    const width = this.decodedWidth
+    const height = this.decodedHeight
+    this.getUIContext().postFrameCallback(new ReaderEntryAfterLayout((): void => {
+      if (this.active && this.entryMounted && this.decoded && this.decodedRequestId === this.assetRequestId &&
+        this.frame.asset.phase === 'displayed' && this.selectedReplayIdentity === identity) {
+        this.onPresented(this.slotId, this.assetRequestId, true, width, height)
+      } else if (this.selectedReplayIdentity === identity) {
+        this.selectedReplayIdentity = ''
+      }
+    }))
+  }
 
   @Monitor('frame', 'entryTransition', 'entryLayoutWidth', 'entryLayoutHeight', 'topologyRevision', 'navigationRevision', 'continuousEntry')
-  onEntryLayoutChanged(): void { this.publishEntryTarget() }
+  onEntryLayoutChanged(): void {
+    this.schedulePresentation()
+    this.publishEntryTarget()
+    this.scheduleNativeStability()
+  }
+
+  private nativeIdentity(): string {
+    return `${this.topologyRevision}:${this.navigationRevision}:${this.selectionId}:` +
+      `${this.slotId}:${this.assetRequestId}:` +
+      `${this.frame.part.sourceIndex}:${this.renderedFragment}:${this.frame.asset.visualRevision}:` +
+      this.originalGeometryIdentity()
+  }
+
+  private drawableIdentity(): string {
+    // Selection changes do not invalidate pixels on a mounted Image. A changed
+    // resource/part/revision does, including the distinct native B child.
+    return `${this.slotId}:${this.assetRequestId}:` +
+      `${this.frame.part.sourceIndex}:${this.renderedFragment}:${this.frame.asset.visualRevision}`
+  }
+
+  private originalGeometryReady(): boolean {
+    // A newly mounted Image otherwise decodes against the initial 1x1 box.
+    // onComplete reports the source dimensions even when the native PixelMap
+    // for that first box is only a few pixels wide.
+    if (!this.entryContentLaidOut || this.viewportWidth <= 1 || this.viewportHeight <= 1) return false
+    if (this.allocatedWidth <= 1 || this.allocatedHeight <= 1) return !this.geometryAllocationRequired
+    return Math.abs(this.viewportWidth - this.allocatedWidth) <= 1 &&
+      Math.abs(this.viewportHeight - this.allocatedHeight) <= 1
+  }
+
+  private originalMountReady(): boolean {
+    // Do not let native decoding start against the constructor's 1x1 fallback.
+    return this.renderWidth() > 1 && this.renderHeight() > 1 &&
+      ((!this.quarantineOriginal && !this.guardUndecodedOriginal) || this.originalGeometryReady())
+  }
+
+  private originalGeometryIdentity(): string {
+    return `${this.drawableIdentity()}:${this.renderWidth()}x${this.renderHeight()}:` +
+      `${this.allocatedWidth}x${this.allocatedHeight}:${this.rotateClockwise}`
+  }
+
+  /** Merge one native decode receipt with the later current displayed metadata. */
+  private scheduleNativeStability(): void {
+    const page = this.frame.asset.page
+    if ((!this.quarantineOriginal && !this.guardUndecodedOriginal) || !this.originalGeometryReady() ||
+      this.decodedGeometryIdentity !== this.originalGeometryIdentity() ||
+      !this.entryMounted || !this.decoded ||
+      this.decodedRequestId !== this.assetRequestId || this.frame.asset.kind !== 'original' ||
+      this.frame.asset.phase !== 'displayed' || this.decodedWidth <= 0 || this.decodedHeight <= 0 ||
+      (this.quarantineOriginal && (page?.width !== this.decodedWidth || page?.height !== this.decodedHeight))) return
+    const identity = this.nativeIdentity()
+    if (this.stableNativeIdentity === identity || this.scheduledNativeIdentity === identity) return
+    this.scheduledNativeIdentity = identity
+    this.getUIContext().postFrameCallback(new ReaderEntryAfterLayout((): void => {
+      if (this.scheduledNativeIdentity !== identity) return
+      this.scheduledNativeIdentity = ''
+      const currentPage = this.frame.asset.page
+      if ((!this.quarantineOriginal && !this.guardUndecodedOriginal) || !this.originalGeometryReady() ||
+        this.decodedGeometryIdentity !== this.originalGeometryIdentity() ||
+        !this.entryMounted || !this.decoded ||
+        this.decodedRequestId !== this.assetRequestId || this.nativeIdentity() !== identity ||
+        this.frame.asset.phase !== 'displayed' ||
+        (this.quarantineOriginal && (currentPage?.width !== this.decodedWidth ||
+          currentPage?.height !== this.decodedHeight))) return
+      this.stableNativeIdentity = identity
+      this.stableDrawableIdentity = this.originalGeometryIdentity()
+      this.onStableNative(this.topologyRevision, this.navigationRevision, this.selectionId,
+        this.slotId, this.assetRequestId, this.frame.part.sourceIndex, this.renderedFragment,
+        this.frame.asset.visualRevision, this.decodedWidth, this.decodedHeight)
+      this.reportVisible()
+    }))
+  }
 
   @Monitor('entryPhase')
   onEntryPhaseChanged(): void { this.reportVisible() }
@@ -889,6 +1033,9 @@ export struct ReaderPagedImage {
 
   private reportVisible(): void {
     if (this.active && this.fullyVisible && this.decoded && this.frame.asset.kind === 'original' &&
+      this.decodedGeometryIdentity === this.originalGeometryIdentity() &&
+      (!(this.guardUndecodedOriginal || this.quarantineOriginal) ||
+        this.stableDrawableIdentity === this.originalGeometryIdentity()) &&
       (this.entryTransition === null || !this.entryTransition.pending())) {
       this.onVisible(this.selectionId, this.slotId, this.assetRequestId, this.renderedFragment)
     }
@@ -904,26 +1051,68 @@ export struct ReaderPagedImage {
       console.info(`[ReaderViewport] sprite_pixels slot=${this.slotId} request=${this.assetRequestId} real=${width}x${height} parsed=${thumbnail.spriteWidth}x${thumbnail.spriteHeight} crop=${thumbnail.width}x${thumbnail.height}`)
     }
     this.decoded = true
+    this.decodedRequestId = this.assetRequestId
     this.decodedWidth = width
     this.decodedHeight = height
+    this.decodedDrawableIdentity = this.drawableIdentity()
+    if (this.entryMounted && this.frame.asset.kind === 'original' &&
+      ReaderEntryGeometryGate.dimensions(width, height) === 'ready') {
+      this.onDecodedOriginal(this.decodedDrawableIdentity)
+    }
+    this.decodedGeometryIdentity = this.originalGeometryReady() ? this.originalGeometryIdentity() : ''
+    this.scheduleNativeStability()
     this.reportInvalidDecodedMetrics()
     this.publishEntryTarget()
+    this.schedulePresentation()
+  }
+
+  /** Revalidate layout on the same decoded native Image; resizing is not a new load. */
+  private schedulePresentation(): void {
+    if (!this.entryMounted || !this.decoded || this.decodedRequestId !== this.assetRequestId ||
+      this.decodedDrawableIdentity !== this.drawableIdentity() ||
+      (this.frame.asset.kind === 'original' && !this.originalGeometryReady())) return
+    const width = this.decodedWidth
+    const height = this.decodedHeight
     const requestId: number = this.assetRequestId
-    if (this.scheduledPresentationRequestId === requestId) return
+    const geometryIdentity = this.originalGeometryIdentity()
+    const drawableIdentity = this.decodedDrawableIdentity
+    if (this.scheduledPresentationRequestId === requestId &&
+      this.scheduledPresentationGeometryIdentity === geometryIdentity) return
     this.scheduledPresentationRequestId = requestId
+    this.scheduledPresentationGeometryIdentity = geometryIdentity
     // onComplete means decoded, not that pixels reached a composed frame. Keep
     // the prior image above this candidate for one frame, then let the session
     // publish displayed and swap the layers only if this leaf is still current.
     this.getUIContext().postFrameCallback(new ReaderEntryAfterLayout((): void => {
-      if (!this.entryMounted || !this.decoded || this.assetRequestId !== requestId ||
-        this.frame.asset.assetRequestId !== requestId) return
+      const rejectMounted = !this.entryMounted
+      const rejectDecoded = !this.decoded
+      const rejectRequest = this.assetRequestId !== requestId || this.frame.asset.assetRequestId !== requestId ||
+        drawableIdentity !== this.drawableIdentity()
+      const rejectGeometry = this.frame.asset.kind === 'original' &&
+        (!this.originalGeometryReady() || geometryIdentity !== this.originalGeometryIdentity())
+      if (rejectMounted || rejectDecoded || rejectRequest || rejectGeometry) {
+        if (this.scheduledPresentationRequestId === requestId &&
+          this.scheduledPresentationGeometryIdentity === geometryIdentity) {
+          this.scheduledPresentationRequestId = 0
+          this.scheduledPresentationGeometryIdentity = ''
+        }
+        if (!rejectMounted && !rejectDecoded && !rejectRequest && rejectGeometry) this.schedulePresentation()
+        return
+      }
+      this.decodedGeometryIdentity = geometryIdentity
       this.onPresented(this.slotId, requestId, true, width, height)
+      this.scheduleNativeStability()
       this.reportVisible()
     }))
   }
 
   private failed(): void {
     this.decoded = false
+    this.decodedRequestId = 0
+    this.decodedGeometryIdentity = ''
+    this.stableNativeIdentity = ''
+    this.stableDrawableIdentity = ''
+    this.scheduledNativeIdentity = ''
     this.publishEntryTarget(true)
     this.onFailed(this.selectionId, this.slotId, this.assetRequestId, this.renderedFragment)
   }
@@ -936,8 +1125,10 @@ export struct ReaderPagedImage {
       : Math.min(this.renderWidth() / thumbnail.width, this.renderHeight() / thumbnail.height)
   }
 
-  private renderWidth(): number { return this.rotateClockwise ? this.viewportHeight : this.viewportWidth }
-  private renderHeight(): number { return this.rotateClockwise ? this.viewportWidth : this.viewportHeight }
+  private paintWidth(): number { return this.allocatedWidth > 1 ? this.allocatedWidth : this.viewportWidth }
+  private paintHeight(): number { return this.allocatedHeight > 1 ? this.allocatedHeight : this.viewportHeight }
+  private renderWidth(): number { return this.rotateClockwise ? this.paintHeight() : this.paintWidth() }
+  private renderHeight(): number { return this.rotateClockwise ? this.paintWidth() : this.paintHeight() }
 
   build() {
     Stack() {
@@ -963,15 +1154,22 @@ export struct ReaderPagedImage {
         .height(this.frame.asset.page.thumbnail.height * this.spriteScale())
         .clip(true)
         .rotate({ angle: this.rotateClockwise ? 90 : 0 })
-      } else if (this.frame.asset.uri.length > 0 && this.frame.asset.kind === 'original' &&
-        (this.frame.part.fragment !== 'whole' || this.frame.crop.applied())) {
+      } else if (this.originalMountReady() && this.frame.asset.uri.length > 0 &&
+        this.frame.asset.kind === 'original') {
+        // Full-page and cropped geometry share one native Image owner.
         Stack({ alignContent: Alignment.TopStart }) {
           Image(this.frame.asset.uri)
+            .opacity((this.quarantineOriginal || this.guardUndecodedOriginal) &&
+              this.stableDrawableIdentity !== this.originalGeometryIdentity() ? 0 : 1)
             .width(this.renderWidth() / this.frame.crop.region(this.frame.part).width)
             .height(this.renderHeight() / this.frame.crop.region(this.frame.part).height)
-            .id(`rkit-cropped-image-${this.frame.part.sourceIndex}-${this.frame.part.fragment}`)
+            .id(this.entryLeafId())
             .interpolation(this.imageInterpolation)
-            .objectFit(ImageFit.Fill)
+            .onAreaChange((): void => {
+              this.entryLeafLaidOut = true
+              this.publishEntryTarget()
+            })
+            .objectFit(this.frame.part.fragment !== 'whole' || this.frame.crop.applied() ? ImageFit.Fill : ImageFit.Contain)
             .position({
               x: -this.renderWidth() * this.frame.crop.region(this.frame.part).x / this.frame.crop.region(this.frame.part).width,
               y: -this.renderHeight() * this.frame.crop.region(this.frame.part).y / this.frame.crop.region(this.frame.part).height,
@@ -983,11 +1181,13 @@ export struct ReaderPagedImage {
         }
         .width(this.renderWidth()).height(this.renderHeight()).clip(true)
         .rotate({ angle: this.rotateClockwise ? 90 : 0 })
-      } else if (this.frame.asset.uri.length > 0) {
+      } else if (this.frame.asset.uri.length > 0 &&
+        (this.frame.asset.kind !== 'original' || this.originalMountReady())) {
         Image(this.frame.asset.uri)
-          // Follow the fitted parent in this layout pass, not its previous area callback.
-          .width(this.rotateClockwise ? this.renderWidth() : '100%')
-          .height(this.rotateClockwise ? this.renderHeight() : '100%')
+          .opacity((this.quarantineOriginal || this.guardUndecodedOriginal) &&
+            this.frame.asset.kind === 'original' &&
+            this.stableDrawableIdentity !== this.originalGeometryIdentity() ? 0 : 1)
+          .width(this.renderWidth()).height(this.renderHeight())
           .interpolation(this.frame.asset.kind === 'original' ? this.imageInterpolation : ImageInterpolation.Low)
           .objectFit(this.thumbnailCover && this.frame.asset.kind === 'thumbnail' ? ImageFit.Cover : ImageFit.Contain)
           .rotate({ angle: this.rotateClockwise ? 90 : 0 })
@@ -1014,7 +1214,9 @@ export struct ReaderPagedImage {
       this.viewportWidth = Math.max(1, Number(area.width))
       this.viewportHeight = Math.max(1, Number(area.height))
       this.entryContentLaidOut = true
+      this.schedulePresentation()
       this.publishEntryTarget()
+      this.scheduleNativeStability()
     })
   }
 }

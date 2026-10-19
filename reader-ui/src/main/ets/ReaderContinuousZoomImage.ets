@@ -21,6 +21,7 @@ export struct ReaderContinuousZoomImage {
   @Event onTap: (windowX: number, windowY: number) => void = () => {}
   @Event onLock: (identity: string, locked: boolean) => void = () => {}
   @Event onZoomedChange: (identity: string, zoomed: boolean) => void = () => {}
+  @Event onDecodedOriginal: (identity: string) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onFailed: (slot: number, request: number, fragment: ReaderFragment) => void = () => {}
   @Local private imageTransform: ReaderViewportTransform = new ReaderViewportTransform()
@@ -213,6 +214,7 @@ export struct ReaderContinuousZoomImage {
         selectionId: 0, renderedFragment: this.frame.part.fragment, active: false,
         rotateClockwise: this.rotateClockwise,
         entryTransition: this.entryTransition, continuousEntry: this.entryPosition,
+        onDecodedOriginal: this.onDecodedOriginal,
         onPresented: this.onPresented,
         onFailed: (_selection: number, slot: number, request: number, fragment: ReaderFragment): void => {
           this.onFailed(slot, request, fragment)
