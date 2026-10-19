@@ -1,3 +1,4 @@
+import { UIUtils } from '@kit.ArkUI'
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy, ReaderLayout,
   ReaderVariantPreference, ReaderPage, ReaderTemporaryVariantScope, ReaderTemporaryVariantOverride,
   ReaderInputPort, ReaderMoveIntent, ReaderImageShareTarget,
@@ -117,6 +118,7 @@ export struct ReaderSurface {
   /** Host-neutral UI activity signals for presentation and pausable processors. */
   @Param activitySink: ReaderActivitySink | null = null
   @Local private state: ReaderPagedSnapshot = new ReaderPagedSnapshot()
+  private entryCropDeferred: boolean = false
   @Local private chromeVisible: boolean = false
   @Local private thumbnailsVisible: boolean = false
   @Local private previewIndex: number = -1
@@ -186,6 +188,11 @@ export struct ReaderSurface {
     }
     if (!this.active || this.closing || this.chromeDisposed || state.phase !== 'ready' ||
       state.kind !== 'original' || unit === undefined) return
+    // The entry owns the selected display item's visible composite, including
+    // both parts of a spread. Replacing either displayed asset can advance the
+    // selection/load identity during flight. Offscreen neighbor preparation is
+    // separate and remains available; resume the normal policy after finish.
+    if (this.entryVariantBlocked) return
     state.frames.forEach((frame: ReaderPagedFrame): void => {
       if (frame.asset.phase !== 'displayed') return
       const resolved = this.variantPolicy?.preference(frame.part.sourceIndex) ?? fallback
@@ -264,6 +271,8 @@ export struct ReaderSurface {
     this.session.setPagedPreloadDepth(this.preloadDepth)
     this.session.setPreloadDepth(this.preloadDepth)
     this.appliedCropSourceRevision = this.cropPolicy?.sourceRevision ?? ''
+    this.entryCropDeferred = this.entryVariantBlocked
+    this.session.setCropPresentationDeferred(this.entryCropDeferred)
     this.session.setCropEnabled(this.cropPolicy?.enabled ?? false)
     this.session.setViewportActive(this.active)
     this.autoReadController.subscribe((enabled: boolean): void => {
@@ -369,6 +378,27 @@ export struct ReaderSurface {
   @Monitor('variantPolicy')
   onVariantPolicyChanged(): void {
     this.syncPreferredVariant(this.session.snapshot())
+  }
+
+  @Computed
+  private get entryVariantBlocked(): boolean {
+    const phase = this.entryTransition?.phase
+    return phase !== undefined && phase !== 'finished' && phase !== 'cancelled'
+  }
+
+  @Monitor('entryVariantBlocked')
+  onEntryVariantGateChanged(): void {
+    if (this.entryCropDeferred && !this.entryVariantBlocked) {
+      this.entryCropDeferred = false
+      if (this.entryTransition?.phase === 'finished' && this.active && !this.closing) {
+        this.getUIContext().animateTo({ duration: 180, curve: Curve.FastOutSlowIn }, (): void => {
+          UIUtils.applySync((): void => { this.session.setCropPresentationDeferred(false) })
+        })
+      } else {
+        this.session.setCropPresentationDeferred(false)
+      }
+    }
+    if (this.entryTransition?.phase === 'finished') this.syncPreferredVariant(this.session.snapshot())
   }
 
   @Monitor('temporaryVariantControl')

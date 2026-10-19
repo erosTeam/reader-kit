@@ -3,6 +3,8 @@ const assert = require('node:assert/strict')
 const load = require('./load-core.cjs')
 const { ReaderPagedSession } = load('ReaderPagedSession')
 const { ReaderUnitKey, ReaderUnit, ReaderPage, ReaderAsset } = load('ReaderSession')
+const { ReaderImageInformation } = load('ReaderImageInformation')
+const { ReaderImageCropBounds } = load('ReaderImageCrop')
 const tick = () => new Promise(resolve => setImmediate(resolve))
 
 async function fixture() {
@@ -14,7 +16,14 @@ async function fixture() {
   }
   const provider = {
     cancellationMode: 'consumer-only',
-    async load(p) { return new ReaderAsset(`default-${p.sourceIndex}`, () => releases.push(p.sourceIndex)) },
+    async load(p) {
+      const information = new ReaderImageInformation()
+      information.mimeType = 'image/webp'; information.width = 800; information.height = 1200
+      const asset = new ReaderAsset(`default-${p.sourceIndex}`, () => releases.push(p.sourceIndex),
+        { async read() { return information } })
+      asset.crop = { async read() { return new ReaderImageCropBounds(.1, .2, .1, .2) } }
+      return asset
+    },
     async prepareVariant(p, variant, identity) {
       calls.push([p.sourceIndex, variant, identity])
       return { page: p.copy(), variant, identity, async load(_c, force) {
@@ -194,5 +203,27 @@ test('unsupported hosts reject processed variants and opening a unit clears sele
   delete f.provider.prepareVariant
   assert.equal(f.s.variantSelectionSupported(), false)
   assert.equal(await f.choose('enhanced'), 'unavailable')
+  f.s.close()
+})
+
+test('entry defers crop presentation without disabling preference, detection or recreating source slots', async () => {
+  const f = await fixture(), before = f.frame()
+  f.s.setCropPresentationDeferred(true)
+  f.s.setCropEnabled(true); await tick()
+  let state = f.s.snapshot()
+  assert.equal(state.cropEnabled, true)
+  assert.equal(state.frames[0].crop.applied(), false)
+  assert.equal(state.frames[0].cropPending, false)
+  assert.equal(state.cropMetadata.length, 0)
+  assert.equal(state.forItem(state.displayKeys[0]).frames[0].crop.applied(), false)
+  assert.equal(f.s.reportVisible(state.selectionId, before.slotId, before.asset.assetRequestId, 'whole'), true)
+  f.s.setCropPresentationDeferred(false)
+  state = f.s.snapshot()
+  assert.equal(state.frames[0].crop.left, .1)
+  assert.equal(state.cropForPage(0).left, .1)
+  assert.equal(state.frames[0].slotId, before.slotId)
+  assert.equal(state.frames[0].asset.assetRequestId, before.asset.assetRequestId)
+  assert.equal(state.frames[0].asset.uri, before.asset.uri)
+  assert.equal(f.releases.length, 0)
   f.s.close()
 })

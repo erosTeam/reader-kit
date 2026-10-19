@@ -255,6 +255,7 @@ export class ReaderPagedSession {
   private disposed: boolean = false
   private active: boolean = false
   private cropEnabled: boolean = false
+  private cropPresentationDeferred: boolean = false
   private activityEpoch: number = 0
   private listener: ((snapshot: ReaderPagedSnapshot) => void) | null = null
 
@@ -277,6 +278,13 @@ export class ReaderPagedSession {
     if (this.disposed || this.cropEnabled === enabled) return
     this.cropEnabled = enabled
     if (enabled) this.slots.forEach((slot: ReaderPageSlot) => this.requestCrop(slot, slot.session.snapshot()))
+    this.emit()
+  }
+
+  /** Keep an in-flight entry's geometry fixed while detection continues normally. */
+  setCropPresentationDeferred(deferred: boolean): void {
+    if (this.disposed || this.cropPresentationDeferred === deferred) return
+    this.cropPresentationDeferred = deferred
     this.emit()
   }
 
@@ -553,7 +561,7 @@ export class ReaderPagedSession {
     value.visibleDisplayEnd = this.state.policy.layout === 'continuous' ? this.continuousEnd : this.state.displayIndex
     value.displayKeys = this.displayKeys.slice()
     value.pageMetadata = Array.from(this.pages.values()).map((page: ReaderPage) => page.copy())
-    if (this.cropEnabled && this.state.kind === 'original') {
+    if (this.cropEnabled && !this.cropPresentationDeferred && this.state.kind === 'original') {
       this.cropPages.forEach((bounds: ReaderImageCropBounds, index: number) => {
         value.cropMetadata.push(new ReaderPageCropMetadata(index, this.state.policy.layout === 'continuous'
           ? bounds.forContinuousPage(index, this.state.unit?.pageCount ?? 0) : bounds))
@@ -574,13 +582,13 @@ export class ReaderPagedSession {
       const asset = slot?.session.snapshot() ?? new ReaderSnapshot()
       const page = this.pages.get(part.sourceIndex)
       if (page !== undefined && asset.page !== null) asset.page = page.copy()
-      let crop = this.cropEnabled && slot?.cropRequestId === asset.assetRequestId
+      let crop = this.cropEnabled && !this.cropPresentationDeferred && slot?.cropRequestId === asset.assetRequestId
         ? slot?.crop?.copy() ?? new ReaderImageCropBounds() : new ReaderImageCropBounds()
       if (this.state.policy.layout === 'continuous') {
         crop = crop.forContinuousPage(part.sourceIndex, this.state.unit?.pageCount ?? 0)
       }
       const frame = new ReaderPagedFrame(slot?.id ?? 0, part, asset, crop)
-      frame.cropPending = this.cropEnabled && asset.kind === 'original' &&
+      frame.cropPending = this.cropEnabled && !this.cropPresentationDeferred && asset.kind === 'original' &&
         (slot?.cropRequestId !== asset.assetRequestId || slot?.cropSettled !== true)
       return frame
     })
@@ -1251,7 +1259,7 @@ export class ReaderPagedSession {
       this.state.kind !== 'original' || this.state.anchor === null || this.map === null) return false
     const slot = this.currentRenderSlot(selectionId, slotId, requestId, fragment)
     if (slot === undefined) return false
-    if (this.cropEnabled && (slot.cropRequestId !== requestId || !slot.cropSettled)) return false
+    if (this.cropEnabled && !this.cropPresentationDeferred && (slot.cropRequestId !== requestId || !slot.cropSettled)) return false
     const asset = slot.session.snapshot()
     const anchor = this.state.anchor
     // A spread's second page decoding first must not change the selected original.

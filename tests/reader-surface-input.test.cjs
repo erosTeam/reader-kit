@@ -30,11 +30,13 @@ function evaluate(source) {
       if (name === './ReaderVariantPolicy') return { ReaderVariantPolicy }
       if (name === './ReaderCropPolicy') return { ReaderCropPolicy }
       if (name === './ReaderAutoReadPolicy') return { ReaderAutoReadPolicy }
+      if (name === '@kit.ArkUI') return { FrameCallback: class FrameCallback {}, UIUtils: { applySync: action => action() } }
       assert.fail(`unexpected import: ${name}`)
     },
     ObservedV2: value => value, ComponentV2: value => value,
     Trace() {}, Param() {}, Require() {}, Event() {}, Local() {}, Computed() {}, BuilderParam() {}, Monitor: () => () => {},
     ImageInterpolation: { Low: 'low', Medium: 'medium', High: 'high' },
+    Curve: { FastOutSlowIn: 'curve' },
     Color: { Black: '#000000', White: '#FFFFFF' },
     console: { info() {} },
   })
@@ -507,4 +509,63 @@ test('a stale completion cannot show chrome or clear a newer pending request aft
   assert.equal(surface.chromeVisible, false); assert.equal(surface.chromeShowPending, true)
   second.resolve(true); await flushChrome()
   assert.equal(surface.chromeVisible, true); assert.deepEqual(events, [false, true])
+})
+
+test('pending spread entry defers both visible variants, resumes once after finish, and not after cancellation', () => {
+  const surface = new ReaderSurface()
+  surface.active = true; surface.closing = false; surface.chromeDisposed = false
+  surface.variantPolicy = new ReaderVariantPolicy(new core.ReaderVariantPreference('enhanced', 'model-a:2000'))
+  const key = new core.ReaderUnitKey('source', 'work', 'unit')
+  const part = new core.ReaderDisplayPart(key, 'p0', 0)
+  const state = new core.ReaderPagedSnapshot()
+  state.phase = 'ready'; state.kind = 'original'; state.navigationRevision = 4
+  state.unit = new core.ReaderUnit(key, 'Title', 2)
+  state.frames = [{ part, slotId: 7,
+    asset: { requestId: 11, assetRequestId: 11, page: new core.ReaderPage(key, 'p0', 0),
+      phase: 'displayed', variant: 'default', variantIdentity: '' } },
+    { part: new core.ReaderDisplayPart(key, 'p1', 1), slotId: 8,
+      asset: { requestId: 12, assetRequestId: 12, page: new core.ReaderPage(key, 'p1', 1),
+        phase: 'displayed', variant: 'default', variantIdentity: '' } }]
+  const calls = []
+  surface.session = { snapshot: () => state,
+    selectVariant(...args) { calls.push(args); return Promise.resolve('changed') } }
+  surface.entryTransition = new ReaderEntryTransition(1, part)
+  surface.entryTransition.phase = 'moving'
+
+  surface.syncPreferredVariant(state)
+  assert.equal(calls.length, 0)
+  assert.equal(surface.variantAttempts.size, 0)
+
+  surface.entryTransition.phase = 'finished'
+  surface.onEntryVariantGateChanged()
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0][0], 7)
+  assert.equal(calls[1][0], 8)
+  assert.equal(calls[0][4], 'enhanced')
+  surface.onEntryVariantGateChanged()
+  assert.equal(calls.length, 2)
+
+  surface.entryTransition = new ReaderEntryTransition(2, part)
+  surface.entryTransition.phase = 'moving'
+  surface.variantPolicy = new ReaderVariantPolicy(new core.ReaderVariantPreference('enhanced', 'model-b:3000'))
+  surface.syncPreferredVariant(state)
+  surface.entryTransition.cancel('back-reverse-claimed')
+  surface.onEntryVariantGateChanged()
+  assert.equal(calls.length, 2)
+})
+
+test('existing entry phase gate releases crop once on finish, with native animation, and synchronously on cancel', () => {
+  for (const phase of ['finished', 'cancelled']) {
+    const surface = new ReaderSurface(), events = []
+    Object.assign(surface, { entryCropDeferred: true, active: true, closing: false,
+      entryTransition: { phase: 'moving' }, session: { setCropPresentationDeferred: v => events.push(['crop', v]), snapshot: () => ({}) },
+      getUIContext: () => ({ animateTo: (options, action) => { events.push(['animation', options.duration]); action() } }),
+      syncPreferredVariant: () => events.push(['variant']) })
+    surface.onEntryVariantGateChanged(); assert.equal(events.length, 0)
+    surface.entryTransition.phase = phase; surface.onEntryVariantGateChanged()
+    assert.equal(surface.entryCropDeferred, false)
+    assert.deepEqual(events, phase === 'finished' ? [['animation',180],['crop',false],['variant']] : [['crop',false]])
+    surface.onEntryVariantGateChanged()
+    assert.equal(events.filter(e => e[0] === 'crop').length, 1)
+  }
 })
