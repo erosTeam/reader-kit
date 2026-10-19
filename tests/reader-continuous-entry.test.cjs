@@ -156,7 +156,7 @@ test('unknown original dimensions wait; decoded zero cancels; row bounds cannot 
 })
 test('paged default still rejects out-of-viewport geometry and does not get continuous clip allowance', () => {
   const f = imageFixture(); Object.assign(f.image, { continuousEntry: null, active: true, entryLayoutWidth: 400, entryLayoutHeight: 2400 })
-  f.image.publishEntryTarget(); assert.equal(f.transition.phase, 'cancelled'); assert.equal(f.transition.target, null)
+  f.image.publishEntryTarget(); f.callbacks.shift()(); assert.equal(f.transition.phase, 'cancelled'); assert.equal(f.transition.target, null)
 })
 
 test('terminal backgrounds reuse single-pointer travel filtering and active input gates', () => {

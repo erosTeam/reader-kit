@@ -1,5 +1,5 @@
 import { FrameCallback, LengthMetrics } from '@kit.ArkUI'
-import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderFragment, ReaderAssetNotice, readerPolicyRotatesPage } from '@reader-kit/core'
+import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderFragment, ReaderAssetNotice, readerPolicyRotatesPage, readerPagedFrameAspectRatio } from '@reader-kit/core'
 import { ReaderContinuousZoomImage } from './ReaderContinuousZoomImage'
 import { ReaderFailurePanel } from './ReaderFailurePanel'
 import { ReaderAssetNoticePanel } from './ReaderAssetNoticePanel'
@@ -277,6 +277,13 @@ struct ReaderContinuousList {
 
   private imageAspectRatio(index: number): number {
     const page = this.snapshot.pageMetadata.find((value) => value.sourceIndex === index)
+    const frame = this.snapshot.window.find((item) => item.index === index)?.frames[0]
+    if (this.snapshot.kind === 'original' && frame !== undefined && frame.asset.page !== null &&
+      frame.part.fragment === 'whole' &&
+      !frame.crop.applied() && !this.snapshot.cropForPage(index).applied() &&
+      !readerPolicyRotatesPage(this.snapshot.policy, page ?? null)) {
+      return readerPagedFrameAspectRatio(frame, this.snapshot.policy)
+    }
     const crop = this.snapshot.cropForPage(index)
     const usePreview = this.snapshot.kind === 'original' && page?.hasWholePagePreviewGeometry() === true &&
       ((page?.width ?? 0) <= 0 || (page?.height ?? 0) <= 0) &&
