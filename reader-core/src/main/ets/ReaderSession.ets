@@ -211,6 +211,8 @@ export interface ReaderVariantAssetPlan {
   variant: ReaderProcessedAssetVariant
   /** Exact host processing identity, including every setting that can change the output. */
   identity: string
+  /** Release an unused recipe; loaded assets retain their own independent lifetime. */
+  release?(): void
   load(cancellation: ReaderCancellation, forceReload: boolean,
     onProgress?: (loaded: number, total: number) => void): Promise<ReaderAsset>
 }
@@ -249,6 +251,23 @@ export class ReaderSnapshot {
   /** Last UI-observed ORIGINAL, possibly from the previous unit while preparing a new one. */
   presentedAnchor: ReaderReadingAnchor | null = null
   presentedRequestId: number = 0
+
+  /** Displayed pixels can belong to the previous epoch while their replacement loads. */
+  isAssetLoading(): boolean {
+    return this.phase === 'idle' || this.phase === 'asset' || this.phase === 'decoding' ||
+      (this.phase === 'displayed' && this.requestId !== this.assetRequestId)
+  }
+
+  /** Transport may continue while a prior image remains readable. */
+  hasDisplayedPixels(): boolean {
+    return (this.phase === 'displayed' && this.uri.length > 0 && this.assetRequestId > 0) ||
+      (this.retainedUri.length > 0 && this.retainedAssetRequestId > 0)
+  }
+
+  /** The placeholder shares the image's presentation lifetime, not processing-queue lifetime. */
+  needsImagePlaceholder(): boolean {
+    return this.isAssetLoading() && !this.hasDisplayedPixels()
+  }
 
   copy(): ReaderSnapshot {
     const value = new ReaderSnapshot()

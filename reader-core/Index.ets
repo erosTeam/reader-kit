@@ -27,3 +27,6 @@ export { ReaderImageSaveChoice, ReaderImageSaveItemStatus, ReaderImageSaveOutcom
   ReaderImageSavePresentation, ReaderImageSaveHost, ReaderImageSaveController } from './src/main/ets/ReaderImageSave'
 export { ReaderAutoReadClock, ReaderAutoReadController, ReaderAutoReadTargetReadiness } from './src/main/ets/ReaderAutoRead'
 export { ReaderTemporaryVariantSource, ReaderTemporaryVariantScope, ReaderTemporaryVariantOverride } from './src/main/ets/ReaderTemporaryVariantOverride'
+export { ReaderProcessingPolicy, ReaderProcessingCancellation, ReaderProcessingCoordinator,
+  ReaderProcessingState, ReaderProcessingPhase, ReaderProcessingPriority, ReaderProcessingResult }
+  from './src/main/ets/ReaderProcessingCoordinator'
