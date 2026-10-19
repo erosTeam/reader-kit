@@ -1,9 +1,10 @@
-import { ReaderPagedSnapshot, ReaderFragment, ReaderReadingAnchor } from '@reader-kit/core'
+import { ReaderPagedSnapshot, ReaderFragment } from '@reader-kit/core'
 import { ReaderPagedViewport } from './ReaderPagedViewport'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderBoundaryDirection, ReaderBoundarySwipe } from './ReaderBoundarySwipe'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { readerElementKey } from './ReaderElementKey'
+import { ReaderPagerIdentityMap, ReaderPagerItemIdentity } from './ReaderPagerIdentityMap'
 
 /** One host-requested pager move. The native pager consumes each serial at most once.
  * A command may target a non-adjacent display item: the legacy readers commit an
@@ -24,58 +25,45 @@ export class ReaderPagerCommand {
   }
 }
 
-/** Native node identity is independent of a single/spread display composition. */
+/** Observable render data keeps its native identity across regrouping. */
 @ObservedV2
-class ReaderPagerItem {
-  identity: number
-  @Trace displayKey: string
-  constructor(identity: number, displayKey: string) {
-    this.identity = identity
-    this.displayKey = displayKey
+class ReaderPagerRenderItem {
+  @Trace key: string
+  nativeKey: string
+  @Trace snapshot: ReaderPagedSnapshot
+  constructor(identity: ReaderPagerItemIdentity, snapshot: ReaderPagedSnapshot) {
+    this.key = identity.key
+    this.nativeKey = identity.nativeKey
+    this.snapshot = snapshot
   }
 }
 
-/** Only topology changes reconcile items; ordinary selection stays constant-time. */
-class ReaderPagerIndexSource implements IDataSource {
-  private items: ReaderPagerItem[] = []
-  private nextIdentity: number = 0
-  private selected: ReaderPagerItem | null = null
-  private anchor: ReaderReadingAnchor | null = null
+/** Publish the keyed data synchronously before Swiper consumes a new index. */
+class ReaderPagerDataSource implements IDataSource {
+  private items: ReaderPagerRenderItem[] = []
   private listeners: DataChangeListener[] = []
   totalCount(): number { return this.items.length }
-  getData(index: number): ReaderPagerItem { return this.items[index] }
-  rememberSelection(snapshot: ReaderPagedSnapshot): void {
-    this.selected = this.items[snapshot.displayIndex] ?? null
-    this.anchor = snapshot.anchor?.copy() ?? null
-  }
-  setData(snapshot: ReaderPagedSnapshot): void {
-    const anchor = snapshot.anchor
-    const sameUnit = this.anchor !== null && anchor !== null && this.anchor.unit.equals(anchor.unit)
-    const previous = new Map<string, ReaderPagerItem>()
-    if (sameUnit) {
-      this.items.forEach((item: ReaderPagerItem): void => { previous.set(item.displayKey, item) })
-    }
-    const retained = sameUnit && this.selected !== null && this.anchor?.sourceIndexHint === anchor?.sourceIndexHint ?
-      this.selected : null
-    if (retained !== null) previous.delete(retained.displayKey)
-    this.items = snapshot.displayKeys.map((key: string, index: number): ReaderPagerItem => {
-      if (index === snapshot.displayIndex && retained !== null) {
-        retained.displayKey = key
-        return retained
-      }
-      return previous.get(key) ?? new ReaderPagerItem(this.nextIdentity++, key)
-    })
-    this.rememberSelection(snapshot)
-    this.listeners.forEach((listener: DataChangeListener): void => {
-      listener.onDatasetChange([{ type: DataOperationType.RELOAD }])
-    })
-  }
+  getData(index: number): ReaderPagerRenderItem { return this.items[index] }
   registerDataChangeListener(listener: DataChangeListener): void {
     if (!this.listeners.includes(listener)) this.listeners.push(listener)
   }
   unregisterDataChangeListener(listener: DataChangeListener): void {
-    const index = this.listeners.indexOf(listener)
-    if (index >= 0) this.listeners.splice(index, 1)
+    this.listeners = this.listeners.filter((value: DataChangeListener): boolean => value !== listener)
+  }
+  update(identities: ReaderPagerItemIdentity[], snapshot: ReaderPagedSnapshot): void {
+    const previous: Map<string, ReaderPagerRenderItem> = new Map<string, ReaderPagerRenderItem>()
+    this.items.forEach((item: ReaderPagerRenderItem): void => { previous.set(item.nativeKey, item) })
+    const changed = identities.length !== this.items.length || identities.some(
+      (identity: ReaderPagerItemIdentity, index: number): boolean => this.items[index]?.nativeKey !== identity.nativeKey)
+    this.items = identities.map((identity: ReaderPagerItemIdentity): ReaderPagerRenderItem => {
+      const item = previous.get(identity.nativeKey) ?? new ReaderPagerRenderItem(identity, snapshot)
+      item.key = identity.key
+      item.snapshot = snapshot
+      return item
+    })
+    // Reload compares stable keys and retains matching nodes. Ordinary image or
+    // selection updates only change observed fields, with no structural signal.
+    if (changed) this.listeners.forEach((listener: DataChangeListener): void => listener.onDataReloaded())
   }
 }
 
@@ -152,7 +140,15 @@ struct ReaderNativePager {
     slotId: number, requestId: number, noticeId: string) => Promise<boolean> =
     async (_topologyRevision: number, _navigationRevision: number, _itemKey: string,
       _slotId: number, _requestId: number, _noticeId: string): Promise<boolean> => false
-  private source: ReaderPagerIndexSource = new ReaderPagerIndexSource()
+  private identities: ReaderPagerIdentityMap = new ReaderPagerIdentityMap()
+  private pageSource: ReaderPagerDataSource = new ReaderPagerDataSource()
+
+  private syncPageItems(): void {
+    const unit = this.snapshot.unit?.key
+    const identities = this.identities.update(this.snapshot.displayKeys, this.snapshot.displayIndex,
+      this.snapshot.topologyRevision, JSON.stringify(unit === undefined ? [] : [unit.scope, unit.work, unit.unit]))
+    this.pageSource.update(identities, this.snapshot)
+  }
   private controller: SwiperController = new SwiperController()
   @Local private inputLocked: boolean = false
   @Local private moving: boolean = false
@@ -205,7 +201,7 @@ struct ReaderNativePager {
   }
 
   aboutToAppear(): void {
-    this.source.setData(this.snapshot)
+    this.syncPageItems()
     this.lastTopology = this.snapshot.topologyRevision
     this.lastNavigation = this.snapshot.navigationRevision
     this.reportExternalLock()
@@ -222,6 +218,7 @@ struct ReaderNativePager {
 
   @Monitor('snapshot')
   onNavigationChanged(): void {
+    this.syncPageItems()
     if (this.lastTopology !== this.snapshot.topologyRevision) {
       this.lastTopology = this.snapshot.topologyRevision
       if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
@@ -231,14 +228,12 @@ struct ReaderNativePager {
       this.gestureTopology = -1
       this.gestureNavigation = -1
       this.boundarySwipe.cancel()
-      this.source.setData(this.snapshot)
     }
     if (this.lastNavigation !== this.snapshot.navigationRevision) {
       this.lastNavigation = this.snapshot.navigationRevision
       this.inputLocked = false
       this.boundarySwipe.cancel()
     }
-    this.source.rememberSelection(this.snapshot)
   }
 
   @Monitor('active')
@@ -303,20 +298,24 @@ struct ReaderNativePager {
 
   build() {
     Swiper(this.controller) {
-      LazyForEach(this.source, (item: ReaderPagerItem) => {
+      LazyForEach(this.pageSource, (item: ReaderPagerRenderItem) => {
         ReaderPagedViewport({
           imageInterpolation: this.imageInterpolation,
           pageGap: this.pageGap,
-          snapshot: this.snapshot.forItem(item.displayKey),
-          entryTransition: item.displayKey === this.snapshot.displayKeys[this.snapshot.displayIndex] ? this.entryTransition : null,
-          selected: item.displayKey === this.snapshot.displayKeys[this.snapshot.displayIndex],
-          active: this.active && !this.moving && item.displayKey === this.snapshot.displayKeys[this.snapshot.displayIndex],
+          snapshot: item.snapshot.forItem(item.key),
+          entryTransition: item.key === item.snapshot.displayKeys[item.snapshot.displayIndex] ? this.entryTransition : null,
+          selected: item.key === item.snapshot.displayKeys[item.snapshot.displayIndex],
+          active: this.active && !this.moving && item.key === item.snapshot.displayKeys[item.snapshot.displayIndex],
           zoomResetCommand: this.zoomResetCommand,
           onInputLockChange: (locked: boolean): void => {
-            if (item.displayKey === this.snapshot.displayKeys[this.snapshot.displayIndex]) this.inputLocked = locked
+            if (item.snapshot.topologyRevision === this.snapshot.topologyRevision &&
+              item.snapshot.navigationRevision === this.snapshot.navigationRevision &&
+              item.key === this.snapshot.displayKeys[this.snapshot.displayIndex]) this.inputLocked = locked
           },
           onZoomedChange: (zoomed: boolean): void => {
-            if (item.displayKey === this.snapshot.displayKeys[this.snapshot.displayIndex]) {
+            if (item.snapshot.topologyRevision === this.snapshot.topologyRevision &&
+              item.snapshot.navigationRevision === this.snapshot.navigationRevision &&
+              item.key === this.snapshot.displayKeys[this.snapshot.displayIndex]) {
               this.onZoomedChange(zoomed, this.snapshot.topologyRevision, this.snapshot.navigationRevision)
             }
           },
@@ -324,17 +323,18 @@ struct ReaderNativePager {
           onTap: this.onTap,
           onVisible: this.onVisible,
           onRetry: (slotId: number, requestId: number): void => {
-            this.onRetry(this.snapshot.topologyRevision, item.displayKey, slotId, requestId)
+            this.onRetry(this.snapshot.topologyRevision, item.key, slotId, requestId)
           },
           onNoticeAction: (slotId: number, requestId: number, noticeId: string): Promise<boolean> => {
             return this.onNoticeAction(this.snapshot.topologyRevision, this.snapshot.navigationRevision,
-              item.displayKey, slotId, requestId, noticeId)
+              item.key, slotId, requestId, noticeId)
           },
           onFailed: (_selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void => {
-            this.onFailed(this.snapshot.topologyRevision, item.displayKey, slotId, requestId, fragment)
+            this.onFailed(this.snapshot.topologyRevision, item.key, slotId, requestId, fragment)
           },
         })
-      }, (item: ReaderPagerItem): string => readerElementKey(`pager:${item.identity}`))
+      // Keep the visible native viewport when its source pages are regrouped.
+      }, (item: ReaderPagerRenderItem): string => readerElementKey(item.nativeKey))
     }
     .index(this.snapshot.displayIndex)
     .vertical(this.snapshot.policy.pagingAxis === 'vertical')
