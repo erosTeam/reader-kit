@@ -518,9 +518,15 @@ export class ReaderSession {
       this.releaseRetiredAsset()
       this.releaseAsset()
       this.emit()
+    } else {
+      // Publish acquisition without changing the displayed source or its lease.
+      this.state.loadProgressLoaded = 0
+      this.state.loadProgressTotal = 0
+      this.emit()
     }
     const reportProgress = (loaded: number, total: number): void => {
-      if (this.disposed || epoch !== this.epoch || this.state.phase !== 'asset') return
+      if (this.disposed || epoch !== this.epoch ||
+        (this.state.phase !== 'asset' && !(retainDisplayed && this.state.phase === 'displayed'))) return
       if (!Number.isFinite(loaded) || !Number.isFinite(total) || loaded < 0 || total <= 0) return
       if (this.state.loadProgressLoaded === loaded && this.state.loadProgressTotal === total) return
       this.state.loadProgressLoaded = loaded
