@@ -67,15 +67,16 @@ test('opt-in close orders real area, unique host callback and colors while exclu
   const closing = lease.close(async () => { callbacks++; return host.promise })
   assert.equal(lease.close(async () => { throw new Error('duplicate callback') }), closing)
   next.open({}); await drain()
-  assert.equal(callbacks, 0); assert.equal(writes, 1)
+  assert.equal(callbacks, 0); assert.equal(writes, 2)
+  color.resolve(); await drain()
+  assert.equal(callbacks, 0); assert.equal(writes, 2); assert.equal(lookups, 1)
   main.emit(120); await drain()
-  assert.equal(callbacks, 1); assert.equal(writes, 1); assert.equal(lookups, 1)
-  host.resolve(true); await drain()
-  assert.equal(writes, 2); assert.equal(lookups, 1)
-  color.resolve(); await closing; await drain()
+  assert.equal(callbacks, 1); assert.equal(writes, 2); assert.equal(lookups, 1)
+  host.resolve(true); await closing; await drain()
+  assert.equal(writes, 4)
   assert.equal(lookups, 2)
   assert.equal(lease.getCloseSystemAvoidAreaResult(), 'ready')
-  assert.deepEqual(main.calls[4], ['write', main.original])
+  assert.deepEqual(main.calls.filter(call => call[0] === 'write').at(-2), ['write', main.original])
   await next.close()
 })
 
@@ -104,14 +105,52 @@ test('area failure skips host callback but still restores colors and reports fai
   assert.deepEqual(main.calls.at(-1), ['write', main.original])
 })
 
+test('source-color failures do not skip status visibility or the host callback', async () => {
+  for (const failures of [[2], [2, 3]]) {
+    const main = avoidWindow(), timers = fakeTimers(), events = []
+    const base = main.setWindowSystemBarProperties
+    let writes = 0, callbacks = 0, callbackSawVisibility = false
+    main.setWindowSystemBarProperties = async value => {
+      if (failures.includes(++writes)) throw new Error(`color-failed-${writes}`)
+      await base(value)
+    }
+    const { Lease } = fixture(async () => main, timers)
+    const lease = new Lease(event => events.push(event), true)
+    lease.open({}); await drain()
+    const closing = lease.close(async () => {
+      callbacks++
+      callbackSawVisibility = writes === 3 &&
+        main.calls.filter(call => call[0] === 'visibility').length === 2
+      return true
+    })
+    await drain()
+    assert.equal(callbacks, 0)
+    main.emit(120)
+    await closing
+    assert.equal(callbacks, 1)
+    assert.equal(callbackSawVisibility, true)
+    assert.equal(lease.getCloseSystemAvoidAreaResult(), failures.length === 1 ? 'ready' : 'failed')
+    assert.equal(events.some(event => event.includes('close_source_status_content_restore_failed color-failed-2')), true)
+    assert.equal(events.some(event => event.includes(failures.length === 1
+      ? 'close_source_status_content_restore_fallback_succeeded'
+      : 'close_source_status_content_restore_fallback_failed color-failed-3')), true)
+    assert.deepEqual(main.calls.filter(call => call[0] === 'write').at(-1), ['write', main.original])
+  }
+})
+
 test('callback and color failures are both retained in diagnostics', async () => {
   let writes = 0
   const main = mainWindow(async () => { if (++writes === 2) throw new Error('color-failed') })
-  const { Lease, logs } = fixture(async () => main), lease = new Lease(null, true)
+  const { Lease, logs } = fixture(async () => main), events = [], lease = new Lease(event => events.push(event), true)
   lease.open({}); await drain()
-  await lease.close(async () => { throw new Error('host-failed') })
+  let callbacks = 0
+  await lease.close(async () => { callbacks++; throw new Error('host-failed') })
   assert.equal(lease.getCloseSystemAvoidAreaResult(), 'failed')
-  assert.equal(logs.some(log => log.includes('host-failed; restore_failed color-failed')), true)
+  assert.equal(callbacks, 1)
+  assert.equal(events.some(event => event.includes('close_source_status_content_restore_failed color-failed')), true)
+  assert.equal(events.some(event => event.includes('close_source_status_content_restore_fallback_succeeded')), true)
+  assert.equal(events.some(event => event.includes('close_before_restore_colors_failed host-failed')), true)
+  assert.equal(logs.some(log => log.includes('restore_failed=host-failed')), true)
 })
 
 test('non-visible restore modes ignore callbacks and retain legacy order', async () => {

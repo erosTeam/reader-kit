@@ -190,6 +190,21 @@ export class ReaderTrialWindow {
     }, 'open_failed')
   }
 
+  /** Match the source page's icon color before its status bar becomes visible. */
+  private async restoreSourceStatusContentColor(): Promise<void> {
+    if (this.mainWindow === null || this.previous === null) return
+    if (this.previous.statusBarContentColor !== undefined) {
+      await this.mainWindow.setWindowSystemBarProperties({
+        statusBarContentColor: this.previous.statusBarContentColor,
+      })
+    } else if (this.previous.isStatusBarLightIcon !== undefined) {
+      await this.mainWindow.setWindowSystemBarProperties({
+        isStatusBarLightIcon: this.previous.isStatusBarLightIcon,
+      })
+    }
+    this.observe('close_source_status_content_restored_before_visibility')
+  }
+
   /** The optional bounded host-layout callback must not await this window queue.
    * Only restore-visible leases use it; other leases retain their legacy order.
    */
@@ -203,6 +218,22 @@ export class ReaderTrialWindow {
         const layoutBeforeColors = this.restoreStatusVisible === true && beforeRestoreColors !== null
         if (layoutBeforeColors) {
           try {
+            await this.restoreSourceStatusContentColor()
+          } catch (error) {
+            const colorError = error as Error
+            this.observe(`close_source_status_content_restore_failed ${colorError.message}`)
+            try {
+              // Fall back to the saved complete properties before exposing the bar.
+              await this.mainWindow.setWindowSystemBarProperties(this.previous)
+              this.observe('close_source_status_content_restore_fallback_succeeded')
+            } catch (fallbackError) {
+              const fallbackStatusError = fallbackError as Error
+              this.observe(`close_source_status_content_restore_fallback_failed ${fallbackStatusError.message}`)
+              restoreError = new Error(
+                `${colorError.message}; source_status_fallback_failed ${fallbackStatusError.message}`)
+            }
+          }
+          try {
             await this.restoreVisibleStatus()
             this.observe('close_before_restore_colors_requested')
             const layoutReady = await beforeRestoreColors!()
@@ -210,8 +241,10 @@ export class ReaderTrialWindow {
             if (!layoutReady) throw new Error('host_layout_not_ready')
           } catch (error) {
             this.closeSystemAvoidAreaResult = 'failed'
-            this.observe(`close_before_restore_colors_failed ${(error as Error).message}`)
-            restoreError = error as Error
+            const layoutError = error as Error
+            this.observe(`close_before_restore_colors_failed ${layoutError.message}`)
+            restoreError = restoreError === null ? layoutError :
+              new Error(`${restoreError.message}; ${layoutError.message}`)
           }
         }
         this.observe(`restore_called ${JSON.stringify(this.previous)}`)
