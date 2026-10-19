@@ -205,7 +205,8 @@ class ReaderPageSlot {
 
 /**
  * One display/anchor owner. Selected-only uses at most two asset slots; the
- * paged neighbor window uses at most six. Continuous demand uses the visible
+ * paged neighbor window uses at most six, plus a temporarily retained outgoing
+ * display item during a position handoff. Continuous demand uses the visible
  * range plus its immediate neighbors. ReaderSession continues to
  * own each request, decoder fence and lease; hosts still own chapter semantics.
  * Metadata is discovered only within the requested window, never by opening every page.
@@ -233,6 +234,8 @@ export class ReaderPagedSession {
   /** Retires source preparations even when navigation returns to the same target index. */
   private autoReadSourceGeneration: number = 0
   private displayKeys: string[] = []
+  /** Last observed paged item, kept leased until the new selection is visible. */
+  private outgoingPositionKey: string | null = null
   private topologySignature: string = ''
   private topologyRevision: number = 0
   private navigationRevision: number = 0
@@ -584,6 +587,10 @@ export class ReaderPagedSession {
       if (this.state.displayIndex > 0) indexes.push(this.state.displayIndex - 1)
       if (this.state.displayIndex + 1 < this.map.count()) indexes.push(this.state.displayIndex + 1)
     }
+    if (this.outgoingPositionKey !== null) {
+      const outgoing = this.displayKeys.indexOf(this.outgoingPositionKey)
+      if (outgoing >= 0 && !indexes.includes(outgoing)) indexes.push(outgoing)
+    }
     return indexes
   }
 
@@ -725,6 +732,7 @@ export class ReaderPagedSession {
 
   async open(key: ReaderUnitKey, index: number = 0): Promise<void> {
     if (this.disposed) return
+    this.outgoingPositionKey = null
     this.cancelOriginalPreparations()
     this.cancelAutoReadSourcePreparations()
     this.preloadSignature = ''
@@ -779,6 +787,7 @@ export class ReaderPagedSession {
       throw new Error('reader_unsupported_paged_policy')
     }
     this.state.policy = policy.copy()
+    this.outgoingPositionKey = null
     this.cancelOriginalPreparations()
     this.cancelAutoReadSourcePreparations()
     this.navigationRevision += 1
@@ -816,6 +825,7 @@ export class ReaderPagedSession {
     this.cancelOriginalPreparations()
     this.cancelAutoReadSourcePreparations()
     this.state.policy = this.state.policy.copy()
+    this.outgoingPositionKey = null
     this.navigationRevision += 1
     if (item.parts.length === 1) {
       // Single-cell (the leading alone page): step only the pairing offset and keep
@@ -847,10 +857,25 @@ export class ReaderPagedSession {
     return null
   }
 
+  /** Retain the last observed paged body, not an unpresented intermediate seek. */
+  private beginPositionHandoff(): void {
+    if (this.state.policy.layout === 'continuous' || this.state.kind !== 'original') {
+      this.outgoingPositionKey = null
+      return
+    }
+    if (this.outgoingPositionKey !== null) return
+    if (this.state.observedSelectionId !== this.state.selectionId) return
+    this.outgoingPositionKey = this.displayKeys[this.state.displayIndex] ?? null
+  }
+
+  /** A source-page command, not a display index or an observed/saved reading position.
+   * A slider may outlive its unit/navigation; stale commits must not seek the new unit.
+   */
   seekSource(index: number, unit: ReaderUnitKey, navigationRevision: number): boolean {
     if (this.disposed || this.state.phase !== 'ready' || this.state.unit === null ||
       !this.state.unit.key.equals(unit) || navigationRevision !== this.navigationRevision ||
       !Number.isSafeInteger(index) || index < 0 || index >= this.state.unit.pageCount) return false
+    this.beginPositionHandoff()
     this.cancelOriginalPreparations()
     this.cancelAutoReadSourcePreparations()
     this.navigationRevision += 1
@@ -869,6 +894,7 @@ export class ReaderPagedSession {
       topologyRevision !== this.topologyRevision || navigationRevision !== this.navigationRevision ||
       !Number.isInteger(index) || index < 0 || index >= this.map.count()) return false
     if (index === this.state.displayIndex) return true
+    this.beginPositionHandoff()
     this.cancelOriginalPreparations()
     this.cancelAutoReadSourcePreparations()
     this.navigationRevision += 1
@@ -884,6 +910,7 @@ export class ReaderPagedSession {
     if (kind === 'thumbnail' && this.snapshot().frames.some((frame: ReaderPagedFrame) =>
       frame.asset.page === null || !frame.asset.page.thumbnail.available)) return
     this.state.kind = kind
+    this.outgoingPositionKey = null
     this.cancelOriginalPreparations()
     this.cancelAutoReadSourcePreparations()
     this.navigationRevision += 1
@@ -995,6 +1022,10 @@ export class ReaderPagedSession {
     }
     this.state.anchor = resolved.anchor
     this.state.displayIndex = resolved.displayIndex
+    if (this.outgoingPositionKey === this.displayKeys[this.state.displayIndex] ||
+      (this.outgoingPositionKey !== null && !this.displayKeys.includes(this.outgoingPositionKey))) {
+      this.outgoingPositionKey = null
+    }
     this.state.selectionId += 1
     this.reconcile()
   }
@@ -1150,7 +1181,10 @@ export class ReaderPagedSession {
     if (this.state.observedSelectionId === selectionId) return true
     this.state.observedAnchor = anchor.copy()
     this.state.observedSelectionId = selectionId
-    this.emit()
+    if (this.outgoingPositionKey !== null) {
+      this.outgoingPositionKey = null
+      this.reconcile()
+    } else this.emit()
     return true
   }
 
@@ -1205,6 +1239,7 @@ export class ReaderPagedSession {
   }
 
   close(): void {
+    this.outgoingPositionKey = null
     this.cancelOriginalPreparations()
     this.cancelAutoReadSourcePreparations()
     this.assetPlans.clear()
