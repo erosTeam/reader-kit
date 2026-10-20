@@ -10,7 +10,7 @@ import { ReaderTapSequence } from './ReaderTapSequence'
 import { ReaderBoundaryDirection, ReaderBoundarySwipe } from './ReaderBoundarySwipe'
 import { normalizedReaderPageGap } from './ReaderPageGap'
 import { ReaderLoadingStage } from './ReaderLoadingStage'
-import { ReaderImagePlaceholder } from './ReaderImagePlaceholder'
+import { ReaderImagePlaceholder, ReaderImagePresentation } from './ReaderImagePlaceholder'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { readerElementKey } from './ReaderElementKey'
 
@@ -35,6 +35,7 @@ export struct ReaderContinuousSurface {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param pageGap: number = 0
   @Param entryTransition: ReaderEntryTransition | null = null
+  @Param entryPreviewVisible: boolean = false
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param zoomResetCommand: ReaderZoomResetCommand | null = null
@@ -63,6 +64,7 @@ export struct ReaderContinuousSurface {
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
             zoomResetCommand: this.zoomResetCommand,
             entryTransition: this.entryTransition,
+            entryPreviewVisible: this.entryPreviewVisible,
             onInputLockChange: this.onInputLockChange,
             onZoomedChange: this.onZoomedChange,
             onBoundary: this.onBoundary,
@@ -71,7 +73,7 @@ export struct ReaderContinuousSurface {
             onTap: this.onTap,
           })
         }, (revision: number): string => `${revision}`)
-      } else if (this.snapshot.phase === 'idle' || this.snapshot.phase === 'catalog') {
+      } else if (!this.entryPreviewVisible && (this.snapshot.phase === 'idle' || this.snapshot.phase === 'catalog')) {
         ReaderLoadingStage({ label: $r('app.string.rkit_loading_resolving') })
       }
     }.width('100%').height('100%').clip(true)
@@ -83,6 +85,7 @@ struct ReaderContinuousList {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param pageGap: number = 0
   @Param entryTransition: ReaderEntryTransition | null = null
+  @Param entryPreviewVisible: boolean = false
   @Local private entryPosition: ReaderContinuousEntryPosition | null = null
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
@@ -445,6 +448,7 @@ struct ReaderContinuousList {
             imageInterpolation: this.imageInterpolation,
             snapshot: this.snapshot.forItem(key),
             entryTransition: this.entryTransition,
+            entryPreviewVisible: this.entryPreviewVisible,
             entryPosition: this.entryPosition?.key === key ? this.entryPosition : null,
             active: this.active,
             zoomResetCommand: this.zoomResetCommand?.topologyRevision === this.createdRevision ? this.zoomResetCommand : null,
@@ -522,6 +526,7 @@ struct ReaderContinuousList {
 struct ReaderContinuousCell {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param entryTransition: ReaderEntryTransition | null = null
+  @Param entryPreviewVisible: boolean = false
   @Param entryPosition: ReaderContinuousEntryPosition | null = null
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param imageHeight: number
@@ -556,12 +561,13 @@ struct ReaderContinuousCell {
     }
   }
 
-  private loadingVisible(): boolean {
-    const asset = this.snapshot.frames[0]?.asset
-    if (asset === undefined || asset.phase === 'idle' || asset.phase === 'asset') return true
-    return asset.phase === 'decoding' && !(asset.kind === 'original' &&
-      this.decodedOriginalIdentity === this.originalDrawableIdentity())
+  private imagePresentation(): ReaderImagePresentation {
+    return new ReaderImagePresentation(this.snapshot.frames[0] ?? null, this.decodedOriginalIdentity,
+      this.entryPreviewVisible && this.snapshot.frames[0] !== undefined &&
+      this.entryTransition?.matches(this.snapshot.frames[0].part) === true)
   }
+
+  private loadingVisible(): boolean { return this.imagePresentation().loading }
 
   private terminalTap(event?: GestureEvent): void {
     const location = event?.tapLocation
@@ -635,10 +641,12 @@ struct ReaderContinuousCell {
             onPresented: this.onPresented,
             onFailed: this.onFailed,
           })
+            .opacity(this.imagePresentation().pixels ? 1 : 0)
             .onDisAppear((): void => { this.onRetired(frame.slotId, frame.asset.assetRequestId) })
         }, (frame: ReaderPagedFrame): string =>
           readerElementKey(`${frame.slotId}`))
-        ReaderImagePlaceholder({ frame: this.snapshot.frames[0] ?? null,
+        ReaderImagePlaceholder({ presentation: this.imagePresentation(),
+          frame: this.snapshot.frames[0] ?? null,
           entryTransition: this.entryTransition }).zIndex(2)
       }.width('100%').aspectRatio(this.imageAspectRatio)
         .id(`rkit-continuous-page-${this.snapshot.displayIndex}`)

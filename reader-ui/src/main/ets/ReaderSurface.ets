@@ -14,7 +14,7 @@ import { ReaderThumbnailRail } from './ReaderThumbnailRail'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { Binding } from '@kit.ArkUI'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
-import { ReaderEntryPreview, ReaderEntryPreviewSource } from './ReaderEntryPreview'
+import { ReaderEntryPreview, ReaderEntryPreviewSource, ReaderOpeningPreview } from './ReaderEntryPreview'
 import { ReaderTapAction } from './ReaderTapAction'
 import { ReaderTapZonePreviewRegion } from './ReaderTapZonePreviewRegion'
 import { ReaderHostAction } from './ReaderHostAction'
@@ -119,7 +119,7 @@ export struct ReaderSurface {
   @BuilderParam modeControl?: (params: ReaderModeControlParams) => void
   /** Optional host-owned title leaf; omitted hosts keep the stock centered page indicator. */
   @BuilderParam titleControl?: (params: Binding<ReaderTitleParams>) => void
-  @BuilderParam openingPlaceholder: () => void = this.DefaultOpeningPlaceholder
+  @Param openingPreview: ReaderOpeningPreview | null = null
   @Event onClose: (context: ReaderCloseContext | null) => void = () => {}
   /** Raw Image presentation, before core incorporates the measured original geometry. */
   @Event onAssetPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void =
@@ -907,9 +907,9 @@ export struct ReaderSurface {
         .opacity(this.canvasBackdropOpacity)
         .hitTestBehavior(HitTestMode.None)
       Stack({ alignContent: Alignment.Bottom }) {
-      // The existing cell feedback stays above the optional source preview.
-      // The preview's declared coverage controls its fade beneath the original image.
-      this.openingPlaceholder()
+      // Shared presentation chooses preview, loading or readable body pixels.
+      // A host supplies preview data but cannot render an independent loading layer.
+      this.OpeningPreview()
       if (this.entryTransition !== null && this.entryPreview !== null) {
         ReaderEntryPreview({ entry: this.entryTransition, source: this.entryPreview })
       }
@@ -923,6 +923,7 @@ export struct ReaderSurface {
             snapshot: this.state, active: this.active,
             zoomResetCommand: this.zoomResetCommand,
             entryTransition: this.entryTransition,
+            entryPreviewVisible: this.hasEntryPreview(),
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
             onZoomedChange: (zoomed: boolean, topology: number, navigation: number): void => {
               this.reportZoomed(zoomed, topology, navigation)
@@ -959,6 +960,7 @@ export struct ReaderSurface {
             zoomResetCommand: this.zoomResetCommand,
             command: this.pagerCommand,
             entryTransition: this.entryTransition,
+            entryPreviewVisible: this.hasEntryPreview(),
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
             onZoomedChange: (zoomed: boolean, topology: number, navigation: number): void => {
               this.reportZoomed(zoomed, topology, navigation)
@@ -1133,8 +1135,21 @@ export struct ReaderSurface {
       })
   }
 
+  private hasEntryPreview(): boolean {
+    return (this.openingPreview !== null && this.openingPreview.opacity > 0) ||
+      (this.entryPreview !== null && this.entryTransition?.pending() === true)
+  }
+
   @Builder
-  private DefaultOpeningPlaceholder() {}
+  private OpeningPreview() {
+    if (this.openingPreview !== null) {
+      Image(this.openingPreview.pixels)
+        .width(this.openingPreview.rect.width).height(this.openingPreview.rect.height)
+        .objectFit(ImageFit.Fill).syncLoad(true)
+        .position({ x: this.openingPreview.rect.x, y: this.openingPreview.rect.y })
+        .opacity(this.openingPreview.opacity).hitTestBehavior(HitTestMode.None)
+    }
+  }
 
   @Builder
   private TapZonePreview() {

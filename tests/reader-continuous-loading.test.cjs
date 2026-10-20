@@ -4,14 +4,21 @@ const fs = require('node:fs')
 const path = require('node:path')
 const vm = require('node:vm')
 const ts = require(process.env.READER_KIT_TYPESCRIPT || '/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/node_modules/typescript')
+const { ReaderSnapshot } = require('./load-core.cjs')('ReaderSession')
+const presentationText = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderImagePlaceholder.ets'), 'utf8')
+const presentationSource = presentationText.slice(presentationText.indexOf('export class ReaderImagePresentation'), presentationText.indexOf('/** Metadata'))
+const presentationExports = {}
+vm.runInNewContext(ts.transpileModule(presentationSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText, { exports: presentationExports })
 const text = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderContinuousSurface.ets'), 'utf8')
 const methods = text.slice(text.indexOf('  private originalDrawableIdentity()'), text.indexOf('  private async resolveNoticeAction(frame:'))
 const source = `export class Feedback { decodedOriginalIdentity = ''; snapshot; ${methods} }`
 const exportsObject = {}
-vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText, { exports: exportsObject })
+vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText, { exports: exportsObject, ReaderImagePresentation: presentationExports.ReaderImagePresentation })
 function fixture() {
   const value = new exportsObject.Feedback()
-  value.snapshot = { frames: [{slotId: 5, part: {sourceIndex: 3, fragment: 'whole'}, asset: {assetRequestId: 7, visualRevision: 2, kind: 'original', phase: 'decoding'}}] }
+  const asset = new ReaderSnapshot()
+  asset.assetRequestId = asset.requestId = 7; asset.visualRevision = 2; asset.kind = 'original'; asset.phase = 'decoding'; asset.uri = 'file://current'
+  value.snapshot = { frames: [{slotId: 5, part: {sourceIndex: 3, fragment: 'whole'}, asset}] }
   return value
 }
 test('native completion hides only the matching original overlay before stable presentation', () => {
@@ -35,4 +42,27 @@ test('thumbnail completion does not dismiss original preparation; terminal state
   for (const phase of ['idle','asset']) { asset.phase = phase; assert.equal(value.loadingVisible(), true) }
   for (const phase of ['displayed','failed','suppressed']) { asset.phase = phase; assert.equal(value.loadingVisible(), false) }
   value.snapshot.frames = []; assert.equal(value.loadingVisible(), true)
+})
+
+test('shared presentation never exposes image pixels together with loading feedback', () => {
+  const value = fixture(); const frame = value.snapshot.frames[0]
+  for (const phase of ['idle', 'asset', 'decoding', 'displayed', 'failed', 'suppressed']) {
+    frame.asset.phase = phase
+    for (const decoded of ['', '5:7:3:whole:2', '5:6:3:whole:2']) {
+      for (const preview of [false, true]) {
+        const presentation = new presentationExports.ReaderImagePresentation(frame, decoded, preview)
+        assert.equal(presentation.loading && presentation.pixels, false)
+      }
+    }
+  }
+  frame.asset.phase = 'decoding'
+  const awaiting = new presentationExports.ReaderImagePresentation(frame, '', false)
+  assert.equal(awaiting.loading, true); assert.equal(awaiting.pixels, false)
+  const decoded = new presentationExports.ReaderImagePresentation(frame, '5:7:3:whole:2', false)
+  assert.equal(decoded.loading, false); assert.equal(decoded.pixels, true)
+  const preview = new presentationExports.ReaderImagePresentation(frame, '', true)
+  assert.equal(preview.loading, false); assert.equal(preview.pixels, false)
+  frame.asset.retainedUri = 'file://retained'; frame.asset.retainedAssetRequestId = 6
+  const retained = new presentationExports.ReaderImagePresentation(frame, '', false)
+  assert.equal(retained.loading, false); assert.equal(retained.pixels, true)
 })

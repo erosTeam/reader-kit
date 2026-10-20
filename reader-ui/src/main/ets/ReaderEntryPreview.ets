@@ -2,6 +2,16 @@ import { image } from '@kit.ImageKit'
 import { FrameCallback, UIUtils } from '@kit.ArkUI'
 import { ReaderEntryRect, ReaderEntryTransition } from './ReaderEntryTransition'
 
+/** Borrowed host geometry and pixels only; shared UI owns preview rendering. */
+export class ReaderOpeningPreview {
+  readonly pixels: image.PixelMap
+  readonly rect: ReaderEntryRect
+  readonly opacity: number
+  constructor(pixels: image.PixelMap, rect: ReaderEntryRect, opacity: number) {
+    this.pixels = pixels; this.rect = rect.copy(); this.opacity = opacity
+  }
+}
+
 /** Host-owned snapshot; whole-page coverage must be asserted by the producer, never inferred from its ratio. */
 export class ReaderEntryPreviewSource {
   private released: boolean = false

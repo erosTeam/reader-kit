@@ -11,7 +11,7 @@ import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { normalizedReaderPageGap } from './ReaderPageGap'
 import { readerElementKey } from './ReaderElementKey'
 import { ReaderLoadingStage } from './ReaderLoadingStage'
-import { ReaderImagePlaceholder } from './ReaderImagePlaceholder'
+import { ReaderImagePlaceholder, ReaderImagePresentation } from './ReaderImagePlaceholder'
 
 class ReaderEntryAfterLayout extends FrameCallback {
   private action: () => void
@@ -108,6 +108,7 @@ export struct ReaderPagedViewport {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param entryTransition: ReaderEntryTransition | null = null
+  @Param entryPreviewVisible: boolean = false
   @Param selected: boolean = true
   @Param zoomResetCommand: ReaderZoomResetCommand | null = null
   @Event onTap: (xFraction: number, yFraction: number) => void = () => {}
@@ -424,6 +425,7 @@ export struct ReaderPagedViewport {
             imageInterpolation: this.imageInterpolation,
             snapshot: this.snapshot, slotId: frame.slotId,
             entryTransition: this.entryTransition,
+            entryPreviewVisible: this.entryPreviewVisible,
             entryMeasurement: this.entryMeasurement,
             entryGeometryReady: this.entryViewportLaidOut && this.entryRatiosReady(),
             renderedFragment: frame.part.fragment,
@@ -448,7 +450,7 @@ export struct ReaderPagedViewport {
       .translate({ x: this.zoomState.x, y: this.zoomState.y })
       .animation({ duration: this.zoomAnimating ? 180 : 0, curve: Curve.FastOutSlowIn })
       .id(this.selected ? 'rkit-paged-content' : `rkit-cached-content-${this.snapshot.displayIndex}`)
-      if (this.snapshot.phase === 'catalog') {
+      if (this.snapshot.phase === 'catalog' && this.snapshot.frames.length === 0 && !this.entryPreviewVisible) {
         ReaderLoadingStage({ label: $r('app.string.rkit_loading_resolving') })
       }
     }
@@ -499,6 +501,7 @@ struct ReaderPagedCell {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Require @Param snapshot: ReaderPagedSnapshot
   @Param entryTransition: ReaderEntryTransition | null = null
+  @Param entryPreviewVisible: boolean = false
   @Param entryMeasurement: ReaderEntryMeasurement | null = null
   @Param entryGeometryReady: boolean = false
   @Require @Param slotId: number
@@ -527,6 +530,11 @@ struct ReaderPagedCell {
     if (this.frame().asset.kind === 'original' && identity === this.originalDrawableIdentity()) {
       this.decodedOriginalIdentity = identity
     }
+  }
+
+  private imagePresentation(): ReaderImagePresentation {
+    return new ReaderImagePresentation(this.frame(), this.decodedOriginalIdentity,
+      this.entryPreviewVisible && this.entryTransition?.matches(this.frame().part) === true)
   }
 
   private frame(): ReaderPagedFrame {
@@ -659,6 +667,7 @@ struct ReaderPagedCell {
             if (this.retainedFrameValue === null) this.onInvalidDecodedMetrics(slotId, requestId, assetRequestId)
           },
         })
+          .opacity(this.imagePresentation().pixels ? 1 : 0)
           .width(this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy))
           .height(this.imageHeight())
           .zIndex(this.retainedFrameValue !== null && this.frame().asset.phase === 'decoding' ? 1 : 0)
@@ -683,12 +692,14 @@ struct ReaderPagedCell {
             onDecodedOriginal: (identity: string): void => { this.originalDecoded(identity) },
             onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onInvalidDecodedMetrics: this.onInvalidDecodedMetrics,
-          }).width(this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy))
+          }).opacity(this.imagePresentation().pixels ? 1 : 0)
+            .width(this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy))
             .height(this.imageHeight())
             .zIndex(this.frame().asset.phase === 'displayed' ? 1 : 0)
         }
       }
-      ReaderImagePlaceholder({ frame: this.frame(), entryTransition: this.entryTransition }).zIndex(2)
+      ReaderImagePlaceholder({ presentation: this.imagePresentation(),
+        frame: this.frame(), entryTransition: this.entryTransition }).zIndex(2)
     }
     .width(this.cellWidth())
     .height(this.frameHeight).clip(true)

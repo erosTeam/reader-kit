@@ -77,6 +77,7 @@ export struct ReaderPagerSurface {
   @Param command: ReaderPagerCommand | null = null
   @Param zoomResetCommand: ReaderZoomResetCommand | null = null
   @Param entryTransition: ReaderEntryTransition | null = null
+  @Param entryPreviewVisible: boolean = false
   @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
   @Event onZoomedChange: (zoomed: boolean, topology: number, navigation: number) => void = () => {}
   @Event onTap: (xFraction: number, yFraction: number) => void = () => {}
@@ -103,6 +104,7 @@ export struct ReaderPagerSurface {
           command: this.command,
           zoomResetCommand: this.zoomResetCommand,
           entryTransition: this.entryTransition,
+          entryPreviewVisible: this.entryPreviewVisible,
           onInputLockChange: this.onInputLockChange,
           onZoomedChange: this.onZoomedChange,
           onBoundary: this.onBoundary,
@@ -111,7 +113,7 @@ export struct ReaderPagerSurface {
           onRetry: this.onRetry, onNoticeAction: this.onNoticeAction,
           onTap: this.onTap,
         })
-      } else if (this.snapshot.phase === 'idle' || this.snapshot.phase === 'catalog') {
+      } else if (!this.entryPreviewVisible && (this.snapshot.phase === 'idle' || this.snapshot.phase === 'catalog')) {
         LoadingProgress().width(32).height(32)
       }
     }
@@ -128,6 +130,7 @@ struct ReaderNativePager {
   @Param command: ReaderPagerCommand | null = null
   @Param zoomResetCommand: ReaderZoomResetCommand | null = null
   @Param entryTransition: ReaderEntryTransition | null = null
+  @Param entryPreviewVisible: boolean = false
   @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
   @Event onZoomedChange: (zoomed: boolean, topology: number, navigation: number) => void = () => {}
   @Event onTap: (xFraction: number, yFraction: number) => void = () => {}
@@ -329,6 +332,7 @@ struct ReaderNativePager {
           viewportWidth: this.viewportWidth, viewportHeight: this.viewportHeight,
           snapshot: item.snapshot.forItem(item.key),
           entryTransition: item.key === item.snapshot.displayKeys[item.snapshot.displayIndex] ? this.entryTransition : null,
+          entryPreviewVisible: this.entryPreviewVisible,
           selected: item.key === item.snapshot.displayKeys[item.snapshot.displayIndex],
           active: this.active && !this.moving && item.key === item.snapshot.displayKeys[item.snapshot.displayIndex],
           zoomResetCommand: this.zoomResetCommand,
