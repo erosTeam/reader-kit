@@ -855,6 +855,38 @@ test('continuous observations require decoded active first-visible original and 
   session.close()
 })
 
+test('fractional continuous movement keeps exact progress without rebuilding presentation snapshots', async () => {
+  const { session, key } = setup({ count: 800 })
+  session.setPolicy(policy({ layout: 'continuous' }))
+  await session.open(key); await tick()
+  let full = 0
+  const positions = []
+  session.subscribe(() => { full += 1 }, (anchor, selection) => positions.push([anchor.y, selection]))
+  let s = session.snapshot()
+  session.setContinuousRange(0, 0, s.topologyRevision, s.navigationRevision)
+  await tick(); s = session.snapshot()
+  const frame = s.frames[0]
+  decode(session, frame)
+  const observe = y => session.reportContinuousVisible(s.topologyRevision, s.navigationRevision,
+    '0:whole', frame.slotId, frame.asset.assetRequestId, 0.5, y)
+  assert.equal(observe(0), true)
+  const baseline = full
+  for (let step = 1; step <= 120; step += 1) assert.equal(observe(step / 121), true)
+  assert.equal(full, baseline)
+  assert.equal(positions.length, 120)
+  assert.equal(session.snapshot().observedAnchor.y, 120 / 121)
+  assert.equal(session.snapshot().anchor.y, 120 / 121)
+  assert.ok(positions.every(value => value[1] === s.selectionId))
+  // Range, decoding and explicit navigation remain full presentation updates.
+  session.setContinuousRange(1, 1, s.topologyRevision, s.navigationRevision)
+  await tick()
+  assert.ok(full > baseline)
+  const retired = positions.length
+  assert.equal(observe(0.5), false)
+  assert.equal(positions.length, retired)
+  session.close()
+})
+
 test('continuous observed coverage excludes a decoded prefetch neighbor and includes a visible terminal row', async () => {
   const { session, key } = setup({ count: 5 })
   session.setPolicy(policy({ layout: 'continuous' })); session.setNeighborPreload(true)

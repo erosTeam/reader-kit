@@ -144,7 +144,12 @@ pre-test preference value set. Production reader routing remains unchanged.
 `ReaderPagedSnapshot.observedPosition()` reports only decoded original parts that
 the native viewport actually displays. It excludes thumbnail previews and
 continuous-list prefetch neighbors, keeps the stable source anchor, and reports
-whether the terminal source page is among the visible originals. The core and
+whether the terminal source page is among the visible originals. Same-page fractional scroll
+updates use the optional second `ReaderPagedSession.subscribe` callback. The core
+updates the exact anchor immediately; `ReaderSurface` publishes that observation
+without replacing its presentation snapshot. Range, image, policy, selection and
+unit changes still publish complete snapshots. Consumers that omit this callback
+retain the full-snapshot subscription behavior. The core and
 UI never choose a persistence format or write application data.
 
 `ReaderSurface.onObservedPosition` is an optional host callback. Koma's Debug

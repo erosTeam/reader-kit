@@ -1,7 +1,7 @@
 import { ReaderSystemBarController } from './ReaderSystemBarController'
 import { ReaderModeControlParams } from './ReaderModeControl'
 import { UIUtils } from '@kit.ArkUI'
-import { ReaderPagedSession, ReaderPagedSnapshot, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy, ReaderLayout,
+import { ReaderPagedSession, ReaderPagedSnapshot, ReaderReadingAnchor, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy, ReaderLayout,
   ReaderVariantPreference, ReaderProcessingPolicy, ReaderProcessingResult, ReaderPage, ReaderTemporaryVariantScope, ReaderTemporaryVariantOverride,
   ReaderInputPort, ReaderMoveIntent, ReaderImageShareTarget,
   ReaderImageShareController, ReaderPagedFrame, ReaderImageInformation,
@@ -331,6 +331,15 @@ export struct ReaderSurface {
       this.shareController.update(ReaderImageShareTarget.from(state), this.active)
       this.saveController.update(state, this.active)
       this.syncAutoRead()
+    }, (anchor: ReaderReadingAnchor, selectionId: number): void => {
+      const state = this.state
+      if (this.chromeDisposed || state.phase !== 'ready' || state.selectionId !== selectionId ||
+        state.observedSelectionId !== selectionId || state.unit?.key.equals(anchor.unit) !== true) return
+      // This snapshot belongs to the surface. Refresh its non-reactive anchor
+      // in place; image topology, native scroller and chrome values are intact.
+      state.anchor = anchor.copy()
+      state.observedAnchor = anchor.copy()
+      this.publishObserved(state)
     })
     this.inputConnection = this.input?.connect((intent: ReaderMoveIntent): boolean => this.externalMove(intent)) ?? 0
     void this.session.open(this.initialUnit, this.initialIndex)

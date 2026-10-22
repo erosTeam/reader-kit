@@ -275,6 +275,7 @@ export class ReaderPagedSession {
   private cropPresentationDeferred: boolean = false
   private activityEpoch: number = 0
   private listener: ((snapshot: ReaderPagedSnapshot) => void) | null = null
+  private positionListener: ((anchor: ReaderReadingAnchor, selectionId: number) => void) | null = null
 
   constructor(catalog: ReaderCatalog, assets: ReaderAssetProvider, preloadHost: ReaderPreloadHost | null = null,
     failures: ReaderAssetFailureClassifier | null = null, autoReadSourceHost: ReaderAutoReadSourceHost | null = null) {
@@ -543,8 +544,10 @@ export class ReaderPagedSession {
     this.syncProcessing()
     if (retiredTarget && !this.disposed && this.state.phase === 'ready') this.reconcile()
   }
-  subscribe(listener: (snapshot: ReaderPagedSnapshot) => void): void {
+  subscribe(listener: (snapshot: ReaderPagedSnapshot) => void,
+    positionListener: ((anchor: ReaderReadingAnchor, selectionId: number) => void) | null = null): void {
     this.listener = listener
+    this.positionListener = positionListener
     this.emit()
   }
 
@@ -1414,10 +1417,18 @@ export class ReaderPagedSession {
     if (previous !== null && previous.unit.equals(anchor.unit) && previous.pageKey === anchor.pageKey &&
       previous.x === x && previous.y === y && previous.fragment === 'whole' &&
       this.state.observedSelectionId === this.state.selectionId) return true
+    const positionOnly = previous !== null && previous.unit.equals(anchor.unit) &&
+      previous.pageKey === anchor.pageKey && previous.fragment === anchor.fragment &&
+      this.state.observedSelectionId === this.state.selectionId
     this.state.anchor = anchor.copy()
     this.state.observedAnchor = anchor
     this.state.observedSelectionId = this.state.selectionId
-    this.emit()
+    // A fractional movement inside the same decoded page changes the reading
+    // anchor, not image demand or presentation. Avoid rebuilding the catalog,
+    // frames and every viewport child for each native scroll callback.
+    if (positionOnly && this.positionListener !== null) {
+      this.positionListener(anchor.copy(), this.state.selectionId)
+    } else this.emit()
     return true
   }
 
@@ -1446,5 +1457,6 @@ export class ReaderPagedSession {
     this.state.phase = 'closed'
     this.emit()
     this.listener = null
+    this.positionListener = null
   }
 }
