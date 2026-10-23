@@ -2,9 +2,8 @@
 
 Shared HarmonyOS reader integration for NextN, NextE and Koma. Ordinary Shared
 routing and retained Legacy fallback belong to each host, not to this package.
-In the current Koma checkout, ordinary opens still mount Legacy even with a saved
-`shared` preference; only its existing Debug entry reaches Shared. Restoring the
-ordinary Koma route remains OPEN. A common package revision does not establish
+Koma ordinary opens now honor its saved reader implementation preference; its
+Shared route and retained Legacy fallback remain host-owned. A common package revision does not establish
 host reachability, full replacement, all-provider coverage or performance.
 Runtime acceptance belongs to the active host work order and its bound receipts.
 
@@ -107,6 +106,15 @@ limit, while a host can warm additional future bytes without mounting more
 image nodes. Navigation, unit changes, policy changes, range changes, depth
 changes and close cancel retired demand. Hosts without the optional port retain
 their previous behavior.
+
+An optional `preloadNextUnit` port reuses the same depth as both the end-of-unit
+lead and the budget for source pages in one next unit. The shared session owns
+triggering and retirement; a host must resolve adjacency from its verified
+automatic-continuation sequence. Preparation must share in-flight work with
+foreground entry, leave the live unit and progress unchanged, and keep failures
+retryable. Koma opts in on its ordinary Shared route; NextN and NextE do not
+implement the optional port and gain no cross-unit requests.
+
 
 ## Exact manual source reload (2026-09-13)
 

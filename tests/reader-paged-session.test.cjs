@@ -8,9 +8,9 @@ const { ReaderAutoReadController } = load('ReaderAutoRead')
 const tick = () => new Promise(resolve => setImmediate(resolve))
 
 function setup({ count = 5, wide = [], fail = [], deferred = false, preload = false, preloadFailure = false,
-  autoReadSource = null } = {}) {
+  autoReadSource = null, nextUnitPreload = false, nextUnitPreloadFailure = false } = {}) {
   const key = new ReaderUnitKey('source', 'work', 'A')
-  const calls = { open: [], load: [], release: [], pending: [], preload: [] }
+  const calls = { open: [], load: [], release: [], pending: [], preload: [], nextUnitPreload: [] }
   const catalog = {
     async open(target) { calls.open.push(target.copy()); return new ReaderUnit(target, target.unit, count) },
     async page(unit, index) {
@@ -34,13 +34,18 @@ function setup({ count = 5, wide = [], fail = [], deferred = false, preload = fa
       return asset
     },
   }
-  const preloadHost = preload || preloadFailure ? {
+  const preloadHost = preload || preloadFailure || nextUnitPreload ? {
     async preload(page, cancellation) {
       cancellation.check()
       calls.preload.push({ index: page.sourceIndex, cancellation })
       if (preloadFailure) throw new Error('cache unavailable')
     },
   } : null
+  if (nextUnitPreload) preloadHost.preloadNextUnit = async (unit, depth, cancellation) => {
+    cancellation.check()
+    calls.nextUnitPreload.push({ unit, depth, cancellation })
+    if (nextUnitPreloadFailure) throw Error('next chapter unavailable')
+  }
   const session = new ReaderPagedSession(catalog, assets, preloadHost, null, autoReadSource)
   session.setViewportActive(true)
   return { session, key, calls, catalog }
@@ -1455,5 +1460,70 @@ test('continuous demand retains preceding rows while a proven terminal row owns 
   assert.equal(observe(3, first), true)
   session.move('previous'); await tick()
   assert.equal(observe(3, first), false)
+  session.close()
+})
+
+
+test('next-unit warming uses the configured lead once without selecting or opening that unit', async () => {
+  const { session, key, calls } = setup({ count: 10, nextUnitPreload: true })
+  session.setPreloadDepth(2)
+  await session.open(key, 7); await tick()
+  assert.equal(calls.nextUnitPreload.length, 0)
+  session.seekSource(8, key, session.snapshot().navigationRevision); await tick()
+  assert.equal(calls.nextUnitPreload.length, 1)
+  assert.equal(calls.nextUnitPreload[0].depth, 2)
+  assert.equal(calls.nextUnitPreload[0].unit.key.unit, 'A')
+  session.seekSource(9, key, session.snapshot().navigationRevision); await tick()
+  assert.equal(calls.nextUnitPreload.length, 1)
+  assert.equal(calls.open.length, 1)
+  assert.equal(session.snapshot().unit.key.unit, 'A')
+  assert.equal(session.snapshot().anchor.sourceIndexHint, 9)
+  session.seekSource(5, key, session.snapshot().navigationRevision); await tick()
+  assert.equal(calls.nextUnitPreload[0].cancellation.isCancelled(), true)
+  session.close()
+})
+test('continuous next-unit lead follows visible end and still works with ordinary processing enabled', async () => {
+  const { ReaderProcessingPolicy } = load('ReaderProcessingCoordinator')
+  const { ReaderVariantPreference } = load('ReaderSession')
+  const { session, key, calls } = setup({ count: 10, nextUnitPreload: true })
+  session.setPolicy(policy({ layout: 'continuous' }))
+  session.setProcessingPolicy(new ReaderProcessingPolicy('original', false, () => new ReaderVariantPreference()))
+  session.setPreloadDepth(2)
+  await session.open(key, 6); await tick()
+  assert.equal(calls.nextUnitPreload.length, 0)
+  const before = session.snapshot()
+  session.setContinuousRange(6, 8, before.topologyRevision, before.navigationRevision); await tick()
+  assert.equal(calls.nextUnitPreload.length, 1)
+  assert.equal(session.snapshot().unit.key.unit, 'A')
+  session.close()
+})
+test('pausing, zero depth, unit replacement and close retire next-unit consumers', async () => {
+  const { session, key, calls } = setup({ count: 10, nextUnitPreload: true })
+  session.setPreloadDepth(2); await session.open(key, 9); await tick()
+  session.setViewportActive(false)
+  assert.equal(calls.nextUnitPreload[0].cancellation.isCancelled(), true)
+  session.setViewportActive(true); await tick()
+  assert.equal(calls.nextUnitPreload.length, 2)
+  session.setProcessingActive(false)
+  assert.equal(calls.nextUnitPreload[1].cancellation.isCancelled(), true)
+  session.setProcessingActive(true); await tick()
+  session.setPreloadDepth(0)
+  assert.equal(calls.nextUnitPreload[2].cancellation.isCancelled(), true)
+  session.setPreloadDepth(2); await tick()
+  const retiring = calls.nextUnitPreload.at(-1)
+  await session.open(new ReaderUnitKey('source', 'work', 'B')); await tick()
+  assert.equal(retiring.cancellation.isCancelled(), true)
+  await session.open(key, 9); await tick()
+  session.close()
+  assert.equal(calls.nextUnitPreload.at(-1).cancellation.isCancelled(), true)
+})
+test('unavailable next-unit preparation leaves the visible session ready and unchanged', async () => {
+  const { session, key, calls } = setup({ count: 10, nextUnitPreload: true, nextUnitPreloadFailure: true })
+  session.setPreloadDepth(2); await session.open(key, 9); await tick()
+  assert.equal(calls.nextUnitPreload.length, 1)
+  assert.equal(calls.open.length, 1)
+  assert.equal(session.snapshot().phase, 'ready')
+  assert.equal(session.snapshot().unit.key.unit, 'A')
+  assert.equal(session.snapshot().anchor.sourceIndexHint, 9)
   session.close()
 })

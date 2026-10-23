@@ -249,6 +249,8 @@ export class ReaderPagedSession {
   private preloadEpoch: number = 0
   private preloadSignature: string = ''
   private preloadCancellation: ReaderCancellation = new ReaderCancellation()
+  private nextUnitPreloadSignature: string = ''
+  private nextUnitPreloadCancellation: ReaderCancellation = new ReaderCancellation()
   private autoReadSourcePreparations: Map<number, ReaderCancellation> = new Map()
   /** Retires source preparations even when navigation returns to the same target index. */
   private autoReadSourceGeneration: number = 0
@@ -541,6 +543,7 @@ export class ReaderPagedSession {
     if (!active) this.cancelAutoReadSourcePreparations()
     if (this.active && !active) this.activityEpoch += 1
     this.active = active && !this.disposed
+    this.scheduleNextUnitPreload()
     this.syncProcessing()
     if (retiredTarget && !this.disposed && this.state.phase === 'ready') this.reconcile()
   }
@@ -732,6 +735,7 @@ export class ReaderPagedSession {
   setProcessingActive(active: boolean): void {
     if (this.disposed || this.processingAllowed === active) return
     this.processingAllowed = active
+    this.scheduleNextUnitPreload()
     this.syncProcessing()
     this.emit()
   }
@@ -760,7 +764,32 @@ export class ReaderPagedSession {
       this.active && this.processingAllowed, this.cropEnabled, this.processingCropRevision)
   }
 
+  /** The existing depth is both the end-of-unit lead and the next-unit budget.
+   * Hosts without verified multi-unit preparation keep their original behavior. */
+  private scheduleNextUnitPreload(): void {
+    const unit = this.state.unit
+    const end = this.state.policy.layout === 'continuous' && this.continuousEnd >= 0
+      ? this.continuousEnd : this.state.displayIndex
+    const eligible = !this.disposed && this.active && this.processingAllowed && this.state.phase === 'ready' &&
+      this.state.kind === 'original' && unit !== null && this.map !== null && this.map.count() > 0 &&
+      this.preloadDepth > 0 && this.map.count() - 1 - end < this.preloadDepth &&
+      this.preloadHost?.preloadNextUnit !== undefined
+    const signature = !eligible || unit === null ? '' :
+      JSON.stringify([unit.key.scope, unit.key.work, unit.key.unit, this.preloadDepth])
+    if (signature === this.nextUnitPreloadSignature) return
+    this.nextUnitPreloadCancellation.cancel()
+    this.nextUnitPreloadSignature = signature
+    if (signature.length === 0 || unit === null) return
+    const cancellation = new ReaderCancellation()
+    this.nextUnitPreloadCancellation = cancellation
+    console.info(`[ReaderPreload] next_unit depth=${this.preloadDepth}`)
+    void this.preloadHost?.preloadNextUnit?.(unit.copy(), this.preloadDepth, cancellation).catch((): void => {
+      if (!cancellation.isCancelled()) console.warn('[ReaderPreload] next_unit_failed')
+    })
+  }
+
   private schedulePreload(): void {
+    this.scheduleNextUnitPreload()
     if (this.processingPolicy !== null) {
       this.preloadCancellation.cancel(); this.preloadSignature = ''; return
     }
@@ -874,6 +903,8 @@ export class ReaderPagedSession {
     this.cancelOriginalPreparations()
     this.cancelAutoReadSourcePreparations()
     this.processing.clear()
+    this.nextUnitPreloadSignature = ''
+    this.nextUnitPreloadCancellation.cancel()
     this.preloadSignature = ''
     this.preloadCancellation.cancel()
     this.preloadCancellation = new ReaderCancellation()
@@ -1449,6 +1480,8 @@ export class ReaderPagedSession {
     this.cancelAutoReadSourcePreparations()
     this.assetPlans.clear()
     if (this.disposed) return
+    this.nextUnitPreloadSignature = ''
+    this.nextUnitPreloadCancellation.cancel()
     this.disposed = true
     this.active = false
     this.cancellation.cancel()
