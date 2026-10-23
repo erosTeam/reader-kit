@@ -1381,37 +1381,40 @@ export class ReaderPagedSession {
   }
 
   /** Native visible range drives demand, not proof that any original was displayed. */
-  setContinuousRange(start: number, end: number, topologyRevision: number, navigationRevision: number): boolean {
+  setContinuousRange(start: number, end: number, topologyRevision: number, navigationRevision: number,
+    positionIndex: number = start): boolean {
     if (!this.active || this.state.phase !== 'ready' || this.state.policy.layout !== 'continuous' ||
       this.map === null || topologyRevision !== this.topologyRevision || navigationRevision !== this.navigationRevision ||
-      !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || end >= this.map.count()) return false
-    if (start === this.continuousStart && end === this.continuousEnd) return true
+      !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || end >= this.map.count() ||
+      !Number.isInteger(positionIndex) || positionIndex < start || positionIndex > end) return false
+    if (start === this.continuousStart && end === this.continuousEnd && this.state.displayIndex === positionIndex) return true
     this.continuousStart = start
     this.continuousEnd = end
-    if (this.state.displayIndex !== start) {
+    if (this.state.displayIndex !== positionIndex) {
       this.cancelOriginalPreparations()
       this.cancelAutoReadSourcePreparations()
-      this.state.displayIndex = start
-      this.state.anchor = this.map.anchorAt(start)
+      this.state.displayIndex = positionIndex
+      this.state.anchor = this.map.anchorAt(positionIndex)
       this.state.selectionId += 1
     }
     this.reconcile()
     return true
   }
 
-  /** A measured point on the first visible decoded original; never a total-scroll estimate. */
+  /** A measured point on the selected visible decoded original; never a total-scroll estimate. */
   reportContinuousVisible(topologyRevision: number, navigationRevision: number, itemKey: string,
     slotId: number, requestId: number, x: number, y: number): boolean {
     if (!this.active || this.state.phase !== 'ready' || this.state.policy.layout !== 'continuous' ||
       this.state.kind !== 'original' || this.map === null || topologyRevision !== this.topologyRevision ||
       navigationRevision !== this.navigationRevision || this.continuousStart < 0 ||
-      itemKey !== this.displayKeys[this.continuousStart] || !Number.isFinite(x) || !Number.isFinite(y) ||
+      this.state.displayIndex < this.continuousStart || this.state.displayIndex > this.continuousEnd ||
+      itemKey !== this.displayKeys[this.state.displayIndex] || !Number.isFinite(x) || !Number.isFinite(y) ||
       x < 0 || x > 1 || y < 0 || y > 1) return false
-    const frame = this.framesAt(this.continuousStart).find((candidate: ReaderPagedFrame) =>
+    const frame = this.framesAt(this.state.displayIndex).find((candidate: ReaderPagedFrame) =>
       candidate.slotId === slotId && candidate.asset.assetRequestId === requestId &&
       candidate.asset.phase === 'displayed' && candidate.asset.kind === 'original')
     if (frame === undefined || requestId === 0) return false
-    const anchor = this.map.anchorAt(this.continuousStart, 0, x, y)
+    const anchor = this.map.anchorAt(this.state.displayIndex, 0, x, y)
     if (anchor === null || anchor.pageKey === null) return false
     const previous = this.state.observedAnchor
     if (previous !== null && previous.unit.equals(anchor.unit) && previous.pageKey === anchor.pageKey &&

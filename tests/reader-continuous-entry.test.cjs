@@ -35,17 +35,17 @@ function fixture(width = 400, height = 2400) {
   return { frame, state, transition }
 }
 const List = evaluate(`export class List { ${methods('ReaderContinuousSurface', 'ReaderContinuousList',
-  ['imageTap', 'imageAspectRatio', 'refreshEntryPosition', 'rotates', 'imageIdentity', 'invalidatePosition', 'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'onImageLock'])} }`, {}, {
+  ['imageTap', 'imageAspectRatio', 'refreshEntryPosition', 'rotates', 'imageIdentity', 'invalidatePosition', 'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'onImageLock', 'onRowGeometry', 'releasePosition'])} }`, {}, {
   ReaderContinuousEntryPosition: Position, clearTimeout() {}, setTimeout: callback => { callback(); return 1 },
   ReaderContinuousAfterLayout: class { constructor(action) { this.action = action } },
   readerPolicyRotatesPage: core.readerPolicyRotatesPage,
   ScrollAlign: { START: 'start' }, LengthMetrics: { vp: x => x },
 }).List
-function listFixture() {
-  const f = fixture(), list = new List(), frames = []
+function listFixture(ListType = List) {
+  const f = fixture(), list = new ListType(), frames = []
   Object.assign(list, { snapshot: f.state, entryTransition: f.transition, entryPosition: null,
     active: true, disposed: false, pendingPosition: false, positionInFlight: false, moving: false,
-    positionEpoch: 1, viewWidth: 400, positionTimer: 0, measureTimer: 0,
+    positionTarget: -1, positionX: 0.5, positionY: 0, rowGeometry: new Map(), geometryRevision: 0, positionEpoch: 1, viewWidth: 400, positionTimer: 0, measureTimer: 0,
     lockedKey: '', lockedIdentity: '', zoomedKey: '', zoomedIdentity: '', cropRegions: new Map(), lastNavigation: f.state.navigationRevision,
     imageHeight: () => 2400, rowHeight: () => 2400, scheduleMeasure() {},
     scroller: { scrollToIndex() {} }, getUIContext: () => ({ postFrameCallback: value => frames.push(value.action) }),
@@ -250,4 +250,112 @@ test('plain tap remains available during loading without enabling image zoom', (
   assert.equal(zoom.canTap(), true); assert.equal(zoom.canInteract(), false)
   zoom.frame.asset.phase = 'displayed'; assert.equal(zoom.canInteract(), true)
   zoom.interactionAllowed = false; assert.equal(zoom.canTap(), false)
+})
+
+// Native regression 072: an earlier visible row can receive dimensions after
+// the requested row has already completed its first positioning frame.
+test('ordinary chapter entry keeps its requested row when preceding geometry arrives late', () => {
+  const f = listFixture(), positions = []
+  f.list.entryTransition = null
+  f.list.scroller.scrollToIndex = index => positions.push(index)
+  f.list.pendingPosition = true
+  f.list.schedulePosition()
+  f.frames.shift()()
+  assert.deepEqual(positions, [1])
+  // A range observation may include the preceding row while the selected last
+  // row is shorter than the viewport; that observation is not a new user seek.
+  f.state.displayIndex = 0
+  const prior = new core.ReaderPage(f.frame.part.unit, 'earlier', 0)
+  prior.width = 400; prior.height = 1800
+  f.state.pageMetadata = [prior]
+  f.list.positionTimer = 0
+  f.list.onSnapshotChanged()
+  f.list.onRowGeometry('other', 1800)
+  assert.deepEqual(positions, [1, 1], 'late preceding layout must refine the original navigation target')
+})
+
+test('real user takeover prevents late row geometry from pulling navigation back', () => {
+  const f = listFixture(), positions = []
+  f.list.entryTransition = null
+  f.list.scroller.scrollToIndex = index => positions.push(index)
+  f.list.schedulePosition(); f.frames.shift()()
+  f.list.positionTimer = 0
+  f.list.releasePosition()
+  f.list.onRowGeometry('other', 1800)
+  assert.deepEqual(positions, [1])
+})
+test('repeated unchanged row geometry does not create another seek', () => {
+  const f = listFixture(), positions = []
+  f.list.entryTransition = null
+  f.list.scroller.scrollToIndex = index => positions.push(index)
+  f.list.schedulePosition(); f.frames.shift()(); f.list.positionTimer = 0
+  f.list.onRowGeometry('other', 1800); f.frames.shift()(); f.list.positionTimer = 0
+  f.list.onRowGeometry('other', 1800)
+  assert.deepEqual(positions, [1, 1])
+})
+
+
+// Keep native-frame and timer queues separate: cancellation can race with a
+// callback already delivered to the event loop, so even a cancelled callback is replayed.
+function queuedListFixture() {
+  const timers = [], cancelled = new Set()
+  const QueuedList = evaluate(`export class List { ${methods('ReaderContinuousSurface', 'ReaderContinuousList',
+    ['imageTap', 'imageAspectRatio', 'refreshEntryPosition', 'rotates', 'imageIdentity', 'invalidatePosition',
+      'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'onImageLock', 'onRowGeometry', 'releasePosition'])} }`, {}, {
+    ReaderContinuousEntryPosition: Position,
+    clearTimeout: id => cancelled.add(id),
+    setTimeout: callback => { timers.push(callback); return timers.length },
+    ReaderContinuousAfterLayout: class { constructor(action) { this.action = action } },
+    readerPolicyRotatesPage: core.readerPolicyRotatesPage,
+    ScrollAlign: { START: 'start' }, LengthMetrics: { vp: x => x },
+  }).List
+  return { ...listFixture(QueuedList), timers, cancelled }
+}
+for (const stage of ['timer', 'postFrame']) for (const cause of ['user takeover', 'target failure']) {
+  test(`queued ${stage} cannot restore chapter positioning after ${cause}`, () => {
+    const f = queuedListFixture(), positions = []
+    f.list.entryTransition = null
+    f.list.scroller.scrollToIndex = index => positions.push(index)
+    f.list.pendingPosition = true
+    f.list.schedulePosition(); f.timers[0](); f.frames.shift()()
+    assert.deepEqual(positions, [1])
+    f.list.onRowGeometry('other', 1800)
+    const timerId = f.list.positionTimer
+    assert.ok(timerId > 0)
+    if (stage === 'postFrame') f.timers[timerId - 1]()
+    const beforeRelease = positions.length
+    if (cause === 'user takeover') f.list.releasePosition()
+    else {
+      f.frame.asset.phase = 'failed'
+      f.list.onSnapshotChanged()
+    }
+    assert.equal(f.list.positionTarget, -1)
+    assert.equal(f.list.pendingPosition, false)
+    assert.equal(f.list.positionInFlight, false)
+    if (stage === 'timer') {
+      assert.equal(f.cancelled.has(timerId), true)
+      // Deliberately invoke the stale callback even though clearTimeout was called.
+      f.timers[timerId - 1]()
+    } else f.frames.shift()()
+    assert.equal(positions.length, beforeRelease)
+    assert.equal(f.list.positionTarget, -1)
+    assert.equal(f.list.pendingPosition, false)
+    assert.equal(f.list.positionInFlight, false)
+    f.list.onRowGeometry('other', 1900)
+    assert.equal(positions.length, beforeRelease)
+    assert.equal(f.list.positionTimer, 0)
+  })
+}
+test('geometry behind the target does not invalidate an in-flight positioning frame', () => {
+  const f = queuedListFixture()
+  f.list.entryTransition = null
+  f.state.displayKeys.push('later')
+  f.list.pendingPosition = true
+  f.list.schedulePosition(); f.timers[0]()
+  const revision = f.list.geometryRevision
+  f.list.onRowGeometry('later', 1800)
+  assert.equal(f.list.geometryRevision, revision)
+  f.frames.shift()()
+  assert.equal(f.list.pendingPosition, false)
+  assert.equal(f.timers.length, 1)
 })

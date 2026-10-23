@@ -941,8 +941,8 @@ export struct ReaderSurface {
               this.requestBoundaryChapter(direction, topology, navigation)
             },
             onTap: (x: number, y: number): ReaderTapAction => this.pageTap(x, y),
-            onRange: (start: number, end: number, topology: number, navigation: number): void => {
-              this.session.setContinuousRange(start, end, topology, navigation)
+            onRange: (start: number, end: number, topology: number, navigation: number, position?: number): void => {
+              this.session.setContinuousRange(start, end, topology, navigation, position)
             },
             onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
               this.reportAssetPresented(slot, request, success, width, height)

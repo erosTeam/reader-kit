@@ -42,7 +42,7 @@ export struct ReaderContinuousSurface {
   @Event onInputLockChange: (locked: boolean, topology: number) => void = () => {}
   @Event onZoomedChange: (zoomed: boolean, topology: number, navigation: number) => void = () => {}
   @Event onTap: (xFraction: number, yFraction: number) => ReaderTapAction = () => 'none'
-  @Event onRange: (start: number, end: number, topology: number, navigation: number) => void = () => {}
+  @Event onRange: (start: number, end: number, topology: number, navigation: number, position?: number) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (topology: number, navigation: number, key: string, slot: number, request: number, x: number, y: number) => void = () => {}
   @Event onFailed: (topology: number, key: string, slot: number, request: number, fragment: ReaderFragment) => void = () => {}
@@ -94,7 +94,7 @@ struct ReaderContinuousList {
   @Event onZoomedChange: (zoomed: boolean, topology: number, navigation: number) => void = () => {}
   @Event onTap: (xFraction: number, yFraction: number) => ReaderTapAction = () => 'none'
   @Require @Param createdRevision: number
-  @Event onRange: (start: number, end: number, topology: number, navigation: number) => void = () => {}
+  @Event onRange: (start: number, end: number, topology: number, navigation: number, position?: number) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (topology: number, navigation: number, key: string, slot: number, request: number, x: number, y: number) => void = () => {}
   @Event onFailed: (topology: number, key: string, slot: number, request: number, fragment: ReaderFragment) => void = () => {}
@@ -116,6 +116,11 @@ struct ReaderContinuousList {
   private positionTimer: number = 0
   private positionInFlight: boolean = false
   private positionEpoch: number = 0
+  private positionTarget: number = -1
+  private positionX: number = 0.5
+  private positionY: number = 0
+  private rowGeometry: Map<string, number> = new Map()
+  private geometryRevision: number = 0
   private disposed: boolean = false
   private measureTimer: number = 0
   private first: number = 0
@@ -179,6 +184,7 @@ struct ReaderContinuousList {
 
   aboutToDisappear(): void {
     this.disposed = true
+    this.positionTarget = -1
     this.entryTransition?.cancel()
     this.entryPosition = null
     this.positionEpoch += 1
@@ -199,6 +205,10 @@ struct ReaderContinuousList {
     if (entryFrame?.asset.phase === 'failed') this.entryTransition?.cancel()
     if (this.entryPosition !== null && entryFrame !== undefined &&
       this.entryPosition.height !== this.imageHeight(entryFrame.part.sourceIndex)) this.invalidatePosition()
+    if (this.positionTarget >= 0) {
+      const targetFrame = this.snapshot.forItem(this.snapshot.displayKeys[this.positionTarget]).frames[0]
+      if (targetFrame?.asset.phase === 'failed' || targetFrame?.asset.phase === 'suppressed') this.releasePosition()
+    }
     let cropChanged = false
     this.snapshot.pageMetadata.forEach((page) => {
       const crop = this.snapshot.cropForPage(page.sourceIndex)
@@ -208,7 +218,7 @@ struct ReaderContinuousList {
       this.cropRegions.set(page.sourceIndex, value)
     })
     if (cropChanged) this.invalidatePosition()
-    if (!this.active) this.moving = false
+    if (!this.active) { this.moving = false; this.positionTarget = -1 }
     if (this.lockedKey.length > 0) {
       const frame = this.snapshot.forItem(this.lockedKey).frames[0]
       if (frame === undefined || frame.asset.phase !== 'displayed' ||
@@ -228,6 +238,8 @@ struct ReaderContinuousList {
     }
     if (this.lastNavigation !== this.snapshot.navigationRevision) {
       this.lastNavigation = this.snapshot.navigationRevision
+      this.positionTarget = -1
+      this.rowGeometry.clear()
       this.boundarySwipe.cancel()
       this.invalidatePosition()
     }
@@ -328,6 +340,7 @@ struct ReaderContinuousList {
     if (locked) {
       if (frame.asset.phase !== 'displayed' || (this.lockedKey.length > 0 && this.lockedKey !== key)) return
       this.entryTransition?.cancel()
+      this.releasePosition()
       this.lockedKey = key
       this.lockedIdentity = identity
     } else if (this.lockedKey === key && this.lockedIdentity === identity) {
@@ -364,18 +377,46 @@ struct ReaderContinuousList {
     this.pendingPosition = true
   }
 
+  private onRowGeometry(key: string, height: number): void {
+    if (!Number.isFinite(height) || height <= 0) return
+    const previous = this.rowGeometry.get(key)
+    this.rowGeometry.set(key, height)
+    if (previous === height || this.positionTarget < 0 || this.disposed || !this.active) return
+    const index = this.snapshot.displayKeys.indexOf(key)
+    if (index < 0 || index > this.positionTarget) return
+    this.geometryRevision += 1
+    if (this.pendingPosition || this.positionInFlight) return
+    this.invalidatePosition()
+    this.schedulePosition()
+  }
+
+  private releasePosition(): void {
+    this.positionTarget = -1
+    this.positionEpoch += 1
+    if (this.positionTimer !== 0) clearTimeout(this.positionTimer)
+    this.positionTimer = 0
+    this.positionInFlight = false
+    this.pendingPosition = false
+  }
+
   private schedulePosition(): void {
     if (this.positionTimer !== 0 || this.positionInFlight || this.disposed || !this.active ||
       this.viewWidth <= 1 || this.snapshot.phase !== 'ready') return
     const navigation = this.snapshot.navigationRevision
     const epoch = this.positionEpoch
     this.positionTimer = setTimeout((): void => {
+      if (this.disposed || epoch !== this.positionEpoch || navigation !== this.snapshot.navigationRevision) return
       this.positionTimer = 0
-      if (this.disposed || !this.active || epoch !== this.positionEpoch || navigation !== this.snapshot.navigationRevision) return
-      const index = this.snapshot.displayIndex
+      if (!this.active) return
+      if (this.positionTarget < 0) {
+        this.positionTarget = this.snapshot.displayIndex
+        this.positionX = this.snapshot.anchor?.x ?? 0.5
+        this.positionY = this.snapshot.anchor?.y ?? 0
+      }
+      const index = this.positionTarget
       const crop = this.snapshot.cropForPage(index)
-      const sourceX = this.snapshot.anchor?.x ?? 0.5
-      const sourceY = this.snapshot.anchor?.y ?? 0
+      const sourceX = this.positionX
+      const sourceY = this.positionY
       const rotated = this.rotates(index)
       const defaultStart = sourceX === 0.5 && sourceY === 0
       const sourcePosition = rotated ? (defaultStart ? crop.left : sourceX) : sourceY
@@ -383,6 +424,7 @@ struct ReaderContinuousList {
       const end = rotated ? crop.right : crop.bottom
       const y = this.snapshot.kind === 'original'
         ? Math.max(0, Math.min(1, (sourcePosition - start) / (1 - start - end))) : 0
+      const geometryRevision = this.geometryRevision
       const width = this.viewWidth
       const height = this.imageHeight(index)
       const rowHeight = this.rowHeight(index)
@@ -394,7 +436,7 @@ struct ReaderContinuousList {
       // requested position. Keep input/observations gated until a frame finishes.
       this.getUIContext().postFrameCallback(new ReaderContinuousAfterLayout((): void => {
         if (this.disposed || epoch !== this.positionEpoch || navigation !== this.snapshot.navigationRevision) return
-        if (width !== this.viewWidth || height !== this.imageHeight(index) || rowHeight !== this.rowHeight(index)) {
+        if (geometryRevision !== this.geometryRevision || width !== this.viewWidth || height !== this.imageHeight(index) || rowHeight !== this.rowHeight(index)) {
           this.invalidatePosition()
           this.schedulePosition()
           return
@@ -419,9 +461,14 @@ struct ReaderContinuousList {
       if (hit >= 0) this.first = hit
       const endHit = this.scroller.getItemIndex(this.viewWidth / 2, Math.max(1, this.viewHeight - 1))
       if (endHit >= 0) this.last = endHit
-      const first = this.first
+      let first = this.first
       const last = Math.max(first, this.last)
-      this.onRange(first, last, this.createdRevision, navigation)
+      const target = this.positionTarget
+      if (target >= first && target <= last) {
+        const targetRect = this.scroller.getItemRect(target)
+        if (targetRect.height > 0 && targetRect.y < this.viewHeight && targetRect.y + targetRect.height > 0) first = target
+      }
+      this.onRange(this.first, last, this.createdRevision, navigation, first)
       const key = this.snapshot.displayKeys[first]
       const frame = this.snapshot.forItem(key).frames[0]
       if (frame === undefined || frame.cropPending || frame.asset.kind !== 'original' || frame.asset.phase !== 'displayed' ||
@@ -485,6 +532,9 @@ struct ReaderContinuousList {
           })
         }
           .zIndex(this.lockedKey === key ? 1 : 0)
+          .onAreaChange((_old: Area, area: Area): void => {
+            this.onRowGeometry(key, Number(area.height))
+          })
       }, (key: string): string => readerElementKey(key))
     }
     .width('100%').height('100%').cachedCount(this.snapshot.nativeCacheDepth)
@@ -512,6 +562,9 @@ struct ReaderContinuousList {
       this.first = start
       this.last = end
       this.scheduleMeasure()
+    })
+    .onWillScroll((_offset: number, _state: ScrollState, _source: ScrollSource): void => {
+      this.releasePosition()
     })
     .onDidScroll((_offset: number, state: ScrollState): void => {
       if (!this.pendingPosition && !this.positionInFlight && state !== ScrollState.Idle) this.entryTransition?.cancel()

@@ -1420,3 +1420,40 @@ test('motion preparation stays bounded and rejects cancellation/background/retir
   session.close()
   assert.equal(session.preparePagedTarget(1, s.topologyRevision, s.navigationRevision), false)
 })
+
+
+test('continuous demand retains preceding rows while a proven terminal row owns observation', async () => {
+  const { session, key } = setup({ count: 5 })
+  session.setPolicy(policy({ layout: 'continuous' }))
+  await session.open(key); await tick()
+  let s = session.snapshot()
+  assert.equal(session.setContinuousRange(3, 4, s.topologyRevision, s.navigationRevision, 4), true)
+  await tick(); s = session.snapshot()
+  assert.equal(s.displayIndex, 4)
+  assert.equal(s.anchor.sourceIndexHint, 4)
+  assert.ok(s.window.some(item => item.index === 3))
+  const first = s.window.find(item => item.index === 3).frames[0]
+  const last = s.window.find(item => item.index === 4).frames[0]
+  decode(session, first); decode(session, last)
+  const observe = (index, frame, topology = s.topologyRevision, navigation = s.navigationRevision,
+    request = frame.asset.assetRequestId) => session.reportContinuousVisible(topology, navigation,
+    s.displayKeys[index], frame.slotId, request, 0.5, 0.25)
+  assert.equal(observe(3, first), false)
+  assert.equal(observe(4, last, s.topologyRevision - 1), false)
+  assert.equal(observe(4, last, s.topologyRevision, s.navigationRevision - 1), false)
+  assert.equal(observe(4, last, s.topologyRevision, s.navigationRevision, last.asset.assetRequestId + 1), false)
+  assert.equal(observe(4, last), true)
+  assert.equal(session.snapshot().observedAnchor.sourceIndexHint, 4)
+  for (const position of [2, 5, 3.5, NaN]) {
+    assert.equal(session.setContinuousRange(3, 4, s.topologyRevision, s.navigationRevision, position), false)
+    assert.equal(session.snapshot().displayIndex, 4)
+  }
+  // Same demand range still accepts a different selected position; omission keeps legacy start semantics.
+  assert.equal(session.setContinuousRange(3, 4, s.topologyRevision, s.navigationRevision), true)
+  assert.equal(session.snapshot().displayIndex, 3)
+  assert.equal(observe(4, last), false)
+  assert.equal(observe(3, first), true)
+  session.move('previous'); await tick()
+  assert.equal(observe(3, first), false)
+  session.close()
+})
