@@ -56,9 +56,17 @@ test('enhancement status follows only the current source and requested host vari
   value.state.isPreparingVariant = (sourceIndex, variant) => sourceIndex === 1 && variant === 'enhanced'
   assert.equal(value.enhancementProcessing(), false)
 
-  value.state.frames = [{ part: { sourceIndex: 1 }, asset: { variant: 'enhanced' } }]
+  value.state.frames = [{ part: { sourceIndex: 1 }, asset: { variant: 'enhanced', phase: 'displayed' } }]
   assert.equal(value.enhancementApplied(), false)
-  value.state.frames.push({ part: { sourceIndex: 0 }, asset: { variant: 'enhanced' } })
+  value.state.frames.push({ part: { sourceIndex: 0 }, asset: { variant: 'enhanced', phase: 'displayed' } })
+  assert.equal(value.enhancementApplied(), true)
+
+  const current = value.state.frames[1]
+  for (const phase of ['idle', 'asset', 'decoding', 'failed', 'suppressed']) {
+    current.asset.phase = phase
+    assert.equal(value.enhancementApplied(), false, phase + ' is not an applied image')
+  }
+  current.asset.phase = 'displayed'
   assert.equal(value.enhancementApplied(), true)
 
   value.variantPolicy = { defaultPreference: () => ({ variant: 'default', identity: '' }) }

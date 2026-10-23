@@ -63,21 +63,23 @@ test('original/variant plan loads receive the same progress channel', async () =
 
 const read = p => fs.readFileSync(path.join(__dirname, '..', p), 'utf8')
 
-test('viewport renders the shared loading stage with phase labels and real bytes', () => {
+test('viewport delegates phase labels and real bytes to the image-owned loading placeholder', () => {
   const viewport = read('reader-ui/src/main/ets/ReaderPagedViewport.ets')
-  assert.match(viewport, /ReaderLoadingStage\(\{/)
-  assert.match(viewport, /rkit_loading_resolving/)
-  assert.match(viewport, /rkit_loading_image/)
-  assert.match(viewport, /rkit_loading_decoding/)
-  assert.match(viewport, /loadProgressLoaded/)
-  assert.match(viewport, /loadProgressTotal/)
-  assert.doesNotMatch(viewport, /LoadingProgress\(\)\.width\(32\)\.height\(32\)/)
+  const placeholder = read('reader-ui/src/main/ets/ReaderImagePlaceholder.ets')
+  assert.match(viewport, /import \{ ReaderImagePlaceholder, ReaderImagePresentation \} from '\.\/ReaderImagePlaceholder'/)
+  assert.match(viewport, /ReaderImagePlaceholder\(\{ presentation: this\.imagePresentation\(\),[\s\S]*?frame: this\.frame\(\), entryTransition: this\.entryTransition \}\)/)
+  assert.match(placeholder, /if \(this\.presentation\.loading\) \{\s*ReaderLoadingStage\(\{/)
+  assert.match(placeholder, /label: this\.frame === null \|\| this\.frame\.asset\.phase === 'idle' \? \$r\('app\.string\.rkit_loading_resolving'\)/)
+  assert.match(placeholder, /this\.frame\.asset\.phase === 'decoding' \? \$r\('app\.string\.rkit_loading_decoding'\)\s*: \$r\('app\.string\.rkit_loading_image'\)/)
+  assert.match(placeholder, /loaded: this\.frame\?\.asset\.loadProgressLoaded \?\? 0/)
+  assert.match(placeholder, /total: this\.frame\?\.asset\.loadProgressTotal \?\? 0/)
   const continuous = read('reader-ui/src/main/ets/ReaderContinuousSurface.ets')
-  assert.match(continuous, /ReaderLoadingStage\(\{/)
-  assert.match(continuous, /rkit_loading_resolving/)
-  assert.match(continuous, /rkit_loading_decoding/)
-  assert.match(continuous, /loadProgressLoaded/)
-  assert.doesNotMatch(continuous, /LoadingProgress\(\)\.width\(32\)\.height\(32\)/)
+  assert.match(continuous, /import \{ ReaderImagePlaceholder, ReaderImagePresentation \} from '\.\/ReaderImagePlaceholder'/)
+  assert.match(continuous, /ReaderImagePlaceholder\(\{ presentation: this\.imagePresentation\(\),\s*frame: this\.snapshot\.frames\[0\] \?\? null,\s*entryTransition: this\.entryTransition \}\)/)
+  for (const source of [viewport, continuous]) {
+    assert.match(source, /ReaderLoadingStage\(\{ label: \$r\('app\.string\.rkit_loading_resolving'\) \}\)/)
+    assert.doesNotMatch(source, /LoadingProgress\(\)\.width\(32\)\.height\(32\)/)
+  }
 })
 
 test('session threads progress into asset and plan loads; interfaces expose optional onProgress; probe forwards', () => {

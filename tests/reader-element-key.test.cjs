@@ -29,5 +29,5 @@ test('reader surfaces keep semantic display keys but encode native collection id
     assert.match(value, /readerElementKey\(/, file)
   }
   const pager = fs.readFileSync(path.join(root, 'ReaderPagerSurface.ets'), 'utf8')
-  assert.match(pager, /LazyForEach\(this\.source,[\s\S]*readerElementKey\(key\)\)/)
+  assert.match(pager, /LazyForEach\(this\.pageSource,\s*\(item: ReaderPagerRenderItem\)[\s\S]*\(item: ReaderPagerRenderItem\): string => readerElementKey\(item\.nativeKey\)\)/)
 })
