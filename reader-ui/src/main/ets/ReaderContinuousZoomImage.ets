@@ -261,20 +261,19 @@ export struct ReaderContinuousZoomImage {
     .responseRegion(this.interactionRegion())
     .onTouch((event: TouchEvent): void => { this.tapSequence.touch(event) })
     .onAreaChange((_old: Area, area: Area): void => {
-      const previous = this.geometry()
       const width = Math.max(1, Number(area.width))
-      const changed = this.componentWidth !== width || this.measuredImageHeight !== this.imageHeight
-      if (changed) {
-        this.cancelMotion()
-      }
+      const height = Math.max(1, Number(area.height))
+      if (this.componentWidth === width && this.componentHeight === height &&
+        this.measuredImageHeight === this.imageHeight) return
+      const previous = this.geometry()
+      this.cancelMotion()
       this.componentWidth = width
-      this.componentHeight = Math.max(1, Number(area.height))
+      this.componentHeight = height
       this.measuredImageHeight = this.imageHeight
-      this.imageTransform = changed ? this.imageTransform.reflow(previous, this.geometry()) :
-        this.imageTransform.settled(this.geometry())
+      this.imageTransform = this.imageTransform.reflow(previous, this.geometry())
       this.publishLock()
       this.publishZoomed()
-      if (changed && this.imageTransform.zoomed()) this.log('reflow')
+      if (this.imageTransform.zoomed()) this.log('reflow')
     })
     .gesture(GestureGroup(GestureMode.Parallel,
       GestureGroup(GestureMode.Exclusive,

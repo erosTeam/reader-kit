@@ -359,3 +359,80 @@ test('geometry behind the target does not invalidate an in-flight positioning fr
   assert.equal(f.list.pendingPosition, false)
   assert.equal(f.timers.length, 1)
 })
+
+// Execute the production area callback, including position-only native updates.
+function continuousAreaFixture(transform) {
+  const source = read('ReaderContinuousZoomImage').replace(/\bstruct /g, 'class ')
+  const ast = ts.createSourceFile('area.ts', source, ts.ScriptTarget.Latest, true)
+  let callback
+  const visit = node => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === 'onAreaChange') callback = node.arguments[0]
+    ts.forEachChild(node, visit)
+  }
+  visit(ast); assert.ok(callback)
+  const viewport = load('ReaderViewportTransform')
+  const AreaZoom = evaluate(`export class AreaZoom {
+    ${methods('ReaderContinuousZoomImage', 'ReaderContinuousZoomImage', ['geometry'])}
+    updateArea(old, area) { (${callback.getText(ast)})(old, area) }
+  }`, {}, { ReaderViewportGeometry: viewport.ReaderViewportGeometry }).AreaZoom
+  const zoom = new AreaZoom(), calls = { cancel: 0, lock: 0, changed: 0, log: 0 }
+  Object.assign(zoom, {
+    componentWidth: 400, componentHeight: 800, measuredImageHeight: 800, imageHeight: 800,
+    rotateClockwise: false, imageTransform: transform,
+    frame: { asset: { kind: 'original', page: { width: 800, height: 1600 } },
+      crop: { region: () => ({ width: 1, height: 1 }) }, part: {} },
+    cancelMotion: () => calls.cancel++, publishLock: () => calls.lock++,
+    publishZoomed: () => calls.changed++, log: () => calls.log++,
+  })
+  return { zoom, calls }
+}
+test('same-size continuous area movement preserves transform identity and does not republish layout state', () => {
+  const { ReaderViewportTransform: Transform } = load('ReaderViewportTransform')
+  for (const before of [new Transform(), new Transform(2, 10, 20)]) {
+    const f = continuousAreaFixture(before)
+    f.zoom.updateArea({ width: 400, height: 800, position: { x: 0, y: 0 } },
+      { width: 400, height: 800, position: { x: 0, y: -180 } })
+    assert.equal(f.zoom.imageTransform, before, 'List movement is not a new image geometry or transform')
+    assert.deepEqual(f.calls, { cancel: 0, lock: 0, changed: 0, log: 0 })
+  }
+})
+
+
+test('same-size area movement does not interrupt an active pinch or zoom animation', () => {
+  const { ReaderViewportTransform: Transform } = load('ReaderViewportTransform')
+  for (const state of ['pinching', 'animating']) {
+    const before = new Transform(2, 10, 20), f = continuousAreaFixture(before)
+    f.zoom[state] = true
+    f.zoom.cancelMotion = () => { f.calls.cancel++; f.zoom.pinching = false; f.zoom.animating = false }
+    f.zoom.updateArea({ width: 400, height: 800 }, { width: 400, height: 800, position: { x: 0, y: 350 } })
+    assert.equal(f.zoom[state], true)
+    assert.equal(f.zoom.imageTransform, before)
+    assert.deepEqual(f.calls, { cancel: 0, lock: 0, changed: 0, log: 0 })
+  }
+})
+for (const kind of ['width', 'container height', 'image height']) {
+  test(`actual continuous ${kind} change preserves zoom through the production reflow callback`, () => {
+    const { ReaderViewportTransform: Transform, ReaderViewportGeometry: Geometry } = load('ReaderViewportTransform')
+    const before = new Transform(2, 110, 230), f = continuousAreaFixture(before)
+    const previous = f.zoom.geometry()
+    let width = 400, height = 800, imageHeight = 800
+    if (kind === 'width') { width = 600; height = 1200; imageHeight = 1200 }
+    if (kind === 'container height') height = 1000
+    if (kind === 'image height') imageHeight = 1200
+    f.zoom.imageHeight = imageHeight
+    f.zoom.updateArea({ width: 400, height: 800 }, { width, height })
+    const expected = before.reflow(previous, new Geometry(width, height, width, imageHeight, 800 / width))
+    assert.equal(f.zoom.imageTransform.scale, expected.scale)
+    assert.equal(f.zoom.imageTransform.x, expected.x)
+    assert.equal(f.zoom.imageTransform.y, expected.y)
+    assert.deepEqual(f.calls, { cancel: 1, lock: 1, changed: 1, log: 1 })
+    assert.equal(f.zoom.componentWidth, width)
+    assert.equal(f.zoom.componentHeight, height)
+    assert.equal(f.zoom.measuredImageHeight, imageHeight)
+    const settled = f.zoom.imageTransform
+    f.zoom.updateArea({ width, height }, { width, height, position: { x: 0, y: -20 } })
+    assert.equal(f.zoom.imageTransform, settled)
+    assert.equal(f.calls.cancel, 1)
+  })
+}
