@@ -436,3 +436,32 @@ for (const kind of ['width', 'container height', 'image height']) {
     assert.equal(f.calls.cancel, 1)
   })
 }
+
+// A short last row cannot reach the viewport top. Its explicit seek target
+// still owns page selection while a host sheet temporarily suspends input.
+test('opening and closing a host sheet preserves explicit continuous page selection', () => {
+  const Measure = evaluate(`export class Measure { ${methods('ReaderContinuousSurface',
+    'ReaderContinuousList', ['scheduleMeasure'])} }`, {}, {
+    setTimeout: callback => { callback(); return 1 },
+  }).Measure
+  const f = listFixture(), observed = []
+  f.list.entryTransition = null
+  Object.assign(f.list, { fullyVisible: true, viewHeight: 800,
+    createdRevision: f.state.topologyRevision, nativeReady: new Map(),
+    scheduleMeasure: Measure.prototype.scheduleMeasure,
+    onRange: (_start, _end, _topology, _navigation, position) => observed.push(position),
+  })
+  f.list.scroller.getItemIndex = (_x, y) => y <= 1 ? 0 : 1
+  f.list.scroller.getItemRect = index => index === 1
+    ? { y: 200, height: 600 } : { y: -1600, height: 1800 }
+  f.list.pendingPosition = true
+  f.list.schedulePosition(); f.frames.shift()(); f.list.positionTimer = 0
+  assert.equal(observed.at(-1), 1)
+  f.list.active = false; f.list.onSnapshotChanged()
+  f.list.measureTimer = 0
+  f.list.active = true; f.list.onSnapshotChanged()
+  assert.equal(observed.at(-1), 1, 'sheet dismissal must not replace the explicit last page with its visible predecessor')
+  // Actual scrolling must still take over from the retained command.
+  f.list.releasePosition(); f.list.measureTimer = 0; f.list.scheduleMeasure()
+  assert.equal(observed.at(-1), 0)
+})

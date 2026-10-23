@@ -218,7 +218,9 @@ struct ReaderContinuousList {
       this.cropRegions.set(page.sourceIndex, value)
     })
     if (cropChanged) this.invalidatePosition()
-    if (!this.active) { this.moving = false; this.positionTarget = -1 }
+    // A host sheet/background suspends input, not the current explicit page.
+    // User movement, a new navigation, failure or disposal still retires it.
+    if (!this.active) this.moving = false
     if (this.lockedKey.length > 0) {
       const frame = this.snapshot.forItem(this.lockedKey).frames[0]
       if (frame === undefined || frame.asset.phase !== 'displayed' ||
