@@ -612,7 +612,8 @@ struct ReaderContinuousCell {
   }
 
   private imagePresentation(): ReaderImagePresentation {
-    return new ReaderImagePresentation(this.snapshot.frames[0] ?? null, this.decodedOriginalIdentity)
+    return new ReaderImagePresentation(this.snapshot.frames[0] ?? null, this.decodedOriginalIdentity,
+      this.entryTransition)
   }
 
   private loadingVisible(): boolean { return this.imagePresentation().loading }

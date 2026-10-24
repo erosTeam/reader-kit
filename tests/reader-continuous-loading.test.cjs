@@ -5,6 +5,10 @@ const path = require('node:path')
 const vm = require('node:vm')
 const ts = require(process.env.READER_KIT_TYPESCRIPT || '/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/node_modules/typescript')
 const { ReaderSnapshot } = require('./load-core.cjs')('ReaderSession')
+const load = require('./load-core.cjs')
+const core = { ...load('ReaderContent'), ...load('ReaderDisplayMap'), ...load('ReaderPagedSession') }
+const entryExports = {}
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderEntryTransition.ets'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, experimentalDecorators: true } }).outputText, { exports: entryExports, require: () => core, ObservedV2: value => value, Trace: () => {} })
 const presentationText = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderImagePlaceholder.ets'), 'utf8')
 const presentationSource = presentationText.slice(presentationText.indexOf('export class ReaderImagePresentation'), presentationText.indexOf('/** Metadata'))
 const presentationExports = {}
@@ -18,7 +22,7 @@ function fixture() {
   const value = new exportsObject.Feedback()
   const asset = new ReaderSnapshot()
   asset.assetRequestId = asset.requestId = 7; asset.visualRevision = 2; asset.kind = 'original'; asset.phase = 'decoding'; asset.uri = 'file://current'
-  value.snapshot = { frames: [{slotId: 5, part: {sourceIndex: 3, fragment: 'whole'}, asset}] }
+  value.snapshot = { frames: [{slotId: 5, part: new core.ReaderDisplayPart(new core.ReaderUnitKey('source', 'unit', 'edition'), 'page4', 3), asset}] }
   return value
 }
 test('native completion hides only the matching original overlay before stable presentation', () => {
@@ -63,16 +67,21 @@ test('shared presentation never exposes image pixels together with loading feedb
   assert.equal(retained.loading, false); assert.equal(retained.pixels, true)
 })
 
-// Human-visible requirement: a thumbnail is not the requested original image.
-test('entry thumbnail keeps feedback until this original decodes, for all transition phases', () => {
-  for (const phase of ['layout', 'moving', 'waiting', 'revealing', 'finished', 'cancelled']) {
-    const value = fixture()
-    value.entryPreviewVisible = true
-    value.entryTransition = { phase, matches: () => true }
-    assert.equal(value.loadingVisible(), true, phase)
-    value.originalDecoded('5:6:3:whole:2')
-    assert.equal(value.loadingVisible(), true, `stale completion during ${phase}`)
-    value.originalDecoded('5:7:3:whole:2')
-    assert.equal(value.loadingVisible(), false, `readable original during ${phase}`)
-  }
+// A native decode is not yet an exposed original while entry owns opacity zero.
+test('decoded original keeps feedback while the real entry still hides its pixels', () => {
+  const value = fixture(); const frame = value.snapshot.frames[0]
+  Object.assign(value.snapshot, { phase: 'ready', selectionId: 1, topologyRevision: 1, navigationRevision: 1 })
+  const entry = new entryExports.ReaderEntryTransition(1, frame.part)
+  entry.update(value.snapshot); entry.beginMove(); entry.arrived(); value.entryTransition = entry
+  value.originalDecoded('5:7:3:whole:2')
+  assert.equal(entry.opacity(frame.part), 0)
+  assert.equal(value.loadingVisible(), true, 'decode must not clear feedback above an invisible original')
+  frame.asset.phase = 'displayed'
+  assert.equal(value.loadingVisible(), true, 'session receipt does not expose the native image')
+  const target = new entryExports.ReaderEntryTarget(frame.part)
+  Object.assign(target, { selectionId: 1, topologyRevision: 1, navigationRevision: 1,
+    slotId: 5, requestId: 7, assetRequestId: 7, decodedReady: true })
+  entry.publishTarget(target); entry.reveal()
+  assert.equal(entry.opacity(frame.part), 1)
+  assert.equal(value.loadingVisible(), false, 'the same reveal commit exposes the original and retires feedback')
 })

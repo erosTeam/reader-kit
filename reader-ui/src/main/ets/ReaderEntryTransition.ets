@@ -97,9 +97,17 @@ export class ReaderEntryTransition {
       target.assetRequestId === frame.asset.assetRequestId
   }
 
+  /** Decode can finish while this owner still holds the selected original at opacity zero. */
+  hidesOriginal(frame: ReaderPagedFrame): boolean {
+    return this.pending() && this.selectedOpacity === 0 && this.matches(frame.part) &&
+      this.slot === frame.slotId && this.loadRequest === frame.asset.requestId &&
+      frame.asset.kind === 'original' && frame.asset.phase !== 'failed' && frame.asset.phase !== 'suppressed' &&
+      !(frame.asset.retainedUri.length > 0 && frame.asset.retainedAssetRequestId > 0)
+  }
+
   /** Preview material belongs to this image epoch until its placeholder ends, even if motion stops. */
   hasLoadingBackdrop(frame: ReaderPagedFrame): boolean {
-    return frame.asset.needsImagePlaceholder() && this.matches(frame.part) &&
+    return (frame.asset.needsImagePlaceholder() || this.hidesOriginal(frame)) && this.matches(frame.part) &&
       this.slot === frame.slotId && this.loadRequest === frame.asset.requestId
   }
 

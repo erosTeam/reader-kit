@@ -530,7 +530,7 @@ struct ReaderPagedCell {
   }
 
   private imagePresentation(): ReaderImagePresentation {
-    return new ReaderImagePresentation(this.frame(), this.decodedOriginalIdentity)
+    return new ReaderImagePresentation(this.frame(), this.decodedOriginalIdentity, this.entryTransition)
   }
 
   private frame(): ReaderPagedFrame {

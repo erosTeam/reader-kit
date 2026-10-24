@@ -9,13 +9,15 @@ export class ReaderImagePresentation {
   get loading(): boolean { return this.phase === 'loading' }
   get pixels(): boolean { return this.phase === 'image' }
 
-  constructor(frame: ReaderPagedFrame | null, decodedOriginalIdentity: string) {
+  constructor(frame: ReaderPagedFrame | null, decodedOriginalIdentity: string,
+    entry: ReaderEntryTransition | null = null) {
     const asset = frame?.asset
     const decoded = frame !== null && asset?.kind === 'original' && asset.phase === 'decoding' &&
       asset.assetRequestId > 0 && asset.uri.length > 0 &&
       decodedOriginalIdentity === `${frame.slotId}:${asset.assetRequestId}:` +
         `${frame.part.sourceIndex}:${frame.part.fragment}:${asset.visualRevision}`
-    const awaitingPixels = frame === null || (asset !== undefined && asset.needsImagePlaceholder() && !decoded)
+    const awaitingPixels = frame === null || (asset !== undefined && asset.needsImagePlaceholder() && !decoded) ||
+      (frame !== null && entry?.hidesOriginal(frame) === true)
     this.phase = awaitingPixels ? 'loading'
       : asset !== undefined && asset.phase !== 'failed' && asset.phase !== 'suppressed' ? 'image' : 'empty'
   }

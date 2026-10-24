@@ -40,7 +40,8 @@ The following are existing preservation requirements, not new feature work:
   Loading feedback belongs to current request identity, not a retired callback.
   A low-resolution opening thumbnail is a preview, not a readable original: it
   retains the existing loading indicator/backdrop until this original is ready.
-  Preview visibility and transition phase must not dismiss request feedback.
+  A matching decode is insufficient while the entry still hides that original.
+  Its existing reveal commit exposes the original and retires feedback together.
 - Keep one canonical value for a setting. The row label, menu check, bottom
   control and adopted session behavior must project that value. Shared routing
   must preserve existing button/menu semantics, options and live updates.
