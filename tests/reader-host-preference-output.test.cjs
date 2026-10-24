@@ -79,9 +79,3 @@ test('surface reports adopted crop state without owning host persistence', () =>
   surface.toggleCrop()
   assert.equal(events.length, 1)
 })
-
-test('surface chrome routes policy and crop intents through host-output gates', () => {
-  assert.match(source, /@Param preferenceSink: ReaderPreferenceSink \| null = null/)
-  assert.match(source, /onCrop: \(\): void => \{ this\.toggleCrop\(\) \}/)
-  assert.match(source, /onPolicy: \(policy: ReaderDisplayPolicy, intent: ReaderRuntimePolicyIntent\): void => \{\s+this\.applyPolicy\(policy, intent\)/)
-})

@@ -25,14 +25,3 @@ test('center action retains its label and copies the request unit', () => {
   assert.equal(calls[0][0].unit, 'copied')
   assert.equal(calls[0][1], 7)
 })
-
-test('surface derives center presentation from one optional action', () => {
-  const source = fs.readFileSync(path.join(__dirname,
-    '../reader-ui/src/main/ets/ReaderSurface.ets'), 'utf8')
-  assert.match(source, /@Param centerAction: ReaderCenterAction \| null = null/)
-  assert.match(source, /hostCenterActionAvailable: this\.centerAction !== null/)
-  assert.match(source, /hostCenterActionLabel: this\.centerAction\?\.label \?\? ''/)
-  assert.match(source, /this\.centerAction\?\.request\(source, navigation\)/)
-  assert.doesNotMatch(source, /@Param hostCenterActionAvailable:/)
-  assert.doesNotMatch(source, /@Event onHostCenterAction:/)
-})

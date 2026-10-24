@@ -42,6 +42,13 @@ The following are existing preservation requirements, not new feature work:
   retains the existing loading indicator/backdrop until this original is ready.
   A matching decode is insufficient while the entry still hides that original.
   Its existing reveal commit exposes the original and retires feedback together.
+- Toolbar reveal has two required cases: when the current native status-bar
+  show operation applies, finish that operation before painting the toolbar;
+  when status-bar control is absent or unsupported, keep the toolbar usable.
+  Wait only for the existing finite window operation, never for a nonzero
+  status inset or a host-specific layout probe. Cancellation, another toggle,
+  close and background retire a pending reveal. A fix for either case must
+  preserve the other; synchronous-commit assertions cannot replace this contract.
 - Keep one canonical value for a setting. The row label, menu check, bottom
   control and adopted session behavior must project that value. Shared routing
   must preserve existing button/menu semantics, options and live updates.

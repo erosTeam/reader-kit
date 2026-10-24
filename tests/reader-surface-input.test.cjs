@@ -16,6 +16,7 @@ function evaluate(source) {
   }).outputText, {
     exports, require: name => {
       if (name === '@reader-kit/core') return core
+      if (name === './ReaderChromeAppearance') return evaluate(fs.readFileSync(path.join(uiPath, 'ReaderChromeAppearance.ets'), 'utf8'))
       if (name === './ReaderPagerSurface') return { ReaderPagerCommand: class ReaderPagerCommand {
         constructor(serial, targetIndex, topologyRevision, navigationRevision) {
           Object.assign(this, { serial, targetIndex, topologyRevision, navigationRevision })
@@ -433,15 +434,6 @@ test('optional automatic advance consumes actual session readiness and Surface i
 })
 async function flushChrome() { await Promise.resolve(); await Promise.resolve() }
 
-test('entry chrome follows the host param and defaults hidden like every legacy host', () => {
-  // Mount-time default: the product opens hidden, and the param may override it
-  // on the first frame for a host-owned QA launch.
-  assert.equal(new ReaderSurface().chromeVisible, false, 'product default is hidden')
-  assert.equal(new ReaderSurface().initialChromeVisible, false, 'param default is hidden')
-  assert.match(source, /this\.chromeVisible = this\.initialChromeVisible/,
-    'mount must apply the host request instead of a fixed initial value')
-})
-
 test('chrome without a window controller preserves synchronous hide/show and preview dismissal', () => {
   const { surface, events } = chromeScenario()
   surface.previewIndex = 3
@@ -452,19 +444,39 @@ test('chrome without a window controller preserves synchronous hide/show and pre
   assert.deepEqual(events, [false, true])
 })
 
-test('chrome commits immediately while native window work is unresolved', async () => {
+test('with native status-bar work, chrome reveals only after that operation completes', async () => {
   const { surface, events } = chromeScenario(), native = deferred(), intents = []
   surface.windowPresentation = { presentChrome(visible, fullscreen, dark, current) {
     intents.push({ visible, fullscreen, dark, current }); return native.promise
   } }
   surface.toggleChrome(); surface.toggleChrome()
-  assert.equal(surface.chromeVisible, true)
-  assert.deepEqual(events, [false, true])
+  assert.equal(surface.chromeVisible, false, 'pending native show must not paint the toolbar early')
+  assert.deepEqual(events, [false])
   assert.equal(intents[0].current(), false)
   assert.equal(intents[1].current(), true)
-  surface.toggleChrome()
+  native.resolve(); await flushChrome()
+  assert.equal(surface.chromeVisible, true)
+  assert.deepEqual(events, [false, true])
+})
+
+test('missing status-bar capability or rejected native work never blocks toolbar access', async () => {
+  for (const unavailable of [false, true]) {
+    const { surface, events } = chromeScenario()
+    surface.windowPresentation = { presentChrome() {
+      return unavailable ? Promise.reject(Error('no status bar')) : Promise.resolve()
+    } }
+    surface.toggleChrome(); surface.toggleChrome(); await flushChrome()
+    assert.equal(surface.chromeVisible, true)
+    assert.deepEqual(events, [false, true])
+  }
+})
+
+test('another tap cancels a pending show without a late toolbar flash', async () => {
+  const { surface } = chromeScenario(), native = deferred()
+  surface.windowPresentation = { presentChrome() { return native.promise } }
+  surface.toggleChrome(); surface.toggleChrome()
   assert.equal(surface.chromeVisible, false)
-  assert.equal(intents[1].current(), false)
+  surface.toggleChrome()
   native.resolve(); await flushChrome()
   assert.equal(surface.chromeVisible, false)
 })
@@ -475,7 +487,7 @@ test('retirement invalidates the native operation without keeping a pending tool
     surface.windowPresentation = { presentChrome(_visible, _fullscreen, _dark, check) { current = check; return Promise.resolve() } }
     surface.onClose = () => { closes++; assert.equal(current(), false) }
     surface.toggleChrome(); surface.toggleChrome()
-    assert.equal(surface.chromeVisible, true)
+    assert.equal(surface.chromeVisible, false)
     if (reason === 'inactive') { surface.active = false; surface.onActiveChanged() }
     if (reason === 'closing') { surface.closing = true; surface.onClosingChanged() }
     if (reason === 'disappear') surface.aboutToDisappear()

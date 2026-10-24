@@ -4,7 +4,8 @@ export type ReaderSystemBarWriter = (win: window.Window, visible: boolean,
   restoringSource: boolean, isCurrent: () => boolean) => Promise<void>
 
 /** One chrome policy and one ordered color/visibility operation for every host.
- * Native bar availability never controls whether ReaderSurface paints chrome.
+ * Surface awaits this finite operation before revealing chrome. No window,
+ * unsupported control or failure must settle without waiting for a status inset.
  * Hosts supply window ownership and, optionally, their source-window bridge.
  */
 @ObservedV2

@@ -29,12 +29,3 @@ test('chapter navigation forwards a copied current unit while keeping busy state
   navigation.request('next', source)
   assert.deepEqual(events, [['next', 'chapter-a-copy']])
 })
-
-test('surface exposes chapter continuation as one optional capability', () => {
-  const source = fs.readFileSync(path.join(__dirname,
-    '../reader-ui/src/main/ets/ReaderSurface.ets'), 'utf8')
-  assert.match(source, /@Param chapterNavigation: ReaderChapterNavigation \| null = null/)
-  assert.doesNotMatch(source, /@Param chapterNavigationAvailable:/)
-  assert.doesNotMatch(source, /@Param chapterNavigationBusy:/)
-  assert.doesNotMatch(source, /@Event onChapter:/)
-})

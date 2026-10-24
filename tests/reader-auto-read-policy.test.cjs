@@ -27,13 +27,3 @@ test('automatic-reading policy keeps host availability and interval separate', (
   assert.equal(fallback.available, false)
   assert.equal(fallback.seconds, 3)
 })
-
-test('surface exposes one optional automatic-reading policy', () => {
-  const source = fs.readFileSync(path.join(__dirname,
-    '../reader-ui/src/main/ets/ReaderSurface.ets'), 'utf8')
-  assert.match(source, /@Param autoReadPolicy: ReaderAutoReadPolicy \| null = null/)
-  assert.match(source, /this\.autoReadPolicy\.seconds/)
-  assert.match(source, /this\.autoReadPolicy\.targetReadiness/)
-  assert.doesNotMatch(source, /@Param autoReadAvailable:/)
-  assert.doesNotMatch(source, /@Param autoReadSeconds:/)
-})

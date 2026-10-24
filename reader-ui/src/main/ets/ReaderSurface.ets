@@ -1,3 +1,4 @@
+import { ReaderChromeAppearance, DEFAULT_READER_CHROME_APPEARANCE } from './ReaderChromeAppearance'
 import { ReaderSystemBarController } from './ReaderSystemBarController'
 import { ReaderModeControlParams } from './ReaderModeControl'
 import { UIUtils } from '@kit.ArkUI'
@@ -116,6 +117,7 @@ export struct ReaderSurface {
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPreview: ReaderEntryPreviewSource | null = null
   @Param contentOpacity: number = 1
+  @Param chromeAppearance: ReaderChromeAppearance = DEFAULT_READER_CHROME_APPEARANCE
   @BuilderParam modeControl?: (params: ReaderModeControlParams) => void
   /** Optional host-owned title leaf; omitted hosts keep the stock centered page indicator. */
   @BuilderParam titleControl?: (params: Binding<ReaderTitleParams>) => void
@@ -157,6 +159,7 @@ export struct ReaderSurface {
   private touching: boolean = false
   private menuVisible: boolean = false
   private chromeEpoch: number = 0
+  private chromeShowPending: boolean = false
   private chromeDisposed: boolean = false
   private chromeCloseRequested: boolean = false
   private lastObservedSignature: string = ''
@@ -293,14 +296,9 @@ export struct ReaderSurface {
   aboutToAppear(): void {
     this.chromeDisposed = false
     this.chromeCloseRequested = false
-    // Enter exactly as the host asked. Every legacy reader opens with chrome
-    // hidden, so the product default is hidden; an explicit host QA launch may
-    // request the bars on the first frame instead.
-    this.chromeVisible = this.initialChromeVisible
-    // Publish the real initial chrome once so the host and the surface can never
-    // disagree before the first user toggle; later flips keep flowing through
-    // commitChromeVisible.
-    this.publishChromePresentation()
+    // Initial chrome uses the same show ordering as a later tap.
+    this.chromeVisible = false
+    this.commitChromeVisible(this.initialChromeVisible)
     this.syncPreferredVariant(this.session.snapshot())
     this.session.setNeighborPreload(true)
     this.session.setPagedPreloadDepth(this.preloadDepth)
@@ -693,6 +691,7 @@ export struct ReaderSurface {
 
   private invalidateChromeShow(): void {
     this.chromeEpoch += 1
+    this.chromeShowPending = false
   }
 
   @Monitor('closing')
@@ -757,18 +756,38 @@ export struct ReaderSurface {
   }
 
   private commitChromeVisible(visible: boolean): void {
-    this.chromeVisible = visible
-    if (!this.chromeVisible) this.previewIndex = -1
+    // A real window show finishes before chrome is painted. Without a window
+    // controller, chrome remains synchronous and usable; never wait for an inset.
+    this.chromeShowPending = visible && !this.chromeVisible && this.windowPresentation !== null
+    if (!this.chromeShowPending) this.chromeVisible = visible
+    if (!visible) this.previewIndex = -1
     this.publishChromePresentation()
-    console.info(`[ReaderSurface] chrome=${this.chromeVisible}`)
+  }
+
+  private async finishChromeShow(epoch: number, operation: Promise<void>): Promise<void> {
+    // Unsupported/failed native status-bar control must not strand the toolbar.
+    try { await operation } catch (_) {}
+    if (epoch !== this.chromeEpoch || !this.active || this.closing ||
+      this.chromeDisposed || this.chromeCloseRequested || !this.chromeShowPending) return
+    this.chromeShowPending = false
+    this.chromeVisible = true
+    this.activitySink?.chromeChanged(true)
+    console.info('[ReaderSurface] chrome=true')
   }
 
   private publishChromePresentation(): void {
     const epoch = ++this.chromeEpoch
-    void this.windowPresentation?.presentChrome(this.chromeVisible, this.windowFullscreen, this.windowCanvasDark,
+    const operation = this.windowPresentation?.presentChrome(this.chromeVisible || this.chromeShowPending,
+      this.windowFullscreen, this.windowCanvasDark,
       (): boolean => epoch === this.chromeEpoch && this.active && !this.closing &&
-        !this.chromeDisposed && !this.chromeCloseRequested)
-    this.activitySink?.chromeChanged(this.chromeVisible)
+        !this.chromeDisposed && !this.chromeCloseRequested) ?? Promise.resolve()
+    if (this.chromeShowPending) {
+      void this.finishChromeShow(epoch, operation)
+    } else {
+      void operation.catch((): void => {})
+      this.activitySink?.chromeChanged(this.chromeVisible)
+      console.info(`[ReaderSurface] chrome=${this.chromeVisible}`)
+    }
   }
 
   @Monitor('windowPresentation', 'windowFullscreen', 'windowCanvasDark')
@@ -778,7 +797,7 @@ export struct ReaderSurface {
 
   private toggleChrome(): void {
     if (!this.active || this.closing || this.chromeDisposed || this.chromeCloseRequested) return
-    this.commitChromeVisible(!this.chromeVisible)
+    this.commitChromeVisible(!(this.chromeVisible || this.chromeShowPending))
   }
 
   private pageTap(x: number, y: number): ReaderTapAction {
@@ -1042,12 +1061,12 @@ export struct ReaderSurface {
           }, (identity: string): string => readerElementKey(identity))
         }.width('100%').height(this.thumbnailRailVisible() ? 156 : 0)
           .padding({ top: this.thumbnailRailVisible() ? 8 : 0, bottom: this.thumbnailRailVisible() ? 8 : 0 })
-          .margin({ bottom: this.bottomInset + 112 }).backgroundColor('#CC000000').clip(true)
+          .margin({ bottom: this.bottomInset + this.chromeAppearance.bottomHeight }).backgroundColor('#CC000000').clip(true)
           .hitTestBehavior(this.thumbnailRailVisible() ? HitTestMode.Default : HitTestMode.None)
           .id('rkit-thumbnail-rail-wrapper')
       }
       if (this.chromeVisible) {
-        ReaderChrome({ hostModeControlAvailable: this.modeControl !== undefined,
+        ReaderChrome({ appearance: this.chromeAppearance, hostModeControlAvailable: this.modeControl !== undefined,
           modeControl: (params: ReaderModeControlParams): void => { this.HostModeControl(params) },
           hostTitleControlAvailable: this.titleControl !== undefined,
           titleControl: (params: Binding<ReaderTitleParams>): void => {

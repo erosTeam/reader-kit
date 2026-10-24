@@ -1,3 +1,4 @@
+import { ReaderChromeAppearance, DEFAULT_READER_CHROME_APPEARANCE } from './ReaderChromeAppearance'
 import { ReaderModeControlParams } from './ReaderModeControl'
 import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPolicy, ReaderUnitKey,
   ReaderImageSaveChoice, ReaderImageSaveTarget } from '@reader-kit/core'
@@ -15,6 +16,7 @@ export type ReaderRuntimePolicyIntent = 'layout' | 'direction' | 'reading_mode' 
 /** Default overlay chrome. It emits intentions; it never opens a catalog or writes preferences. */
 @ComponentV2
 export struct ReaderChrome {
+  @Param appearance: ReaderChromeAppearance = DEFAULT_READER_CHROME_APPEARANCE
   @Param hostModeControlAvailable: boolean = false
   @BuilderParam modeControl: (params: ReaderModeControlParams) => void = this.EmptyModeControl
   @Param hostTitleControlAvailable: boolean = false
@@ -362,6 +364,29 @@ export struct ReaderChrome {
     }
   }
 
+  private selectMoreSave(choice: ReaderImageSaveChoice): void {
+    const source = this.moreUnit
+    this.moreShown = false
+    if (this.active && this.saveAvailable && !this.saveBusy && !this.shareBusy && !this.informationBusy &&
+      !this.snapshot.originalPreparing && source !== null && this.snapshot.unit?.key.equals(source) &&
+      this.snapshot.topologyRevision === this.moreTopology && this.snapshot.navigationRevision === this.moreNavigation &&
+      this.saveTarget(choice) !== null) this.onSave(choice)
+  }
+
+  @Builder
+  private MoreSaveChoice() {
+    Menu() {
+      MenuItem({ content: $r('app.string.rkit_info_left', (this.snapshot.frames[0]?.part.sourceIndex ?? 0) + 1) })
+        .enabled(this.saveTarget('left') !== null)
+        .onClick((): void => { this.selectMoreSave('left') })
+      MenuItem({ content: $r('app.string.rkit_info_right', (this.snapshot.frames[1]?.part.sourceIndex ?? 0) + 1) })
+        .enabled(this.saveTarget('right') !== null)
+        .onClick((): void => { this.selectMoreSave('right') })
+      MenuItem({ content: $r('app.string.rkit_save_both') }).enabled(this.saveTarget('both') !== null)
+        .onClick((): void => { this.selectMoreSave('both') })
+    }
+  }
+
   @Builder
   private MoreMenu() {
     Menu() {
@@ -387,6 +412,26 @@ export struct ReaderChrome {
           .onClick((): void => {
             const frame = this.informationFrames()[0]
             if (frame !== undefined) this.selectInformation(frame)
+          })
+      }
+      if (this.appearance.mediaActionsInMenu && this.saveAvailable) {
+        if (this.snapshot.policy.layout === 'spread' && this.snapshot.frames.length === 2) {
+          MenuItem({ content: $r('app.string.rkit_save_image'), builder: this.MoreSaveChoice })
+            .enabled(this.active && !this.saveBusy && !this.shareBusy && !this.snapshot.originalPreparing)
+        } else {
+          MenuItem({ content: $r('app.string.rkit_save_image') })
+            .enabled(this.active && !this.saveBusy && !this.shareBusy && !this.snapshot.originalPreparing &&
+              this.saveTarget('current') !== null)
+            .onClick((): void => { this.selectMoreSave('current') })
+        }
+      }
+      if (this.appearance.mediaActionsInMenu && this.shareAvailable) {
+        MenuItem({ content: $r('app.string.rkit_share_image') })
+          .enabled(this.active && !this.shareBusy && !this.saveBusy && !this.snapshot.originalPreparing)
+          .onClick((): void => {
+            this.moreShown = false
+            if (this.moreUnit !== null && this.snapshot.unit?.key.equals(this.moreUnit) &&
+              this.snapshot.navigationRevision === this.moreNavigation) this.onShare()
           })
       }
       if (this.externalOpenAvailable) {
@@ -474,7 +519,7 @@ export struct ReaderChrome {
           }.width(44).height(44).backgroundColor(Color.Transparent)
             .id('rkit-close').accessibilityText($r('app.string.rkit_close'))
             .onClick((): void => { this.onClose() })
-          if (this.hostTitleControlAvailable && this.snapshot.unit !== null) {
+          if (this.hostTitleControlAvailable) {
             this.titleControl(UIUtils.makeBinding<ReaderTitleParams>(() => ({
               unitKey: this.snapshot.unit?.key.copy() ?? null,
               pageIndex: this.snapshot.anchor?.sourceIndexHint ?? 0,
@@ -491,7 +536,7 @@ export struct ReaderChrome {
           } else {
             Blank()
           }
-          if (this.shareAvailable) {
+          if (this.shareAvailable && !this.appearance.mediaActionsInMenu) {
             Button({ type: ButtonType.Circle }) {
               if (this.shareBusy) {
                 LoadingProgress().width(22).height(22).color(Color.White)
@@ -531,6 +576,7 @@ export struct ReaderChrome {
                 SymbolGlyph($r('sys.symbol.dot_grid_2x2')).fontSize(22).fontColor([Color.White])
               }
             }.width(44).height(44).backgroundColor(Color.Transparent)
+              .margin({ left: this.appearance.topActionSpacing })
               .id('rkit-more').accessibilityText($r('app.string.rkit_more'))
               .enabled(this.active && this.snapshot.phase === 'ready' && (this.reloadAvailable || this.zoomResetAvailable ||
                 this.informationFrames().length > 0 || this.externalOpenAvailable ||
@@ -551,7 +597,7 @@ export struct ReaderChrome {
               })
           }
         }.width('100%').height(56).alignItems(VerticalAlign.Center)
-        if (!this.hostTitleControlAvailable || this.snapshot.unit === null) {
+        if (!this.hostTitleControlAvailable) {
           Row({ space: 4 }) {
             Text(`${this.page()} / ${this.count()}`).fontSize(14).fontColor(Color.White)
               .maxLines(1).textAlign(TextAlign.Center).hitTestBehavior(HitTestMode.None)
@@ -571,9 +617,9 @@ export struct ReaderChrome {
         .backgroundColor('#CC000000').position({ x: 0, y: 0 })
         .id('rkit-chrome-top')
 
-      Column({ space: 4 }) {
+      Column({ space: this.appearance.columnSpacing }) {
         Row({ space: 4 }) {
-          Text(`${this.snapshot.policy.direction === 'rtl' ? this.count() : this.value()}`)
+          Text(`${this.appearance.fixedCounterSides || this.snapshot.policy.direction !== 'rtl' ? this.value() : this.count()}`)
             .fontSize(14).fontColor(Color.White).constraintSize({ minWidth: 30 }).maxLines(1)
           Slider({ value: Math.max(1, this.value()), min: 1, max: Math.max(2, this.count()), step: 1,
             style: SliderStyle.InSet, reverse: this.snapshot.policy.direction === 'rtl' })
@@ -584,11 +630,12 @@ export struct ReaderChrome {
             .onTouch((event: TouchEvent): void => {
               if (event.type === TouchType.Cancel) this.cancelSeek()
             })
-          Text(`${this.snapshot.policy.direction === 'rtl' ? this.value() : this.count()}`)
+          Text(`${this.appearance.fixedCounterSides || this.snapshot.policy.direction !== 'rtl' ? this.count() : this.value()}`)
             .fontSize(14).fontColor(Color.White).constraintSize({ minWidth: 30 }).maxLines(1).textAlign(TextAlign.End)
-        }.width('100%').alignItems(VerticalAlign.Center)
+        }.width('100%').height(this.appearance.sliderHeight > 0 ? this.appearance.sliderHeight : undefined)
+          .alignItems(VerticalAlign.Center)
         Row() {
-          if (this.saveAvailable) {
+          if (this.saveAvailable && !this.appearance.mediaActionsInMenu) {
             Button({ type: ButtonType.Circle }) {
               if (this.saveBusy) {
                 LoadingProgress().width(22).height(22).color(Color.White)
@@ -698,8 +745,10 @@ export struct ReaderChrome {
                 onDisappear: (): void => { this.onMenuVisible(false) },
               })
           }
-        }.width('100%').alignItems(VerticalAlign.Center)
-      }.width('100%').height(this.bottomInset + 112)
+        }.width('100%').height(this.appearance.controlsHeight > 0 ? this.appearance.controlsHeight : undefined)
+          .padding({ left: this.appearance.controlsPadding, right: this.appearance.controlsPadding })
+          .alignItems(VerticalAlign.Center)
+      }.width('100%').height(this.bottomInset + this.appearance.bottomHeight)
         .padding({ left: 16, right: 16, top: 8, bottom: this.bottomInset + 8 })
         .backgroundColor('#CC000000').id('rkit-chrome-bottom')
     }.width('100%').height('100%').hitTestBehavior(HitTestMode.Transparent)

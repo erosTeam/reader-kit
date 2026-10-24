@@ -1,3 +1,4 @@
+export { ReaderChromeAppearance, DEFAULT_READER_CHROME_APPEARANCE } from './src/main/ets/ReaderChromeAppearance'
 export { ReaderLabSurface } from './src/main/ets/ReaderLabSurface'
 export { ReaderLabAssetProbe } from './src/main/ets/ReaderLabAssetProbe'
 export { ReaderLabShareProbe } from './src/main/ets/ReaderLabShareProbe'
