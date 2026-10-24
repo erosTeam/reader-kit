@@ -2,21 +2,21 @@ import { ReaderPagedFrame } from '@reader-kit/core'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderLoadingStage } from './ReaderLoadingStage'
 
-/** One current drawable decides both pixels and feedback; decode is not stable presentation. */
+/** Original readiness owns feedback. A thumbnail preview cannot complete its request. */
 export class ReaderImagePresentation {
-  private readonly phase: 'loading' | 'preview' | 'image' | 'empty'
+  private readonly phase: 'loading' | 'image' | 'empty'
 
   get loading(): boolean { return this.phase === 'loading' }
   get pixels(): boolean { return this.phase === 'image' }
 
-  constructor(frame: ReaderPagedFrame | null, decodedOriginalIdentity: string, previewVisible: boolean = false) {
+  constructor(frame: ReaderPagedFrame | null, decodedOriginalIdentity: string) {
     const asset = frame?.asset
     const decoded = frame !== null && asset?.kind === 'original' && asset.phase === 'decoding' &&
       asset.assetRequestId > 0 && asset.uri.length > 0 &&
       decodedOriginalIdentity === `${frame.slotId}:${asset.assetRequestId}:` +
         `${frame.part.sourceIndex}:${frame.part.fragment}:${asset.visualRevision}`
     const awaitingPixels = frame === null || (asset !== undefined && asset.needsImagePlaceholder() && !decoded)
-    this.phase = awaitingPixels ? (previewVisible ? 'preview' : 'loading')
+    this.phase = awaitingPixels ? 'loading'
       : asset !== undefined && asset.phase !== 'failed' && asset.phase !== 'suppressed' ? 'image' : 'empty'
   }
 }

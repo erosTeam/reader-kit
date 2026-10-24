@@ -916,7 +916,7 @@ export struct ReaderSurface {
         .opacity(this.canvasBackdropOpacity)
         .hitTestBehavior(HitTestMode.None)
       Stack({ alignContent: Alignment.Bottom }) {
-      // Shared presentation chooses preview, loading or readable body pixels.
+      // Preview pixels remain beneath request-owned feedback until the original is readable.
       // A host supplies preview data but cannot render an independent loading layer.
       this.OpeningPreview()
       if (this.entryTransition !== null && this.entryPreview !== null) {
@@ -932,7 +932,6 @@ export struct ReaderSurface {
             snapshot: this.state, active: this.active,
             zoomResetCommand: this.zoomResetCommand,
             entryTransition: this.entryTransition,
-            entryPreviewVisible: this.hasEntryPreview(),
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
             onZoomedChange: (zoomed: boolean, topology: number, navigation: number): void => {
               this.reportZoomed(zoomed, topology, navigation)
@@ -969,7 +968,6 @@ export struct ReaderSurface {
             zoomResetCommand: this.zoomResetCommand,
             command: this.pagerCommand,
             entryTransition: this.entryTransition,
-            entryPreviewVisible: this.hasEntryPreview(),
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
             onZoomedChange: (zoomed: boolean, topology: number, navigation: number): void => {
               this.reportZoomed(zoomed, topology, navigation)
@@ -1142,11 +1140,6 @@ export struct ReaderSurface {
         this.reportInteractionBusy()
         this.syncAutoRead()
       })
-  }
-
-  private hasEntryPreview(): boolean {
-    return (this.openingPreview !== null && this.openingPreview.opacity > 0) ||
-      (this.entryPreview !== null && this.entryTransition?.pending() === true)
   }
 
   @Builder

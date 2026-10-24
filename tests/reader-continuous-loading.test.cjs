@@ -49,20 +49,30 @@ test('shared presentation never exposes image pixels together with loading feedb
   for (const phase of ['idle', 'asset', 'decoding', 'displayed', 'failed', 'suppressed']) {
     frame.asset.phase = phase
     for (const decoded of ['', '5:7:3:whole:2', '5:6:3:whole:2']) {
-      for (const preview of [false, true]) {
-        const presentation = new presentationExports.ReaderImagePresentation(frame, decoded, preview)
-        assert.equal(presentation.loading && presentation.pixels, false)
-      }
+      const presentation = new presentationExports.ReaderImagePresentation(frame, decoded)
+      assert.equal(presentation.loading && presentation.pixels, false)
     }
   }
   frame.asset.phase = 'decoding'
-  const awaiting = new presentationExports.ReaderImagePresentation(frame, '', false)
+  const awaiting = new presentationExports.ReaderImagePresentation(frame, '')
   assert.equal(awaiting.loading, true); assert.equal(awaiting.pixels, false)
-  const decoded = new presentationExports.ReaderImagePresentation(frame, '5:7:3:whole:2', false)
+  const decoded = new presentationExports.ReaderImagePresentation(frame, '5:7:3:whole:2')
   assert.equal(decoded.loading, false); assert.equal(decoded.pixels, true)
-  const preview = new presentationExports.ReaderImagePresentation(frame, '', true)
-  assert.equal(preview.loading, false); assert.equal(preview.pixels, false)
   frame.asset.retainedUri = 'file://retained'; frame.asset.retainedAssetRequestId = 6
-  const retained = new presentationExports.ReaderImagePresentation(frame, '', false)
+  const retained = new presentationExports.ReaderImagePresentation(frame, '')
   assert.equal(retained.loading, false); assert.equal(retained.pixels, true)
+})
+
+// Human-visible requirement: a thumbnail is not the requested original image.
+test('entry thumbnail keeps feedback until this original decodes, for all transition phases', () => {
+  for (const phase of ['layout', 'moving', 'waiting', 'revealing', 'finished', 'cancelled']) {
+    const value = fixture()
+    value.entryPreviewVisible = true
+    value.entryTransition = { phase, matches: () => true }
+    assert.equal(value.loadingVisible(), true, phase)
+    value.originalDecoded('5:6:3:whole:2')
+    assert.equal(value.loadingVisible(), true, `stale completion during ${phase}`)
+    value.originalDecoded('5:7:3:whole:2')
+    assert.equal(value.loadingVisible(), false, `readable original during ${phase}`)
+  }
 })

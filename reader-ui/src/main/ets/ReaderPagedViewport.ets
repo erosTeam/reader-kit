@@ -108,7 +108,6 @@ export struct ReaderPagedViewport {
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param entryTransition: ReaderEntryTransition | null = null
-  @Param entryPreviewVisible: boolean = false
   @Param selected: boolean = true
   @Param zoomResetCommand: ReaderZoomResetCommand | null = null
   @Event onTap: (xFraction: number, yFraction: number) => void = () => {}
@@ -425,7 +424,6 @@ export struct ReaderPagedViewport {
             imageInterpolation: this.imageInterpolation,
             snapshot: this.snapshot, slotId: frame.slotId,
             entryTransition: this.entryTransition,
-            entryPreviewVisible: this.entryPreviewVisible,
             entryMeasurement: this.entryMeasurement,
             entryGeometryReady: this.entryViewportLaidOut && this.entryRatiosReady(),
             renderedFragment: frame.part.fragment,
@@ -450,7 +448,7 @@ export struct ReaderPagedViewport {
       .translate({ x: this.zoomState.x, y: this.zoomState.y })
       .animation({ duration: this.zoomAnimating ? 180 : 0, curve: Curve.FastOutSlowIn })
       .id(this.selected ? 'rkit-paged-content' : `rkit-cached-content-${this.snapshot.displayIndex}`)
-      if (this.snapshot.phase === 'catalog' && this.snapshot.frames.length === 0 && !this.entryPreviewVisible) {
+      if (this.snapshot.phase === 'catalog' && this.snapshot.frames.length === 0) {
         ReaderLoadingStage({ label: $r('app.string.rkit_loading_resolving') })
       }
     }
@@ -501,7 +499,6 @@ struct ReaderPagedCell {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Require @Param snapshot: ReaderPagedSnapshot
   @Param entryTransition: ReaderEntryTransition | null = null
-  @Param entryPreviewVisible: boolean = false
   @Param entryMeasurement: ReaderEntryMeasurement | null = null
   @Param entryGeometryReady: boolean = false
   @Require @Param slotId: number
@@ -533,8 +530,7 @@ struct ReaderPagedCell {
   }
 
   private imagePresentation(): ReaderImagePresentation {
-    return new ReaderImagePresentation(this.frame(), this.decodedOriginalIdentity,
-      this.entryPreviewVisible && this.entryTransition?.matches(this.frame().part) === true)
+    return new ReaderImagePresentation(this.frame(), this.decodedOriginalIdentity)
   }
 
   private frame(): ReaderPagedFrame {

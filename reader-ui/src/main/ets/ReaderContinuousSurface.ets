@@ -35,7 +35,6 @@ export struct ReaderContinuousSurface {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param pageGap: number = 0
   @Param entryTransition: ReaderEntryTransition | null = null
-  @Param entryPreviewVisible: boolean = false
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param zoomResetCommand: ReaderZoomResetCommand | null = null
@@ -64,7 +63,6 @@ export struct ReaderContinuousSurface {
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
             zoomResetCommand: this.zoomResetCommand,
             entryTransition: this.entryTransition,
-            entryPreviewVisible: this.entryPreviewVisible,
             onInputLockChange: this.onInputLockChange,
             onZoomedChange: this.onZoomedChange,
             onBoundary: this.onBoundary,
@@ -73,7 +71,7 @@ export struct ReaderContinuousSurface {
             onTap: this.onTap,
           })
         }, (revision: number): string => `${revision}`)
-      } else if (!this.entryPreviewVisible && (this.snapshot.phase === 'idle' || this.snapshot.phase === 'catalog')) {
+      } else if (this.snapshot.phase === 'idle' || this.snapshot.phase === 'catalog') {
         ReaderLoadingStage({ label: $r('app.string.rkit_loading_resolving') })
       }
     }.width('100%').height('100%').clip(true)
@@ -85,7 +83,6 @@ struct ReaderContinuousList {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param pageGap: number = 0
   @Param entryTransition: ReaderEntryTransition | null = null
-  @Param entryPreviewVisible: boolean = false
   @Local private entryPosition: ReaderContinuousEntryPosition | null = null
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
@@ -497,7 +494,6 @@ struct ReaderContinuousList {
             imageInterpolation: this.imageInterpolation,
             snapshot: this.snapshot.forItem(key),
             entryTransition: this.entryTransition,
-            entryPreviewVisible: this.entryPreviewVisible,
             entryPosition: this.entryPosition?.key === key ? this.entryPosition : null,
             active: this.active,
             zoomResetCommand: this.zoomResetCommand?.topologyRevision === this.createdRevision ? this.zoomResetCommand : null,
@@ -581,7 +577,6 @@ struct ReaderContinuousList {
 struct ReaderContinuousCell {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param entryTransition: ReaderEntryTransition | null = null
-  @Param entryPreviewVisible: boolean = false
   @Param entryPosition: ReaderContinuousEntryPosition | null = null
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param imageHeight: number
@@ -617,9 +612,7 @@ struct ReaderContinuousCell {
   }
 
   private imagePresentation(): ReaderImagePresentation {
-    return new ReaderImagePresentation(this.snapshot.frames[0] ?? null, this.decodedOriginalIdentity,
-      this.entryPreviewVisible && this.snapshot.frames[0] !== undefined &&
-      this.entryTransition?.matches(this.snapshot.frames[0].part) === true)
+    return new ReaderImagePresentation(this.snapshot.frames[0] ?? null, this.decodedOriginalIdentity)
   }
 
   private loadingVisible(): boolean { return this.imagePresentation().loading }
