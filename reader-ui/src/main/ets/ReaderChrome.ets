@@ -417,6 +417,11 @@ export struct ReaderChrome {
     }
   }
 
+  private menuMaterial(): SystemUiMaterial | undefined {
+    return deviceInfo.apiAvailable('26.0.0') ?
+      new uiMaterial.ImmersiveMaterial({ style: uiMaterial.ImmersiveStyle.THICK }) : undefined
+  }
+
   @Builder
   private RuntimeMenu() {
     Menu() {
@@ -512,6 +517,7 @@ export struct ReaderChrome {
               .id('rkit-runtime-settings').accessibilityText($r('app.string.rkit_runtime_settings'))
               .enabled(this.active && this.snapshot.phase === 'ready')
               .bindMenu(this.RuntimeMenu, {
+                systemMaterial: this.menuMaterial(),
                 aboutToAppear: (): void => { this.onMenuVisible(true) },
                 onDisappear: (): void => { this.onMenuVisible(false) },
               })
@@ -539,8 +545,7 @@ export struct ReaderChrome {
               })
               .bindMenu(this.moreShown, this.MoreMenu, {
                 placement: Placement.BottomRight,
-                systemMaterial: deviceInfo.apiAvailable('26.0.0') ?
-                  new uiMaterial.ImmersiveMaterial({ style: uiMaterial.ImmersiveStyle.THICK }) : undefined,
+                systemMaterial: this.menuMaterial(),
                 aboutToAppear: (): void => { this.onMenuVisible(true) },
                 onDisappear: (): void => { this.moreShown = false; this.onMenuVisible(false) },
               })
@@ -597,8 +602,7 @@ export struct ReaderChrome {
               .onClick((): void => { this.openSave() })
               .bindMenu(this.saveMenuShown, this.SaveMenu, {
                 placement: Placement.TopRight,
-                systemMaterial: deviceInfo.apiAvailable('26.0.0') ?
-                  new uiMaterial.ImmersiveMaterial({ style: uiMaterial.ImmersiveStyle.THICK }) : undefined,
+                systemMaterial: this.menuMaterial(),
                 aboutToAppear: (): void => { this.onMenuVisible(true) },
                 onDisappear: (): void => { this.saveMenuShown = false; this.onMenuVisible(false) },
               })
@@ -618,8 +622,7 @@ export struct ReaderChrome {
               .onClick((): void => { this.openOriginal() })
               .bindMenu(this.originalMenuShown, this.OriginalMenu, {
                 placement: Placement.TopRight,
-                systemMaterial: deviceInfo.apiAvailable('26.0.0') ?
-                  new uiMaterial.ImmersiveMaterial({ style: uiMaterial.ImmersiveStyle.THICK }) : undefined,
+                systemMaterial: this.menuMaterial(),
                 aboutToAppear: (): void => { this.onMenuVisible(true) },
                 onDisappear: (): void => { this.originalMenuShown = false; this.onMenuVisible(false) },
               })
@@ -690,6 +693,7 @@ export struct ReaderChrome {
               .enabled(this.active && this.snapshot.phase === 'ready')
               .id('rkit-reading-mode').accessibilityText($r('app.string.rkit_runtime_settings'))
               .bindMenu(this.RuntimeMenu, {
+                systemMaterial: this.menuMaterial(),
                 aboutToAppear: (): void => { this.onMenuVisible(true) },
                 onDisappear: (): void => { this.onMenuVisible(false) },
               })
