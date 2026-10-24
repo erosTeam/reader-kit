@@ -1,7 +1,7 @@
 import { ReaderChromeAppearance, DEFAULT_READER_CHROME_APPEARANCE } from './ReaderChromeAppearance'
 import { ReaderSystemBarController } from './ReaderSystemBarController'
 import { ReaderModeControlParams } from './ReaderModeControl'
-import { UIUtils } from '@kit.ArkUI'
+import { FrameCallback, UIUtils } from '@kit.ArkUI'
 import { ReaderPagedSession, ReaderPagedSnapshot, ReaderReadingAnchor, ReaderUnitKey, ReaderFragment, ReaderDisplayPolicy, ReaderLayout,
   ReaderVariantPreference, ReaderProcessingPolicy, ReaderProcessingResult, ReaderPage, ReaderTemporaryVariantScope, ReaderTemporaryVariantOverride,
   ReaderInputPort, ReaderMoveIntent, ReaderImageShareTarget,
@@ -38,6 +38,14 @@ import { ReaderAutoReadPolicy } from './ReaderAutoReadPolicy'
 import { ReaderTapPolicy } from './ReaderTapPolicy'
 import { ReaderTemporaryVariantControl } from './ReaderTemporaryVariantControl'
 import { ReaderTitleParams } from './ReaderTitleParams'
+
+// One render boundary after the finite native show, never a status-inset gate.
+// FrameCallback.onIdle also requests a frame when none is pending (API12).
+class ReaderChromeAfterFrame extends FrameCallback {
+  private reveal: () => void
+  constructor(reveal: () => void) { super(); this.reveal = reveal }
+  onIdle(_remaining: number): void { this.reveal() }
+}
 
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
@@ -769,10 +777,18 @@ export struct ReaderSurface {
     try { await operation } catch (_) {}
     if (epoch !== this.chromeEpoch || !this.active || this.closing ||
       this.chromeDisposed || this.chromeCloseRequested || !this.chromeShowPending) return
-    this.chromeShowPending = false
-    this.chromeVisible = true
-    this.activitySink?.chromeChanged(true)
-    console.info('[ReaderSurface] chrome=true')
+    // A native API completion can precede the frame carrying its avoid-area
+    // update: lab237/133 painted the title high, then moved it next frame.
+    // Commit after that render boundary; do not wait for topInset > 0, which
+    // permanently hides chrome in windows with no status bar. No timer/poll.
+    this.getUIContext().postFrameCallback(new ReaderChromeAfterFrame((): void => {
+      if (epoch !== this.chromeEpoch || !this.active || this.closing ||
+        this.chromeDisposed || this.chromeCloseRequested || !this.chromeShowPending) return
+      this.chromeShowPending = false
+      this.chromeVisible = true
+      this.activitySink?.chromeChanged(true)
+      console.info('[ReaderSurface] chrome=true')
+    }))
   }
 
   private publishChromePresentation(): void {

@@ -45,10 +45,15 @@ The following are existing preservation requirements, not new feature work:
 - Toolbar reveal has two required cases: when the current native status-bar
   show operation applies, finish that operation before painting the toolbar;
   when status-bar control is absent or unsupported, keep the toolbar usable.
-  Wait only for the existing finite window operation, never for a nonzero
-  status inset or a host-specific layout probe. Cancellation, another toggle,
+  Complete the existing finite window operation and its next render boundary;
+  API completion alone can precede the frame carrying the safe-area change.
+  Never wait for a nonzero status inset or a host-specific layout probe.
+  Cancellation, another toggle,
   close and background retire a pending reveal. A fix for either case must
   preserve the other; synchronous-commit assertions cannot replace this contract.
+- Host chrome appearance preserves its established title, geometry, and control
+  order. Restoring one host must leave the shared default appearance unchanged;
+  appearance parameters cannot change reading policy or action ownership.
 - Keep one canonical value for a setting. The row label, menu check, bottom
   control and adopted session behavior must project that value. Shared routing
   must preserve existing button/menu semantics, options and live updates.

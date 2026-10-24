@@ -510,6 +510,76 @@ export struct ReaderChrome {
     }
   }
 
+  @Builder
+  private AutoReadControl() {
+    if (this.autoReadAvailable) {
+      Button({ type: ButtonType.Circle }) {
+        SymbolGlyph($r('sys.symbol.clock')).fontSize(22)
+          .fontColor([this.autoReadEnabled ? this.accent : Color.White])
+      }.width(44).height(44).backgroundColor(Color.Transparent)
+        .enabled(this.active && (this.autoReadEnabled ||
+          this.snapshot.phase === 'ready' && this.snapshot.displayCount > 1))
+        .id('rkit-auto-read')
+        .accessibilityText(this.autoReadEnabled ? $r('app.string.rkit_auto_read_stop') : $r('app.string.rkit_auto_read_start'))
+        .onClick(this.onAutoRead)
+    }
+  }
+
+  @Builder
+  private ThumbnailControl() {
+    Button({ type: ButtonType.Circle }) {
+      SymbolGlyph($r('sys.symbol.rectangle_grid_2x1')).fontSize(22)
+        .fontColor([this.thumbnailsVisible ? this.accent : Color.White])
+    }.width(44).height(44).backgroundColor(Color.Transparent)
+      .enabled(this.active && this.snapshot.phase === 'ready')
+      .id('rkit-toggle-thumbnails').accessibilityText($r('app.string.rkit_thumbnail'))
+      .onClick(this.onThumbnails)
+  }
+
+  @Builder
+  private CenterControl() {
+    if (this.hostCenterActionAvailable) {
+      Text(this.hostCenterActionLabel).fontSize(13).fontColor(Color.White)
+        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).textAlign(TextAlign.Center)
+        .layoutWeight(1).height(44)
+        .id('rkit-host-center-action')
+        .enabled(this.active && this.snapshot.phase === 'ready' && this.snapshot.unit !== null)
+        .onClick((): void => {
+          const source = this.snapshot.unit?.key
+          if (source !== undefined) this.selectHostCenterAction(source.copy(), this.snapshot.navigationRevision)
+        })
+    } else {
+      Blank()
+    }
+  }
+
+  @Builder
+  private SpreadShiftControl() {
+    if (this.snapshot.policy.layout === 'spread') {
+      Button({ type: ButtonType.Circle }) {
+        SymbolGlyph($r('sys.symbol.transfer')).fontSize(22)
+          .fontColor([this.snapshot.canShiftSpread ? Color.White : $r('sys.color.font_tertiary')])
+      }.width(44).height(44).backgroundColor(Color.Transparent)
+        .enabled(this.active && this.snapshot.canShiftSpread)
+        .id('rkit-shift-spread').accessibilityText($r('app.string.rkit_shift_spread'))
+        .onClick((): void => {
+          if (this.snapshot.unit !== null) this.onShiftSpread(this.snapshot.unit.key.copy(),
+            this.snapshot.topologyRevision, this.snapshot.navigationRevision)
+        })
+    }
+  }
+
+  @Builder
+  private SpreadToggleControl() {
+    Button({ type: ButtonType.Circle }) {
+      SymbolGlyph($r('sys.symbol.book')).fontSize(22)
+        .fontColor([this.snapshot.policy.layout === 'spread' ? this.accent : Color.White])
+    }.width(44).height(44).backgroundColor(Color.Transparent)
+      .enabled(this.active && this.snapshot.phase === 'ready' && this.snapshot.policy.layout !== 'continuous')
+      .id('rkit-toggle-spread').accessibilityText($r('app.string.rkit_spread'))
+      .onClick((): void => { this.setLayout(this.snapshot.policy.layout === 'spread' ? 'single' : 'spread') })
+  }
+
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
       Stack({ alignContent: Alignment.Center }) {
@@ -674,56 +744,20 @@ export struct ReaderChrome {
                 onDisappear: (): void => { this.originalMenuShown = false; this.onMenuVisible(false) },
               })
           }
-          if (this.autoReadAvailable) {
-            Button({ type: ButtonType.Circle }) {
-              SymbolGlyph($r('sys.symbol.clock')).fontSize(22)
-                .fontColor([this.autoReadEnabled ? this.accent : Color.White])
-            }.width(44).height(44).backgroundColor(Color.Transparent)
-              .enabled(this.active && (this.autoReadEnabled ||
-                this.snapshot.phase === 'ready' && this.snapshot.displayCount > 1))
-              .id('rkit-auto-read')
-              .accessibilityText(this.autoReadEnabled ? $r('app.string.rkit_auto_read_stop') : $r('app.string.rkit_auto_read_start'))
-              .onClick(this.onAutoRead)
-          }
-          Button({ type: ButtonType.Circle }) {
-            SymbolGlyph($r('sys.symbol.rectangle_grid_2x1')).fontSize(22)
-              .fontColor([this.thumbnailsVisible ? this.accent : Color.White])
-          }.width(44).height(44).backgroundColor(Color.Transparent)
-            .enabled(this.active && this.snapshot.phase === 'ready')
-            .id('rkit-toggle-thumbnails').accessibilityText($r('app.string.rkit_thumbnail'))
-            .onClick(this.onThumbnails)
-          if (this.hostCenterActionAvailable) {
-            Text(this.hostCenterActionLabel).fontSize(13).fontColor(Color.White)
-              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).textAlign(TextAlign.Center)
-              .layoutWeight(1).height(44)
-              .id('rkit-host-center-action')
-              .enabled(this.active && this.snapshot.phase === 'ready' && this.snapshot.unit !== null)
-              .onClick((): void => {
-                const source = this.snapshot.unit?.key
-                if (source !== undefined) this.selectHostCenterAction(source.copy(), this.snapshot.navigationRevision)
-              })
+          // Restore the established host order without changing shared actions.
+          if (this.appearance.spreadControlsLeading) {
+            this.SpreadToggleControl()
+            this.SpreadShiftControl()
+            this.CenterControl()
+            this.AutoReadControl()
+            this.ThumbnailControl()
           } else {
-            Blank()
+            this.AutoReadControl()
+            this.ThumbnailControl()
+            this.CenterControl()
+            this.SpreadShiftControl()
+            this.SpreadToggleControl()
           }
-          if (this.snapshot.policy.layout === 'spread') {
-            Button({ type: ButtonType.Circle }) {
-              SymbolGlyph($r('sys.symbol.transfer')).fontSize(22)
-                .fontColor([this.snapshot.canShiftSpread ? Color.White : $r('sys.color.font_tertiary')])
-            }.width(44).height(44).backgroundColor(Color.Transparent)
-              .enabled(this.active && this.snapshot.canShiftSpread)
-              .id('rkit-shift-spread').accessibilityText($r('app.string.rkit_shift_spread'))
-              .onClick((): void => {
-                if (this.snapshot.unit !== null) this.onShiftSpread(this.snapshot.unit.key.copy(),
-                  this.snapshot.topologyRevision, this.snapshot.navigationRevision)
-              })
-          }
-          Button({ type: ButtonType.Circle }) {
-            SymbolGlyph($r('sys.symbol.book')).fontSize(22)
-              .fontColor([this.snapshot.policy.layout === 'spread' ? this.accent : Color.White])
-          }.width(44).height(44).backgroundColor(Color.Transparent)
-            .enabled(this.active && this.snapshot.phase === 'ready' && this.snapshot.policy.layout !== 'continuous')
-            .id('rkit-toggle-spread').accessibilityText($r('app.string.rkit_spread'))
-            .onClick((): void => { this.setLayout(this.snapshot.policy.layout === 'spread' ? 'single' : 'spread') })
           if (this.hostModeControlAvailable) {
             this.modeControl({ policy: this.snapshot.policy, enabled: this.active && this.snapshot.phase === 'ready',
               onChange: (policy: ReaderDisplayPolicy): void => {

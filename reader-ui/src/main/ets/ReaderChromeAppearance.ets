@@ -11,9 +11,11 @@ export interface ReaderChromeAppearance {
   topActionSpacing: number
   fixedCounterSides: boolean
   mediaActionsInMenu: boolean
+  spreadControlsLeading: boolean
 }
 
 export const DEFAULT_READER_CHROME_APPEARANCE: ReaderChromeAppearance = {
   bottomHeight: 112, sliderHeight: 0, controlsHeight: 0, controlsPadding: 0,
   columnSpacing: 4, topActionSpacing: 0, fixedCounterSides: false, mediaActionsInMenu: false,
+  spreadControlsLeading: false,
 }

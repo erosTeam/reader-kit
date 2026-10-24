@@ -56,7 +56,11 @@ const methods = source.slice(0, source.indexOf('\n  build() {'))
   .replace('export struct ReaderSurface {', 'export class ReaderSurface {') + '\n}\n'
 const { ReaderSystemBarController } = evaluate(fs.readFileSync(path.join(uiPath, 'ReaderSystemBarController.ets'), 'utf8'))
 const { ReaderSurface } = evaluate(methods)
-ReaderSurface.prototype.getUIContext = () => ({ getComponentUtils() { throw new Error("No viewport in non-rendering test") } })
+ReaderSurface.prototype.getUIContext = () => ({
+  getComponentUtils() { throw new Error("No viewport in non-rendering test") },
+  // Platform callback delivery only; this harness does not assert native frames.
+  postFrameCallback(callback) { queueMicrotask(() => callback.onIdle(2_000_000)) },
+})
 function scenario(phase = null) {
   const surface = new ReaderSurface()
   surface.active = true; surface.state.phase = 'ready'; surface.state.topologyRevision = 7
@@ -432,7 +436,9 @@ test('optional automatic advance consumes actual session readiness and Surface i
   surface.syncAutoRead(); assert.equal(timers.size, 0)
   session.close(); surface.autoReadController.close()
 })
-async function flushChrome() { await Promise.resolve(); await Promise.resolve() }
+// Drain the platform callback stub as well as native/cross-realm promise jobs.
+// Actual native rendering still requires an ordinary host recording.
+async function flushChrome() { await new Promise(resolve => setImmediate(resolve)) }
 
 test('chrome without a window controller preserves synchronous hide/show and preview dismissal', () => {
   const { surface, events } = chromeScenario()
