@@ -892,6 +892,9 @@ export struct ReaderPagedImage {
   }
 
   private publishEntryTarget(failed: boolean = false): void {
+    // Ordinary scrolling has no entry geometry claim. Do not enqueue work that
+    // measureEntryTarget would discard after every image/layout update.
+    if (this.entryTransition === null || !this.entryTransition.pending()) return
     const position = this.continuousEntry
     if (position !== null && !position.isCurrent()) return
     // State monitors run before native layout. Both paged and continuous

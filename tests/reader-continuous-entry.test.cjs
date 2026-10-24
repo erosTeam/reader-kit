@@ -132,6 +132,17 @@ function imageFixture(width = 400, height = 2400) {
   })
   return { ...f, image, position, callbacks, rectangles, retire: () => { current = false } }
 }
+test('ordinary reading and retired entries do not enqueue entry geometry work on each image update', () => {
+  for (const phase of ['absent', 'finished', 'cancelled']) {
+    const f = imageFixture()
+    if (phase === 'absent') f.image.entryTransition = null
+    else f.transition.phase = phase
+    // These are calls from the real image's layout, decode and frame monitors.
+    for (let i = 0; i < 100; i++) f.image.publishEntryTarget(i % 2 === 0)
+    assert.equal(f.callbacks.length, 0, phase)
+  }
+})
+
 test('host-owned preview may be absent: leaf measurement preserves long Image bounds and uses the Reader viewport clip', () => {
   const f = imageFixture(); f.image.publishEntryTarget(); assert.equal(f.transition.target, null)
   f.callbacks.shift()(); const t = f.transition.target
