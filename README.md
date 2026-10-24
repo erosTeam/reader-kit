@@ -47,7 +47,9 @@ The following are existing preservation requirements, not new feature work:
   must preserve existing button/menu semantics, options and live updates.
 - Page selection updates local observed state. Retain the reading session,
   thumbnail rail, scroller and unrelated image nodes; do not key/remount an
-  entire page or list by page number to obtain an update. Declarative updates
+  entire page or list by page number to obtain an update. A retained hidden
+  rail keeps its decoded leases without following pages or demanding new
+  ranges; showing it adopts the current position before visible following. Declarative updates
   are required; minimizing their scope does not mean prohibiting all rebuilds.
 - Preload demand rolls with navigation, range, policy and unit changes; an
   initial warm window is not continuous preload. Transport warming is not

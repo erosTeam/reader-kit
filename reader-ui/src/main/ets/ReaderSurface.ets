@@ -1033,6 +1033,7 @@ export struct ReaderSurface {
         Column() {
           ForEach([this.thumbnailUnitIdentity()], (_identity: string) => {
             ReaderThumbnailRail({ session: this.session, snapshot: this.state, accent: this.accent,
+              visible: this.thumbnailRailVisible(),
               previewIndex: this.previewIndex,
               onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
                 this.session.seekSource(index, unit, navigation)

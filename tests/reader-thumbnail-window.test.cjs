@@ -133,3 +133,48 @@ test('browsing auxiliary thumbnails cannot select or observe a reading page', as
   assert.equal(reader.snapshot().observedAnchor, null)
   window.close(); reader.close()
 })
+
+test('a retained hidden rail does not follow pages or replace its resource window', async () => {
+  const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm')
+  const ts = require(process.env.READER_KIT_TYPESCRIPT ||
+    '/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/node_modules/typescript')
+  const source = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderThumbnailRail.ets'), 'utf8')
+    .replace(/\bstruct /g, 'class ')
+  const ast = ts.createSourceFile('rail.ts', source, ts.ScriptTarget.Latest, true)
+  const cls = ast.statements.find(s => ts.isClassDeclaration(s) && s.name.text === 'ReaderThumbnailRail')
+  const names = ['onPositionChanged', 'current', 'range', 'aboutToDisappear']
+  const bodies = names.map(name => cls.members.find(m => m.name?.getText(ast) === name).getText(ast)).join('\n')
+  const exports = {}
+  vm.runInNewContext(ts.transpileModule(`export class Rail { ${bodies} }`, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, experimentalDecorators: true },
+  }).outputText, { exports, Monitor: () => () => {}, ScrollAlign: { START: 'start' } })
+  const f = setup(), scrolls = []
+  f.window.setRange(f.unit, 10, 12); await tick()
+  const retained = f.window.snapshot().find(frame => frame.index === 11)
+  const initialLoads = f.calls.load.length
+  const rail = Object.assign(new exports.Rail(), { alive: true, visible: false, positionWasVisible: false,
+    snapshot: { unit: f.unit, anchor: { sourceIndexHint: 20 } }, previewIndex: -1,
+    source: { totalCount: () => 40 }, scrollTarget: 10, resources: f.window,
+    scroller: { scrollToIndex: (...args) => scrolls.push(args) } })
+  rail.onPositionChanged(); rail.range(20, 23); await tick()
+  assert.equal(scrolls.length, 0)
+  assert.equal(f.calls.load.length, initialLoads)
+  assert.equal(f.calls.release.length, 0)
+  assert.equal(f.window.snapshot().find(frame => frame.index === 11).slotId, retained.slotId)
+  rail.visible = true; rail.onPositionChanged(); await tick()
+  assert.deepEqual(scrolls, [[20, false, 'start']])
+  assert.ok(f.window.snapshot().some(frame => frame.index === 20))
+  rail.snapshot.anchor.sourceIndexHint = 21; rail.onPositionChanged()
+  assert.deepEqual(scrolls[1], [21, true, 'start'])
+  rail.previewIndex = 22; rail.onPositionChanged()
+  assert.deepEqual(scrolls[2], [22, false, 'start'])
+  rail.visible = false; rail.onPositionChanged()
+  const hiddenLoads = f.calls.load.length
+  rail.previewIndex = -1; rail.snapshot.anchor.sourceIndexHint = 30
+  rail.onPositionChanged(); rail.range(29, 31); await tick()
+  assert.equal(scrolls.length, 3)
+  assert.equal(f.calls.load.length, hiddenLoads)
+  rail.aboutToDisappear()
+  assert.equal(rail.alive, false)
+  assert.equal(f.window.snapshot().length, 0)
+})

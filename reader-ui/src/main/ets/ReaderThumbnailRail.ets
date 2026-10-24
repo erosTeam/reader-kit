@@ -17,6 +17,8 @@ class ThumbnailIndexSource implements IDataSource {
 export struct ReaderThumbnailRail {
   @Require @Param session: ReaderPagedSession
   @Require @Param snapshot: ReaderPagedSnapshot
+  @Param visible: boolean = true
+  @Local private renderedSnapshot: ReaderPagedSnapshot = new ReaderPagedSnapshot()
   @Param accent: ResourceColor = '#D93646'
   @Param previewIndex: number = -1
   @Event onSeek: (index: number, unit: ReaderUnitKey, navigation: number) => void = () => {}
@@ -27,9 +29,12 @@ export struct ReaderThumbnailRail {
   private initialIndex: number = 0
   private scrollTarget: number = -1
   private alive: boolean = false
+  private positionWasVisible: boolean = false
 
   aboutToAppear(): void {
     this.alive = true
+    this.renderedSnapshot = this.snapshot
+    this.positionWasVisible = this.visible
     this.source = new ThumbnailIndexSource(this.snapshot.unit?.pageCount ?? 0)
     this.initialIndex = this.current()
     this.scrollTarget = this.initialIndex
@@ -39,16 +44,22 @@ export struct ReaderThumbnailRail {
   }
   aboutToDisappear(): void { this.alive = false; this.resources?.close(); this.resources = null }
 
-  @Monitor('snapshot', 'previewIndex')
+  @Monitor('snapshot', 'previewIndex', 'visible')
   onPositionChanged(): void {
     if (!this.alive) return
+    if (!this.visible) { this.positionWasVisible = false; return }
+    this.renderedSnapshot = this.snapshot
     const previewing = this.previewIndex >= 0 && this.previewIndex < this.source.totalCount()
     const target = previewing ? this.previewIndex : this.current()
-    // Asset receipts and preview retirement must not interrupt the same native scroll.
+    const wasVisible = this.positionWasVisible
+    this.positionWasVisible = true
+    // Retain the hidden native List and decoded leases, without scrolling or
+    // demanding each intervening page. Opening adopts the current target once.
+    if (!wasVisible) this.range(target, target)
     if (target === this.scrollTarget) return
     this.scrollTarget = target
-    // Page changes animate; slider previews follow the finger directly.
-    this.scroller.scrollToIndex(target, !previewing, ScrollAlign.START)
+    // Visible page changes animate; opening and slider previews align directly.
+    this.scroller.scrollToIndex(target, wasVisible && !previewing, ScrollAlign.START)
   }
 
   private current(): number { return this.snapshot.anchor?.sourceIndexHint ?? 0 }
@@ -56,10 +67,10 @@ export struct ReaderThumbnailRail {
     return this.frames.find((frame: ReaderThumbnailFrame) => frame.index === index) ?? null
   }
   private selected(index: number): boolean {
-    return this.snapshot.frames.some((frame: ReaderPagedFrame) => frame.part.sourceIndex === index)
+    return this.renderedSnapshot.frames.some((frame: ReaderPagedFrame) => frame.part.sourceIndex === index)
   }
   private range(start: number, end: number): void {
-    if (this.alive && this.snapshot.unit !== null) {
+    if (this.alive && this.visible && this.snapshot.unit !== null) {
       this.resources?.setRange(this.snapshot.unit, Math.min(start, end), Math.max(start, end))
     }
   }
@@ -81,12 +92,12 @@ export struct ReaderThumbnailRail {
             onRetry: (slot: number, request: number): void => { void this.resources?.retry(slot, request) },
           })
         }.margin({
-          left: (this.snapshot.policy.direction === 'rtl' ? index === this.source.totalCount() - 1 : index === 0) ? 16 : 0,
-          right: (this.snapshot.policy.direction === 'rtl' ? index === 0 : index === this.source.totalCount() - 1) ? 16 : 0,
+          left: (this.renderedSnapshot.policy.direction === 'rtl' ? index === this.source.totalCount() - 1 : index === 0) ? 16 : 0,
+          right: (this.renderedSnapshot.policy.direction === 'rtl' ? index === 0 : index === this.source.totalCount() - 1) ? 16 : 0,
         })
       }, (index: number): string => `${index}`)
     }.listDirection(Axis.Horizontal)
-      .direction(this.snapshot.policy.direction === 'rtl' ? Direction.Rtl : Direction.Ltr)
+      .direction(this.renderedSnapshot.policy.direction === 'rtl' ? Direction.Rtl : Direction.Ltr)
       .cachedCount(1).scrollBar(BarState.Off).width('100%').height(140)
       .onScrollIndex((start: number, end: number): void => { this.range(start, end) })
       .id('rkit-thumbnail-rail')
