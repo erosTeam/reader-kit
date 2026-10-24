@@ -13,6 +13,7 @@ import { ReaderLoadingStage } from './ReaderLoadingStage'
 import { ReaderImagePlaceholder, ReaderImagePresentation } from './ReaderImagePlaceholder'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { readerElementKey } from './ReaderElementKey'
+import { ReaderContinuousCellSnapshot, ReaderContinuousCellSnapshots } from './ReaderContinuousCellSnapshot'
 
 class ReaderContinuousIndexSource implements IDataSource {
   private keys: string[]
@@ -103,6 +104,7 @@ struct ReaderContinuousList {
   @Event onBoundary: (direction: ReaderBoundaryDirection, topologyRevision: number,
     navigationRevision: number) => void = () => {}
   private source: ReaderContinuousIndexSource = new ReaderContinuousIndexSource([])
+  private cellSnapshots: ReaderContinuousCellSnapshots = new ReaderContinuousCellSnapshots()
   private scroller: ListScroller = new ListScroller()
   private nativeReady: Map<string, string> = new Map()
   @Local private viewWidth: number = 1
@@ -492,7 +494,7 @@ struct ReaderContinuousList {
         ListItem() {
           ReaderContinuousCell({
             imageInterpolation: this.imageInterpolation,
-            snapshot: this.snapshot.forItem(key),
+            snapshot: this.cellSnapshots.forItem(this.snapshot, key, this.entryTransition?.pending() !== true),
             entryTransition: this.entryTransition,
             entryPosition: this.entryPosition?.key === key ? this.entryPosition : null,
             active: this.active,
@@ -578,7 +580,7 @@ struct ReaderContinuousCell {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPosition: ReaderContinuousEntryPosition | null = null
-  @Require @Param snapshot: ReaderPagedSnapshot
+  @Require @Param snapshot: ReaderContinuousCellSnapshot
   @Require @Param imageHeight: number
   @Require @Param imageAspectRatio: number
   @Param rotateClockwise: boolean = false

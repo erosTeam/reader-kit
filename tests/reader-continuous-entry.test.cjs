@@ -476,3 +476,98 @@ test('opening and closing a host sheet preserves explicit continuous page select
   f.list.releasePosition(); f.list.measureTimer = 0; f.list.scheduleMeasure()
   assert.equal(observed.at(-1), 0)
 })
+
+// Use the actual LazyForEach -> Cell binding rather than a copy of its projection.
+function continuousCellBinding() {
+  const source = read('ReaderContinuousSurface').replace(/\bstruct /g, 'class ')
+  const ast = ts.createSourceFile('cell.ts', source, ts.ScriptTarget.Latest, true)
+  let binding
+  const visit = node => {
+    if (ts.isCallExpression(node) && node.expression.getText(ast) === 'ReaderContinuousCell') {
+      binding = node.arguments[0].properties.find(p => p.name?.getText(ast) === 'snapshot').initializer.getText(ast)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(ast); assert.ok(binding)
+  const modulePath = path.join(root, 'ReaderContinuousCellSnapshot.ets')
+  const Cache = fs.existsSync(modulePath)
+    ? evaluate(read('ReaderContinuousCellSnapshot'), { '@reader-kit/core': core }).ReaderContinuousCellSnapshots : null
+  const Bound = evaluate(`export class Bound { project(key) { return ${binding} } }`).Bound
+  const value = new Bound(); value.cellSnapshots = Cache === null ? null : new Cache()
+  return value
+}
+function continuousCellState() {
+  const f = fixture(800, 1600), state = f.state
+  state.unit = new core.ReaderUnit(f.frame.part.unit, 'book', 2)
+  state.displayKeys = ['other', 'selected']; state.displayCount = 2
+  state.pageMetadata = [f.frame.asset.page.copy()]
+  state.window = [new core.ReaderPagedItemSnapshot('selected', 1, [f.frame])]
+  delete state.forItem
+  return state
+}
+function copyContinuousCellState(previous) {
+  const next = Object.assign(new core.ReaderPagedSnapshot(), previous)
+  next.window = previous.window.map(item => new core.ReaderPagedItemSnapshot(item.key, item.index,
+    item.frames.map(frame => {
+      const result = new core.ReaderPagedFrame(frame.slotId, frame.part, frame.asset, frame.crop)
+      result.cropPending = frame.cropPending; return result
+    })))
+  return next
+}
+test('an unrelated selection snapshot preserves the settled original Cell input reference', () => {
+  const bound = continuousCellBinding(); bound.snapshot = continuousCellState()
+  const original = bound.project('selected')
+  bound.snapshot = copyContinuousCellState(bound.snapshot)
+  bound.snapshot.selectionId++; bound.snapshot.displayIndex = 0
+  bound.snapshot.visibleDisplayStart = 0; bound.snapshot.visibleDisplayEnd = 1
+  assert.equal(bound.project('selected'), original)
+})
+test('loading, replacing and failed frames always reach the Cell with current bytes and request epoch', () => {
+  for (const prepare of [f => { f.asset.phase = 'asset' }, f => { f.asset.phase = 'decoding' },
+    f => { f.asset.phase = 'failed' }, f => { f.asset.requestId++ },
+    f => { f.asset.retainedUri = 'prior'; f.asset.retainedAssetRequestId = 2 }, f => { f.cropPending = true }]) {
+    const bound = continuousCellBinding(); bound.snapshot = continuousCellState()
+    prepare(bound.snapshot.window[0].frames[0]); const before = bound.project('selected')
+    bound.snapshot = copyContinuousCellState(bound.snapshot)
+    bound.snapshot.window[0].frames[0].asset.loadProgressLoaded = 100
+    const after = bound.project('selected'); assert.notEqual(after, before)
+    assert.equal(after.frames[0].asset.loadProgressLoaded, 100)
+  }
+})
+test('a changed settled image identity, geometry, crop or navigation never reuses the prior Cell input', () => {
+  for (const change of [s => { s.navigationRevision++ }, s => { s.topologyRevision++ },
+    s => { s.window[0].frames[0].slotId++ }, s => { s.window[0].frames[0].asset.uri = 'fresh' },
+    s => { const a = s.window[0].frames[0].asset; a.requestId++; a.assetRequestId++ },
+    s => { s.window[0].frames[0].asset.visualRevision++ }, s => { s.window[0].frames[0].asset.variantIdentity = 'processed' },
+    s => { s.window[0].frames[0].crop.left = 0.1 }, s => { s.window[0].frames[0].asset.page.height++ },
+    s => { s.window[0].frames[0].asset.page.previewWidth++ }]) {
+    const bound = continuousCellBinding(); bound.snapshot = continuousCellState(); const before = bound.project('selected')
+    bound.snapshot = copyContinuousCellState(bound.snapshot); change(bound.snapshot)
+    assert.notEqual(bound.project('selected'), before)
+  }
+})
+test('an evicted Cell drops its original frame, and a later window cannot revive the cached image input', () => {
+  const bound = continuousCellBinding(); bound.snapshot = continuousCellState(); const before = bound.project('selected')
+  const restored = copyContinuousCellState(bound.snapshot)
+  bound.snapshot = copyContinuousCellState(bound.snapshot); bound.snapshot.window = []
+  assert.equal(bound.project('selected').frames.length, 0)
+  bound.snapshot = restored; assert.notEqual(bound.project('selected'), before)
+})
+test('a neighboring original update cannot replace this settled Cell input', () => {
+  const bound = continuousCellBinding(); bound.snapshot = continuousCellState()
+  const other = new core.ReaderPagedFrame(99, bound.snapshot.window[0].frames[0].part,
+    bound.snapshot.window[0].frames[0].asset)
+  bound.snapshot.window.push(new core.ReaderPagedItemSnapshot('other', 0, [other]))
+  const selected = bound.project('selected'), neighbor = bound.project('other')
+  bound.snapshot = copyContinuousCellState(bound.snapshot)
+  bound.snapshot.window[1].frames[0].asset.uri = 'neighbor-new-original'
+  assert.equal(bound.project('selected'), selected)
+  assert.notEqual(bound.project('other'), neighbor)
+})
+test('a pending entry retains the uncached frame path even when the original is displayed', () => {
+  const bound = continuousCellBinding(); bound.snapshot = continuousCellState()
+  bound.entryTransition = { pending: () => true }
+  const before = bound.project('selected')
+  bound.snapshot = copyContinuousCellState(bound.snapshot)
+  assert.notEqual(bound.project('selected'), before)
+})
