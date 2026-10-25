@@ -558,10 +558,10 @@ export class ReaderPagedSession {
     const value = new ReaderPagedSnapshot()
     value.unit = this.state.unit?.copy() ?? null
     value.nativeCacheDepth = this.pagedPreloadDepth === null
-      ? 1 : this.prefetchNeighbors ? this.pagedPreloadDepth : 0
+      ? 1 : this.prefetchNeighbors ? this.nativeNeighborDepth() : 0
     if (this.pagedPreloadDepth !== null && value.nativeCacheDepth > 0 &&
-      this.state.policy.layout !== 'continuous' && this.resourceWindowIndexes.some((index: number): boolean =>
-        Math.abs(index - this.state.displayIndex) === value.nativeCacheDepth + 1)) {
+      this.resourceWindowIndexes.some((index: number): boolean =>
+        this.nativeWindowDistance(index) === value.nativeCacheDepth + 1)) {
       value.nativeCacheDepth += 1
     }
     value.phase = this.state.phase
@@ -626,13 +626,35 @@ export class ReaderPagedSession {
     })
   }
 
+  /** Two-level continuous cache, adopted on 2026-10-26 in Koma's current queue.
+   * f260c8a tied five-page transport lookahead to native Image owners; the
+   * NextN109 trace showed eight ~78MB pixel caches retiring on the UI thread.
+   * Keep only immediate native neighbors in Continuous. Future files/processed
+   * results still follow preloadDepth via futurePreloadIndexes/syncProcessing.
+   * Paging's leased reverse edge, original quality and loading lifetime stay.
+   * Delivery requires the named host motion/load/return evidence; do not change
+   * this boundary through a host-specific cache count or image-size workaround.
+   */
+  private nativeNeighborDepth(): number {
+    const depth = this.pagedPreloadDepth ?? 1
+    return this.state.policy.layout === 'continuous' ? Math.min(1, depth) : depth
+  }
+
+  private nativeWindowDistance(index: number): number {
+    if (this.state.policy.layout !== 'continuous' || this.continuousStart < 0) {
+      return Math.abs(index - this.state.displayIndex)
+    }
+    return index < this.continuousStart ? this.continuousStart - index :
+      Math.max(0, index - this.continuousEnd)
+  }
+
   private windowIndexes(): number[] {
     if (this.map === null || this.map.count() === 0) return []
     if (this.state.policy.layout === 'continuous' && this.continuousStart >= 0) {
       const indexes: number[] = []
       for (let index = this.continuousStart; index <= this.continuousEnd; index++) indexes.push(index)
       if (this.prefetchNeighbors) {
-        const depth = this.pagedPreloadDepth ?? 1
+        const depth = this.nativeNeighborDepth()
         for (let offset = 1; offset <= depth; offset++) {
           if (this.continuousStart - offset >= 0) indexes.push(this.continuousStart - offset)
           if (this.continuousEnd + offset < this.map.count()) indexes.push(this.continuousEnd + offset)
@@ -642,7 +664,7 @@ export class ReaderPagedSession {
     }
     const indexes: number[] = [this.state.displayIndex]
     if (this.prefetchNeighbors) {
-      const depth = this.pagedPreloadDepth ?? 1
+      const depth = this.nativeNeighborDepth()
       for (let offset = 1; offset <= depth; offset++) {
         if (this.state.displayIndex - offset >= 0) indexes.push(this.state.displayIndex - offset)
         if (this.state.displayIndex + offset < this.map.count()) indexes.push(this.state.displayIndex + offset)
@@ -716,8 +738,15 @@ export class ReaderPagedSession {
     for (let display = from; display < this.map.count() && display < from + this.preloadDepth; display += 1) {
       const parts = this.map.item(display)?.parts ?? []
       parts.forEach((part: ReaderDisplayPart): void => {
+        // Continuous reconciliation has already chosen the new live window,
+        // but old slots have not retired yet. A retiring slot still inside the
+        // file budget needs its existing processing consumer to survive.
         const preparedByWindow = this.pagedPreloadDepth !== null &&
-          this.slots.some((slot: ReaderPageSlot): boolean => slot.index === part.sourceIndex)
+          (this.state.policy.layout === 'continuous'
+            ? this.resourceWindowIndexes.some((index: number): boolean =>
+              (this.map?.item(index)?.parts ?? []).some((nativePart: ReaderDisplayPart): boolean =>
+                nativePart.sourceIndex === part.sourceIndex))
+            : this.slots.some((slot: ReaderPageSlot): boolean => slot.index === part.sourceIndex))
         if (!preparedByWindow && !indexes.includes(part.sourceIndex)) indexes.push(part.sourceIndex)
       })
     }
@@ -748,7 +777,12 @@ export class ReaderPagedSession {
       return
     }
     const indexes: number[] = this.futurePreloadIndexes()
-    this.windowIndexes().forEach((display: number): void => {
+    // The continuous candidate's one reverse edge is still a live lease.
+    // Keep its file/processed recipe with the native owner across a reversal;
+    // excluding it here would retire and re-acquire that very same image.
+    const processingWindow = this.state.policy.layout === 'continuous'
+      ? this.resourceWindowIndexes : this.windowIndexes()
+    processingWindow.forEach((display: number): void => {
       this.map?.item(display)?.parts.forEach((part: ReaderDisplayPart): void => {
         if (!indexes.includes(part.sourceIndex)) indexes.push(part.sourceIndex)
       })
@@ -1227,14 +1261,21 @@ export class ReaderPagedSession {
     const unit = this.state.unit
     const requested = this.windowIndexes()
     const canRetainEdge = this.prefetchNeighbors && this.pagedPreloadDepth !== null &&
-      this.pagedPreloadDepth > 0 && this.state.policy.layout !== 'continuous'
+      this.pagedPreloadDepth > 0
+    // f260c8a already keeps one leased reverse edge for paging. Candidate133
+    // exposed short blanks on reverse scroll; a just-exited neighbor is still
+    // near-screen demand until it leaves the adjacent-edge bound.
+    // Retain at most one existing adjacent edge, including an in-flight decode;
+    // never keep a distant seek target or grow the five-page native window back.
     const spare = canRetainEdge ? this.resourceWindowIndexes.filter((index: number): boolean =>
-      !requested.includes(index) && (this.map?.item(index)?.parts ?? []).length > 0 &&
+      !requested.includes(index) && (this.state.policy.layout !== 'continuous' ||
+        this.nativeWindowDistance(index) === this.nativeNeighborDepth() + 1) &&
+      (this.map?.item(index)?.parts ?? []).length > 0 &&
       (this.map?.item(index)?.parts ?? []).every((part: ReaderDisplayPart): boolean =>
         this.slots.some((slot: ReaderPageSlot): boolean =>
           slot.index === part.sourceIndex && slot.kind === this.state.kind)))
       .sort((left: number, right: number): number =>
-        Math.abs(left - this.state.displayIndex) - Math.abs(right - this.state.displayIndex)).slice(0, 1) : []
+        this.nativeWindowDistance(left) - this.nativeWindowDistance(right)).slice(0, 1) : []
     this.resourceWindowIndexes = requested.concat(spare)
     const parts: ReaderDisplayPart[] = []
     this.resourceWindowIndexes.forEach((index: number) => {

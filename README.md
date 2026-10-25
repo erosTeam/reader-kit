@@ -466,7 +466,21 @@ clips the viewport. Metadata survives asset eviction without retaining its image
 Independent NH previews use their own dimensions; EH sprite regions use their explicit crop.
 The entire sprite canvas uses decoded pixel dimensions at one uniform scale; parsed occupied
 extents are only a pre-decode fallback, not a replacement for any padded canvas dimension.
-The core session keeps only the actual visible range plus immediate neighbors when enabled.
+The core session keeps only the actual visible range plus immediate neighbors when enabled. The adopted two-level continuous cache
+limits Continuous's native List/Image window to one neighbor plus at most one
+already-leased adjacent reverse edge, while retaining the host's 0–5 future
+file/processing budget. The native List cache covers that live edge; its existing
+file/processed consumer survives with it. File demand uses the newly chosen
+window, so retiring a native slot does not cancel its still-needed lookahead.
+Distant seeks and zero neighbor depth
+retire the edge. This bounded retention follows paging's existing lease policy
+and the short reverse-scroll blanks observed in NextN197/133. It supersedes f260c8a's Continuous-only
+depth coupling under the user's explicit adoption on 2026-10-26 (Koma current queue,
+CONTINUOUS_PERFORMANCE); paged/spread depth and leased reverse edge are unchanged.
+Off-screen files are not discarded or downgraded, and originals retain full
+resolution for zoom. Native retirement is not a request to force-reload a file.
+The current combined build still requires ordinary motion, fast reversals and
+loading/return observations in each exposed host; adoption is not device acceptance.
 
 The visible range drives demand but does not establish a reading observation. Only the first
 visible original decoded by the current native cell may publish its measured top-center point.

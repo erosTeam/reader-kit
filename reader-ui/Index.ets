@@ -52,3 +52,5 @@ export { ReaderFailurePanel } from './src/main/ets/ReaderFailurePanel'
 export { ReaderAssetNoticePanel } from './src/main/ets/ReaderAssetNoticePanel'
 
 export { ReaderSystemBarController } from './src/main/ets/ReaderSystemBarController'
+
+export { ReaderRouteTransition } from './src/main/ets/ReaderRouteTransition'

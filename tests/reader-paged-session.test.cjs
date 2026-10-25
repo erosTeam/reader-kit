@@ -1302,25 +1302,65 @@ test('explicit paged depth clamps demand and preserves the observed outgoing lea
   session.setPagedPreloadDepth(5); await tick(); assert.equal(calls.load.length,count)
 })
 
-test('continuous native window honors depth and retains decoded neighbors across a fast roundtrip', async () => {
+// The approved two-level cache candidate supersedes f260c8a only for continuous
+// native depth. Transport lookahead, nearby reverse leases and paged tests stay.
+test('continuous near-screen leases retain reverse neighbors while five future files stay warm', async () => {
   const {session,key,calls}=setup({count:20,preload:true})
   session.setPolicy(policy({layout:'continuous'})); session.setNeighborPreload(true)
-  session.setPagedPreloadDepth(4); session.setPreloadDepth(4)
+  session.setPagedPreloadDepth(5); session.setPreloadDepth(5)
   await session.open(key,4); await tick()
-  let s=session.snapshot(); assert.equal(s.nativeCacheDepth,4)
+  let s=session.snapshot(); assert.equal(s.nativeCacheDepth,1)
+  assert.deepEqual(s.window.map(w=>w.index),[4,3,5])
+  assert.deepEqual(calls.preload.map(c=>c.index),[6,7,8,9])
+  const retired=calls.preload[0].cancellation
   const original=s.frames[0]; decode(session,original)
   session.setContinuousRange(4,6,s.topologyRevision,s.navigationRevision); await tick()
-  s=session.snapshot(); assert.deepEqual(s.window.map(w=>w.index),[4,5,6,3,7,2,8,1,9,0,10])
-  session.setContinuousRange(6,7,s.topologyRevision,s.navigationRevision); await tick()
+  s=session.snapshot(); assert.deepEqual(s.window.map(w=>w.index),[4,5,6,3,7])
+  assert.deepEqual(calls.preload.slice(-4).map(c=>c.index),[8,9,10,11])
+  assert.equal(retired.isCancelled(),true)
+  session.setContinuousRange(5,7,s.topologyRevision,s.navigationRevision); await tick()
   s=session.snapshot(); session.setContinuousRange(4,6,s.topologyRevision,s.navigationRevision); await tick()
   s=session.snapshot(); assert.equal(s.frames[0].slotId,original.slotId)
+  assert.deepEqual(s.window.map(w=>w.index),[4,5,6,3,7,8])
+  assert.equal(s.nativeCacheDepth,2,'native cache must cover the one retained reverse edge')
   assert.equal(s.frames[0].asset.assetRequestId,original.asset.assetRequestId)
   assert.equal(s.frames[0].asset.phase,'displayed')
   assert.equal(calls.load.filter(call=>call[0]==='A-4').length,1)
-  assert.equal(calls.preload.length,0,'native-owned sources must not be loaded again by cache warmer')
-  session.setPagedPreloadDepth(0); s=session.snapshot()
-  assert.equal(s.nativeCacheDepth,0); assert.deepEqual(s.window.map(w=>w.index),[4,5,6])
-  assert.equal(s.frames[0].slotId,original.slotId)
+  assert.equal(calls.release.includes('original:A-4'),false)
+  session.setContinuousRange(14,15,s.topologyRevision,s.navigationRevision); await tick()
+  s=session.snapshot(); assert.deepEqual(s.window.map(w=>w.index),[14,15,13,16])
+  assert.equal(calls.release.includes('original:A-4'),true)
+  assert.ok(calls.load.every(call=>call[2]!==true),'window movement never forces file reload')
+  session.setPagedPreloadDepth(0); await tick(); s=session.snapshot()
+  assert.equal(s.nativeCacheDepth,0); assert.deepEqual(s.window.map(w=>w.index),[14,15])
+  assert.deepEqual(calls.preload.slice(-4).map(c=>c.index),[16,17,18,19])
+  const pending=calls.preload.at(-1).cancellation
+  session.close(); assert.equal(pending.isCancelled(),true)
+})
+
+// 133's reverse-scroll blank reopens one bounded, already-leased edge only.
+// A retained processed source must keep its existing demand, not re-prepare it.
+test('continuous reverse edge keeps its processing consumer until it leaves the near-screen bound', async () => {
+  const { ReaderProcessingPolicy } = load('ReaderProcessingCoordinator')
+  const { ReaderVariantPreference } = load('ReaderSession')
+  const { session, key, calls } = setup({count:20,preload:true})
+  session.setPolicy(policy({layout:'continuous'})); session.setNeighborPreload(true)
+  session.setPagedPreloadDepth(5); session.setPreloadDepth(5)
+  session.setProcessingPolicy(new ReaderProcessingPolicy('existing',false,()=>new ReaderVariantPreference()))
+  await session.open(key,8); await tick()
+  let s=session.snapshot(); session.setContinuousRange(8,10,s.topologyRevision,s.navigationRevision); await tick()
+  const edge=session.snapshot().window.find(w=>w.index===10).frames[0]
+  const demand=calls.preload.find(c=>c.index===10).cancellation
+  const future=calls.preload.find(c=>c.index===11).cancellation
+  s=session.snapshot(); session.setContinuousRange(7,8,s.topologyRevision,s.navigationRevision); await tick()
+  s=session.snapshot(); const retained=s.window.find(w=>w.index===10)
+  assert.ok(retained,'only the adjacent exited edge survives a reversal')
+  assert.equal(retained.frames[0].slotId,edge.slotId)
+  assert.equal(demand.isCancelled(),false,'retaining a slot must retain its processing/file consumer')
+  assert.equal(future.isCancelled(),false,'a retired native slot inside file lookahead still owns file demand')
+  s=session.snapshot(); session.setContinuousRange(2,3,s.topologyRevision,s.navigationRevision); await tick()
+  assert.equal(session.snapshot().window.some(w=>w.index===10),false)
+  assert.equal(demand.isCancelled(),true)
   session.close()
 })
 
