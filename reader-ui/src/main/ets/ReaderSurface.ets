@@ -777,10 +777,10 @@ export struct ReaderSurface {
     try { await operation } catch (_) {}
     if (epoch !== this.chromeEpoch || !this.active || this.closing ||
       this.chromeDisposed || this.chromeCloseRequested || !this.chromeShowPending) return
-    // A native API completion can precede the frame carrying its avoid-area
-    // update: lab237/133 painted the title high, then moved it next frame.
-    // Commit after that render boundary; do not wait for topInset > 0, which
-    // permanently hides chrome in windows with no status bar. No timer/poll.
+    // The controller now waits for the actual native area when applicable:
+    // NextN197/113 and /117 proved setter completion plus one frame was early.
+    // This frame lets the host's existing safe-area parameters reach the view.
+    // Zero-area/unavailable windows settle in the controller; never gate on this.topInset.
     this.getUIContext().postFrameCallback(new ReaderChromeAfterFrame((): void => {
       if (epoch !== this.chromeEpoch || !this.active || this.closing ||
         this.chromeDisposed || this.chromeCloseRequested || !this.chromeShowPending) return

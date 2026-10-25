@@ -5,20 +5,21 @@ const path = require('node:path')
 const vm = require('node:vm')
 const ts = require(process.env.READER_KIT_TYPESCRIPT || '/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/node_modules/typescript')
 const source = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderSystemBarController.ets'), 'utf8')
-function fixture() {
+function fixture(timers = { setTimeout, clearTimeout }) {
   const exports = {}, calls = [], logs = []
   vm.runInNewContext(ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, experimentalDecorators: true,
   } }).outputText, { exports, ObservedV2: value => value, Trace: () => {},
     require: name => {
       assert.equal(name, '@kit.ArkUI')
-      return { window: { AvoidAreaType: { TYPE_SYSTEM: 0 } } }
+      return { window: { AvoidAreaType: { TYPE_SYSTEM: 0 }, WindowStatusType: { FULL_SCREEN: 1, MAXIMIZE: 2 } } }
     },
+    setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
     console: { warn: value => logs.push(value) } })
   const win = {
     async setWindowSystemBarProperties(value) { calls.push(['color', value.statusBarContentColor]) },
     async setSpecificSystemBarEnabled(_name, visible) { calls.push(['visible', visible]) },
-    getWindowAvoidArea() { throw new Error('chrome must never wait for a system inset') },
+    getWindowAvoidArea() { throw new Error('geometry unavailable') },
   }
   const controller = new exports.ReaderSystemBarController(async () => win, () => true)
   return { controller, Controller: exports.ReaderSystemBarController, calls, win, logs }
@@ -26,7 +27,7 @@ function fixture() {
 const drain = () => new Promise(resolve => setImmediate(resolve))
 function deferred() { let resolve; const promise = new Promise(yes => { resolve = yes }); return { resolve, promise } }
 
-test('reveal applies light color then visibility without consulting a system inset', async () => {
+test('unavailable geometry does not block light color and visibility', async () => {
   const { controller, calls } = fixture()
   await controller.presentChrome(true, true, false, () => true)
   assert.deepEqual(calls, [['color', '#FFFFFFFF'], ['visible', true]])
@@ -110,4 +111,66 @@ test('platform failure is contained and a later chrome request can still apply',
   win.setWindowSystemBarProperties = color
   await controller.presentChrome(true, true, true, () => true)
   assert.deepEqual(calls, [['color', '#FFFFFFFF'], ['visible', true]])
+})
+
+// Real197/117: setter returned with systemPx=0; the area arrived after reveal.
+// This replaces the former blanket 'never consult an inset' premise, not a UI assertion.
+function statusWindow(win, initialHeight = 123, status = 1) {
+  let height = initialHeight
+  const listeners = new Set()
+  win.getWindowProperties = () => ({ windowRect: { left: 0, top: 0, width: 1260, height: 2720 } })
+  win.getWindowStatus = () => status
+  win.getWindowAvoidArea = () => ({ topRect: { height } })
+  win.on = (_event, listener) => listeners.add(listener)
+  win.off = (_event, listener) => listeners.delete(listener)
+  return {
+    listeners,
+    set(value) { height = value },
+    emit(value) { height = value; for (const listener of [...listeners]) listener({ type: 0 }) },
+  }
+}
+
+test('a real status-area window waits beyond the setter until the show area arrives', async () => {
+  const { controller, win, calls } = fixture(), area = statusWindow(win)
+  await controller.presentChrome(false, true, true, () => true)
+  area.set(0)
+  let completed = false
+  const showing = controller.presentChrome(true, true, true, () => true).then(() => { completed = true })
+  await drain()
+  assert.equal(calls.at(-1)[0], 'visible'); assert.equal(completed, false)
+  area.emit(0); await drain(); assert.equal(completed, false)
+  const count = calls.length, replay = controller.replay()
+  await drain(); assert.equal(completed, false); assert.equal(calls.length, count)
+  area.emit(123); await Promise.all([showing, replay])
+  assert.equal(completed, true); assert.equal(area.listeners.size, 0)
+})
+
+test('hide or close retires an area waiter without holding the native queue', async () => {
+  for (const closing of [false, true]) {
+    const { controller, win, calls } = fixture(), area = statusWindow(win)
+    await controller.presentChrome(false, true, true, () => true); area.set(0)
+    const showing = controller.presentChrome(true, true, true, () => true)
+    await drain(); assert.equal(area.listeners.size, 1)
+    if (closing) await controller.cancel()
+    else await controller.presentChrome(false, true, true, () => true)
+    await showing; assert.equal(area.listeners.size, 0)
+    const count = calls.length; area.emit(123); await drain(); assert.equal(calls.length, count)
+    if (!closing) assert.deepEqual(calls.at(-1), ['visible', false])
+  }
+})
+
+test('zero-area and floating windows settle immediately; a missing signal has finite failure recovery', async () => {
+  for (const [height, status] of [[0, 1], [123, 3]]) {
+    const { controller, win } = fixture(), area = statusWindow(win, height, status)
+    await controller.presentChrome(true, true, true, () => true)
+    assert.equal(area.listeners.size, 0)
+  }
+  let watchdog
+  const timers = { setTimeout(callback) { watchdog = callback; return 1 }, clearTimeout() {} }
+  const { controller, win, logs } = fixture(timers), area = statusWindow(win)
+  await controller.presentChrome(false, true, true, () => true); area.set(0)
+  const showing = controller.presentChrome(true, true, true, () => true)
+  await drain(); watchdog(); await showing
+  assert.equal(area.listeners.size, 0)
+  assert.equal(logs.filter(value => value.includes('chrome_status_area_unavailable')).length, 1)
 })

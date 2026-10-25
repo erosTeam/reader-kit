@@ -45,9 +45,15 @@ The following are existing preservation requirements, not new feature work:
 - Toolbar reveal has two required cases: when the current native status-bar
   show operation applies, finish that operation before painting the toolbar;
   when status-bar control is absent or unsupported, keep the toolbar usable.
-  Complete the existing finite window operation and its next render boundary;
-  API completion alone can precede the frame carrying the safe-area change.
-  Never wait for a nonzero status inset or a host-specific layout probe.
+  The Window setter Promise is only an acceptance receipt, not completion of
+  visibility (Huawei Window API; NextN197/113 and /117). In a same-size main
+  window that has actually supplied a status area, the common controller waits
+  for its native area signal, then Surface commits after the render boundary.
+  Zero/unknown-area and floating windows do not require that signal; unsupported
+  reads/listeners and a finite missing-signal failure also leave chrome usable.
+  The native write queue must remain free for hide/close while this wait is pending.
+  Never gate on the host's `topInset > 0`, cache a height for placement, add a
+  success delay, or restore host-specific preparation callbacks.
   Cancellation, another toggle,
   close and background retire a pending reveal. A fix for either case must
   preserve the other; synchronous-commit assertions cannot replace this contract.
