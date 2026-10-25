@@ -42,6 +42,11 @@ The following are existing preservation requirements, not new feature work:
   retains the existing loading indicator/backdrop until this original is ready.
   A matching decode is insufficient while the entry still hides that original.
   Its existing reveal commit exposes the original and retires feedback together.
+  Core may retain a displayed resource across a mode switch; a new native
+  viewport still waits for its own matching decode before ending this feedback.
+  The retained in-place replacement branch keeps already readable pixels.
+  Before a newly mounted pager reports its real dimensions, that same feedback
+  belongs to the full viewport; measured page cells take it over after layout.
 - Toolbar reveal has two required cases: when the current native status-bar
   show operation applies, finish that operation before painting the toolbar;
   when status-bar control is absent or unsupported, keep the toolbar usable.

@@ -12,11 +12,18 @@ export class ReaderImagePresentation {
   constructor(frame: ReaderPagedFrame | null, decodedOriginalIdentity: string,
     entry: ReaderEntryTransition | null = null) {
     const asset = frame?.asset
-    const decoded = frame !== null && asset?.kind === 'original' && asset.phase === 'decoding' &&
+    const decoded = frame !== null && asset?.kind === 'original' &&
+      (asset.phase === 'decoding' || asset.phase === 'displayed') &&
       asset.assetRequestId > 0 && asset.uri.length > 0 &&
       decodedOriginalIdentity === `${frame.slotId}:${asset.assetRequestId}:` +
         `${frame.part.sourceIndex}:${frame.part.fragment}:${asset.visualRevision}`
-    const awaitingPixels = frame === null || (asset !== undefined && asset.needsImagePlaceholder() && !decoded) ||
+    // Core keeps a displayed asset across mode changes, but the new native
+    // viewport has not decoded that asset yet (E075). Its own matching receipt
+    // ends feedback; a resource's old displayed phase cannot do so. Retained
+    // in-place replacements and the entry reveal gate keep their prior rules.
+    const awaitingNative = asset?.kind === 'original' && asset.phase === 'displayed' && !decoded
+    const awaitingPixels = frame === null || awaitingNative ||
+      (asset !== undefined && asset.needsImagePlaceholder() && !decoded) ||
       (frame !== null && entry?.hidesOriginal(frame) === true)
     this.phase = awaitingPixels ? 'loading'
       : asset !== undefined && asset.phase !== 'failed' && asset.phase !== 'suppressed' ? 'image' : 'empty'

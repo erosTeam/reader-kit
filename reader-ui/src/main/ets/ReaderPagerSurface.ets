@@ -1,5 +1,6 @@
 import { ReaderPagedSnapshot, ReaderFragment } from '@reader-kit/core'
 import { ReaderPagedViewport } from './ReaderPagedViewport'
+import { ReaderImagePlaceholder, ReaderImagePresentation } from './ReaderImagePlaceholder'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderBoundaryDirection, ReaderBoundarySwipe } from './ReaderBoundarySwipe'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
@@ -321,6 +322,7 @@ struct ReaderNativePager {
   }
 
   build() {
+    Stack() {
     Swiper(this.controller) {
       LazyForEach(this.pageSource, (item: ReaderPagerRenderItem) => {
         ReaderPagedViewport({
@@ -389,5 +391,17 @@ struct ReaderNativePager {
     })
     .onAnimationEnd((): void => { this.moving = false })
     .onChange((index: number): void => { this.queueSelection(index) })
+    // 9791242 keeps child geometry tied to the measured Swiper. Before that
+    // first area callback, its 1x1 children cannot display their own feedback
+    // (E078). Reuse the same feedback only during this measurement handoff;
+    // never invent viewport dimensions or cover already drawable page pixels.
+    if (this.viewportWidth <= 1 || this.viewportHeight <= 1) {
+      ReaderImagePlaceholder({
+        presentation: new ReaderImagePresentation(this.snapshot.frames[0] ?? null, '', this.entryTransition),
+        frame: this.snapshot.frames[0] ?? null,
+        entryTransition: this.entryTransition,
+      })
+    }
+    }.width('100%').height('100%')
   }
 }

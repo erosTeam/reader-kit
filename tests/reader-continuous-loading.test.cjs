@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const vm = require('node:vm')
 const ts = require(process.env.READER_KIT_TYPESCRIPT || '/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/node_modules/typescript')
-const { ReaderSnapshot } = require('./load-core.cjs')('ReaderSession')
+const { ReaderSnapshot, ReaderUnit, ReaderPage, ReaderAsset } = require('./load-core.cjs')('ReaderSession')
 const load = require('./load-core.cjs')
 const core = { ...load('ReaderContent'), ...load('ReaderDisplayMap'), ...load('ReaderPagedSession') }
 const entryExports = {}
@@ -84,4 +84,28 @@ test('decoded original keeps feedback while the real entry still hides its pixel
   entry.publishTarget(target); entry.reveal()
   assert.equal(entry.opacity(frame.part), 1)
   assert.equal(value.loadingVisible(), false, 'the same reveal commit exposes the original and retires feedback')
+})
+
+// E075: policy keeps the resource, but changing native viewport creates a new Image.
+test('mode switch keeps displayed asset without completing a new native cell', async () => {
+  const key = new core.ReaderUnitKey('source', 'work', 'unit')
+  const catalog = {
+    async open(unit) { return new ReaderUnit(unit, 'unit', 1) },
+    async page(unit, index) { const page = new ReaderPage(unit.key, 'page', index); page.width = 800; page.height = 1200; return page },
+    adjacent() { return null },
+  }
+  const session = new core.ReaderPagedSession(catalog, { cancellationMode: 'consumer-only', async load() { return new ReaderAsset('file://current', () => {}) } })
+  try {
+    await session.open(key); await new Promise(resolve => setImmediate(resolve))
+    let frame = session.snapshot().frames[0]
+    session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true, 800, 1200)
+    for (const layout of ['continuous', 'single']) {
+      const policy = session.snapshot().policy.copy(); policy.layout = layout; session.setPolicy(policy)
+      const value = fixture(); value.snapshot = session.snapshot(); frame = value.snapshot.frames[0]
+      assert.equal(frame.asset.phase, 'displayed', 'same source lease remains available')
+      assert.equal(value.loadingVisible(), true, 'new native cell has no decoded pixels yet')
+      value.originalDecoded(value.originalDrawableIdentity())
+      assert.equal(value.loadingVisible(), false, 'matching native decode exposes pixels and retires feedback')
+    }
+  } finally { session.close() }
 })
