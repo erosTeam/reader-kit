@@ -84,6 +84,9 @@ export struct ReaderSurface {
   @Param mediaActions: ReaderMediaActions | null = null
   @Param autoReadPolicy: ReaderAutoReadPolicy | null = null
   @Param pageTurnAnimation: boolean = false
+  /** Disabled double tap routes a single immediately; hosts own the persisted choice. */
+  @Param doubleTapEnabled: boolean = true
+  @Param doubleTapIntervalMs: number = 300
   /** Host-owned visual spacing between continuous pages and separated spread slots. */
   @Param pageGap: number = 0
   /** Host preference for future cache warming; native render neighbors remain fixed and bounded. */
@@ -206,8 +209,8 @@ export struct ReaderSurface {
     this.processingPolicySignature = signature
     this.session.setProcessingPolicy(new ReaderProcessingPolicy(signature, policy.automaticNext,
       (page: ReaderPage, automatic: boolean): ReaderVariantPreference =>
-        this.temporaryVariantOverride.preference(scope, page.sourceIndex, page.key,
-          policy.processingPreference(page, automatic)),
+        this.temporaryVariantOverride.preference(scope?.unit.equals(page.unit) === true ? scope : null,
+          page.sourceIndex, page.key, policy.processingPreference(page, automatic)),
       (index: number, preference: ReaderVariantPreference, result: ReaderProcessingResult): void =>
         policy.selectionCompleted(index, preference, result)), this.cropPolicy?.sourceRevision ?? '')
   }
@@ -839,7 +842,15 @@ export struct ReaderSurface {
     const previous = action === 'previous' ||
       (action === 'left' && this.state.policy.direction === 'ltr') ||
       (action === 'right' && this.state.policy.direction === 'rtl')
-    this.requestMove(previous ? 'previous' : 'next')
+    const direction: ReaderMoveIntent = previous ? 'previous' : 'next'
+    const current = session.snapshot()
+    const atBoundary = current.displayCount > 0 && current.displayIndex === this.state.displayIndex &&
+      (direction === 'previous' ? current.displayIndex === 0 : current.displayIndex + 1 === current.displayCount)
+    if (atBoundary && !this.inputLocked) {
+      this.requestBoundaryChapter(direction, topology, navigation)
+    } else {
+      this.requestMove(direction)
+    }
     return action
   }
 
@@ -963,6 +974,7 @@ export struct ReaderSurface {
         if (this.state.policy.layout === 'continuous') {
           ReaderContinuousSurface({
             imageInterpolation: this.imageInterpolation,
+            doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
             pageGap: this.pageGap,
             snapshot: this.state, active: this.active,
             zoomResetCommand: this.zoomResetCommand,
@@ -998,6 +1010,7 @@ export struct ReaderSurface {
         } else {
           ReaderPagerSurface({
             imageInterpolation: this.imageInterpolation,
+            doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
             pageGap: this.pageGap,
             snapshot: this.state, active: this.active,
             zoomResetCommand: this.zoomResetCommand,

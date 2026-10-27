@@ -1,6 +1,7 @@
 import { ReaderPagedFrame, ReaderFragment, ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/core'
 import { ReaderPagedImage } from './ReaderPagedViewport'
 import { ReaderTapSequence } from './ReaderTapSequence'
+import { ReaderTapArbiter, ReaderTapPoint } from './ReaderTapArbiter'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
 import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
@@ -10,6 +11,8 @@ import { readerRetainedFrame } from './ReaderRetainedFrame'
 @ComponentV2
 export struct ReaderContinuousZoomImage {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
+  @Param doubleTapEnabled: boolean = true
+  @Param doubleTapIntervalMs: number = 300
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPosition: ReaderContinuousEntryPosition | null = null
   @Require @Param frame: ReaderPagedFrame
@@ -43,7 +46,18 @@ export struct ReaderContinuousZoomImage {
   private pinchX: number = 0
   private pinchY: number = 0
   private tapSequence: ReaderTapSequence = new ReaderTapSequence()
+  private tapIdentity: string = ''
+  private tapArbiter: ReaderTapArbiter = new ReaderTapArbiter(
+    (point: ReaderTapPoint): void => {
+      if (this.canTap() && this.tapIdentity === this.identity) this.onTap(point.windowX, point.windowY)
+    },
+    (point: ReaderTapPoint): void => {
+      if (this.tapIdentity === this.identity) this.doubleTapAt(point.x, point.y)
+    })
   private lastZoomResetSerial: number = 0
+
+  @Monitor('doubleTapEnabled', 'doubleTapIntervalMs')
+  onTapPreferenceChanged(): void { this.tapArbiter.cancel() }
 
   aboutToAppear(): void {
     this.lastZoomResetSerial = this.zoomResetCommand?.serial ?? 0
@@ -51,6 +65,7 @@ export struct ReaderContinuousZoomImage {
   }
 
   aboutToDisappear(): void {
+    this.tapArbiter.cancel()
     this.cancelMotion()
     this.onLock(this.identity, false)
     this.onZoomedChange(this.identity, false)
@@ -60,6 +75,9 @@ export struct ReaderContinuousZoomImage {
   onContentChanged(): void {
     this.retainedFrameValue = readerRetainedFrame(this.frame, this.retainedFrameValue)
     const identity = `${this.navigation}:${this.frame.slotId}:${this.frame.asset.assetRequestId}:${this.rotateClockwise}`
+    if (!this.active || !this.interactionAllowed || (this.tapIdentity.length > 0 && this.tapIdentity !== identity)) {
+      this.tapArbiter.cancel()
+    }
     if (identity !== this.identity || this.frame.asset.phase !== 'displayed') {
       if (this.identity.length > 0) this.onLock(this.identity, false)
       this.cancelMotion()
@@ -144,15 +162,15 @@ export struct ReaderContinuousZoomImage {
     console.info(`[ReaderContinuousZoom] action=${action} identity=${this.identity} page=${this.frame.part.sourceIndex + 1} scale=${this.imageTransform.scale.toFixed(3)} x=${this.imageTransform.x.toFixed(2)} y=${this.imageTransform.y.toFixed(2)}`)
   }
 
-  private doubleTap(event?: GestureEvent): void {
-    if (!this.canInteract() || this.pinching || event === undefined) return
+  private doubleTapAt(x: number, y: number): void {
+    if (!this.doubleTapEnabled || !this.canInteract() || this.pinching) return
     this.cancelMotion()
     const geometry = this.geometry()
     const target = this.imageTransform.doubleTapScale(geometry, this.pinchAdjusted)
     this.pinchAdjusted = false
     this.animating = true
     this.imageTransform = target === 1 ? new ReaderViewportTransform() : this.imageTransform.zoom(geometry, target,
-      event.tapLocation?.x ?? this.componentWidth / 2, event.tapLocation?.y ?? this.componentHeight / 2)
+      x, y)
     this.publishLock()
     this.publishZoomed()
     this.animationTimer = setTimeout((): void => {
@@ -165,6 +183,7 @@ export struct ReaderContinuousZoomImage {
 
   private beginPinch(event?: GestureEvent): void {
     if (!this.canInteract() || event === undefined) return
+    this.tapArbiter.cancel()
     this.tapSequence.suppress()
     this.cancelMotion()
     this.pinching = true
@@ -194,6 +213,7 @@ export struct ReaderContinuousZoomImage {
   private beginPan(): void {
     this.panning = !this.pinching && this.canInteract() && this.imageTransform.zoomed()
     if (!this.panning) return
+    this.tapArbiter.cancel()
     this.tapSequence.suppress()
     if (this.animationTimer !== 0) clearTimeout(this.animationTimer)
     this.animationTimer = 0
@@ -219,6 +239,7 @@ export struct ReaderContinuousZoomImage {
       ReaderPagedImage({
         imageInterpolation: this.imageInterpolation,
         frame: this.presentedFrame(), slotId: this.frame.slotId, assetRequestId: this.presentedFrame().asset.assetRequestId,
+        alignGeometryBeforeVisible: this.retainedFrameValue === null,
         selectionId: 0, renderedFragment: this.frame.part.fragment, active: false,
         rotateClockwise: this.rotateClockwise,
         entryTransition: this.retainedFrameValue === null ? this.entryTransition : null, continuousEntry: this.entryPosition,
@@ -241,6 +262,7 @@ export struct ReaderContinuousZoomImage {
         ReaderPagedImage({
           imageInterpolation: this.imageInterpolation,
           frame: this.frame, slotId: this.frame.slotId, assetRequestId: this.frame.asset.assetRequestId,
+          alignGeometryBeforeVisible: true,
           selectionId: 0, renderedFragment: this.frame.part.fragment, active: false,
           rotateClockwise: this.rotateClockwise,
           entryTransition: this.entryTransition, continuousEntry: this.entryPosition,
@@ -259,7 +281,13 @@ export struct ReaderContinuousZoomImage {
     }
     .width('100%').height('100%')
     .responseRegion(this.interactionRegion())
-    .onTouch((event: TouchEvent): void => { this.tapSequence.touch(event) })
+    .onTouch((event: TouchEvent): void => {
+      this.tapSequence.touch(event)
+      if (event.type === TouchType.Down && this.tapSequence.allowed()) {
+        const point = event.touches[0]
+        if (point !== undefined) this.tapArbiter.down(point.x, point.y)
+      } else if (!this.tapSequence.allowed()) this.tapArbiter.cancel()
+    })
     .onAreaChange((_old: Area, area: Area): void => {
       const width = Math.max(1, Number(area.width))
       const height = Math.max(1, Number(area.height))
@@ -276,14 +304,16 @@ export struct ReaderContinuousZoomImage {
       if (this.imageTransform.zoomed()) this.log('reflow')
     })
     .gesture(GestureGroup(GestureMode.Parallel,
-      GestureGroup(GestureMode.Exclusive,
-        TapGesture({ count: 2, distanceThreshold: 8 }).onAction((event?: GestureEvent): void => { this.doubleTap(event) }),
-        TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => {
-          const location = event?.tapLocation
-          if (this.canTap() && !this.pinching && this.tapSequence.allowed() && location !== undefined &&
-            Number.isFinite(location.windowX) && Number.isFinite(location.windowY)) this.onTap(location.windowX, location.windowY)
-        }),
-      ),
+      TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => {
+        const location = event?.tapLocation
+        if (this.canTap() && !this.pinching && this.tapSequence.allowed() && location !== undefined &&
+          Number.isFinite(location.x) && Number.isFinite(location.y) &&
+          Number.isFinite(location.windowX) && Number.isFinite(location.windowY)) {
+          this.tapIdentity = this.identity
+          this.tapArbiter.tap(new ReaderTapPoint(location.x, location.y, location.windowX, location.windowY),
+            this.doubleTapEnabled, this.doubleTapIntervalMs)
+        }
+      }),
       PinchGesture({ fingers: 2 })
         .onActionStart((event?: GestureEvent): void => { this.beginPinch(event) })
         .onActionUpdate((event?: GestureEvent): void => { this.updatePinch(event) })

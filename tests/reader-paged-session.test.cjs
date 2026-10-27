@@ -1504,22 +1504,26 @@ test('continuous demand retains preceding rows while a proven terminal row owns 
 })
 
 
-test('next-unit warming uses the configured lead once without selecting or opening that unit', async () => {
+test('next-unit warming uses the remaining page budget without selecting or opening that unit', async () => {
+  // The user requested a page-count budget that continues across chapters:
+  // the one remaining page in this unit consumes one of two lookahead pages.
   const { session, key, calls } = setup({ count: 10, nextUnitPreload: true })
   session.setPreloadDepth(2)
   await session.open(key, 7); await tick()
   assert.equal(calls.nextUnitPreload.length, 0)
   session.seekSource(8, key, session.snapshot().navigationRevision); await tick()
   assert.equal(calls.nextUnitPreload.length, 1)
-  assert.equal(calls.nextUnitPreload[0].depth, 2)
+  assert.equal(calls.nextUnitPreload[0].depth, 1)
   assert.equal(calls.nextUnitPreload[0].unit.key.unit, 'A')
   session.seekSource(9, key, session.snapshot().navigationRevision); await tick()
-  assert.equal(calls.nextUnitPreload.length, 1)
+  assert.equal(calls.nextUnitPreload.length, 2)
+  assert.equal(calls.nextUnitPreload[0].cancellation.isCancelled(), true)
+  assert.equal(calls.nextUnitPreload[1].depth, 2)
   assert.equal(calls.open.length, 1)
   assert.equal(session.snapshot().unit.key.unit, 'A')
   assert.equal(session.snapshot().anchor.sourceIndexHint, 9)
   session.seekSource(5, key, session.snapshot().navigationRevision); await tick()
-  assert.equal(calls.nextUnitPreload[0].cancellation.isCancelled(), true)
+  assert.equal(calls.nextUnitPreload[1].cancellation.isCancelled(), true)
   session.close()
 })
 test('continuous next-unit lead follows visible end and still works with ordinary processing enabled', async () => {
@@ -1565,5 +1569,92 @@ test('unavailable next-unit preparation leaves the visible session ready and unc
   assert.equal(session.snapshot().phase, 'ready')
   assert.equal(session.snapshot().unit.key.unit, 'A')
   assert.equal(session.snapshot().anchor.sourceIndexHint, 9)
+  session.close()
+})
+
+
+test('next single-page chapter prepares enhancement before navigation and promotes the same in-flight task', async () => {
+  const { ReaderProcessingPolicy } = load('ReaderProcessingCoordinator')
+  const { ReaderVariantPreference } = load('ReaderSession')
+  const calls = [], releases = []
+  let finishB, bCancellation
+  const key = new ReaderUnitKey('source', 'work', 'A')
+  const catalog = {
+    async open(target) { return new ReaderUnit(target, target.unit, 1) },
+    async page(unit, index) { const page = new ReaderPage(unit.key, `${unit.key.unit}-${index}`, index)
+      page.width = 800; page.height = 1200; return page },
+    adjacent(unit, direction) { return direction === 'next' && unit.key.unit === 'A'
+      ? new ReaderUnitKey('source', 'work', 'B') : null },
+  }
+  const assets = {
+    cancellationMode: 'consumer-only',
+    async load(page) { return new ReaderAsset(`original:${page.key}`) },
+    async prepareVariant(page, variant, identity, cancellation) {
+      calls.push(page.unit.unit)
+      const make = () => ({ page: page.copy(), variant, identity,
+        async load() { return new ReaderAsset(`enhanced:${page.key}`, () => releases.push(page.key)) } })
+      if (page.unit.unit !== 'B') return make()
+      bCancellation = cancellation
+      return new Promise(resolve => { finishB = () => resolve(make()) })
+    },
+  }
+  const preload = {
+    async preload() {},
+    async preloadNextUnit(unit, depth, cancellation, onPrepared) {
+      if (unit.key.unit === 'A' && depth > 0) onPrepared(new ReaderUnit(new ReaderUnitKey('source', 'work', 'B'), 'B', 1), [0], 0)
+    },
+  }
+  const session = new ReaderPagedSession(catalog, assets, preload)
+  session.setViewportActive(true); session.setNeighborPreload(true); session.setPreloadDepth(1)
+  session.setProcessingPolicy(new ReaderProcessingPolicy('enhancement', false,
+    () => new ReaderVariantPreference('enhanced', 'model')))
+  await session.open(key); await tick(); await tick()
+  assert.equal(calls.filter(value => value === 'B').length, 1)
+  assert.equal(bCancellation.priority, 'prefetch')
+  await session.open(new ReaderUnitKey('source', 'work', 'B')); await tick()
+  assert.equal(bCancellation.isCancelled(), false)
+  assert.equal(bCancellation.priority, 'current')
+  finishB(); await tick(); await tick()
+  assert.equal(calls.filter(value => value === 'B').length, 1)
+  assert.equal(session.snapshot().frames[0].asset.variant, 'enhanced')
+  session.close()
+  assert.ok(releases.includes('B-0'))
+})
+
+
+test('automatic translation prepares only the immediate next page across chapters', async () => {
+  const { ReaderProcessingPolicy } = load('ReaderProcessingCoordinator')
+  const { ReaderVariantPreference } = load('ReaderSession')
+  const calls = [], key = new ReaderUnitKey('source', 'work', 'A')
+  const catalog = {
+    async open(target) { return new ReaderUnit(target, target.unit, 1) },
+    async page(unit, index) { const page = new ReaderPage(unit.key, `${unit.key.unit}-${index}`, index)
+      page.width = 800; page.height = 1200; return page },
+    adjacent(unit, direction) { return direction === 'next' && unit.key.unit !== 'C'
+      ? new ReaderUnitKey('source', 'work', String.fromCharCode(unit.key.unit.charCodeAt(0) + 1)) : null },
+  }
+  const assets = {
+    cancellationMode: 'consumer-only',
+    async load(page) { return new ReaderAsset(`original:${page.key}`) },
+    async prepareVariant(page, variant, identity) {
+      calls.push(page.unit.unit)
+      return { page: page.copy(), variant, identity, async load() { return new ReaderAsset(`translated:${page.key}`) } }
+    },
+  }
+  const preload = { async preload() {}, async preloadNextUnit(unit, depth, cancellation, onPrepared) {
+    if (unit.key.unit !== 'A') return
+    onPrepared(new ReaderUnit(new ReaderUnitKey('source', 'work', 'B'), 'B', 1), [0], 0)
+    if (depth > 1) onPrepared(new ReaderUnit(new ReaderUnitKey('source', 'work', 'C'), 'C', 1), [0], 1)
+  } }
+  const session = new ReaderPagedSession(catalog, assets, preload)
+  session.setViewportActive(true); session.setNeighborPreload(true); session.setPreloadDepth(2)
+  session.setProcessingPolicy(new ReaderProcessingPolicy('auto', true,
+    (_page, automatic) => new ReaderVariantPreference(automatic ? 'translated' : 'default', automatic ? 'configured' : '')))
+  await session.open(key); await tick(); await tick()
+  assert.deepEqual(calls.sort(), ['A', 'B'])
+  assert.equal(session.snapshot().unit.key.unit, 'A')
+  await session.open(new ReaderUnitKey('source', 'work', 'B')); await tick()
+  assert.equal(calls.filter(value => value === 'B').length, 1)
+  assert.equal(session.snapshot().frames[0].asset.variant, 'translated')
   session.close()
 })

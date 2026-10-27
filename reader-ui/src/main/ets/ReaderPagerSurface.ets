@@ -72,6 +72,8 @@ class ReaderPagerDataSource implements IDataSource {
 @ComponentV2
 export struct ReaderPagerSurface {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
+  @Param doubleTapEnabled: boolean = true
+  @Param doubleTapIntervalMs: number = 300
   @Param pageGap: number = 0
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
@@ -99,6 +101,7 @@ export struct ReaderPagerSurface {
       if (this.snapshot.displayCount > 0) {
         ReaderNativePager({
           imageInterpolation: this.imageInterpolation,
+          doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
           pageGap: this.pageGap,
           snapshot: this.snapshot, active: this.active,
           command: this.command,
@@ -123,6 +126,8 @@ export struct ReaderPagerSurface {
 @ComponentV2
 struct ReaderNativePager {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
+  @Param doubleTapEnabled: boolean = true
+  @Param doubleTapIntervalMs: number = 300
   @Param pageGap: number = 0
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
@@ -202,7 +207,7 @@ struct ReaderNativePager {
       return
     }
     if (event.type !== TouchType.Up) return
-    const direction = this.boundarySwipe.finish(point.windowX, point.windowY,
+    const direction = this.boundarySwipe.finishNative(point.windowX, point.windowY,
       this.snapshot.policy.pagingAxis === 'vertical' ? 'vertical' : 'horizontal',
       this.snapshot.policy.direction)
     if (direction !== null && this.active && this.snapshot.phase === 'ready' &&
@@ -327,6 +332,7 @@ struct ReaderNativePager {
       LazyForEach(this.pageSource, (item: ReaderPagerRenderItem) => {
         ReaderPagedViewport({
           imageInterpolation: this.imageInterpolation,
+          doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
           pageGap: this.pageGap,
           viewportWidth: this.viewportWidth, viewportHeight: this.viewportHeight,
           snapshot: item.snapshot.forItem(item.key),
@@ -377,7 +383,13 @@ struct ReaderNativePager {
       this.viewportHeight = Math.max(1, Number(area.height))
     })
     .onTouch((event: TouchEvent): void => { this.handleBoundaryTouch(event) })
-    .onGestureSwipe((): void => { this.beginMotion() })
+    .onGestureSwipe((index: number, info: SwiperAnimationEvent): void => {
+      if (index === this.snapshot.displayIndex && this.boundaryTopology === this.snapshot.topologyRevision &&
+        this.boundaryNavigation === this.snapshot.navigationRevision) {
+        this.boundarySwipe.observeNative(info.currentOffset)
+      }
+      this.beginMotion()
+    })
     .onAnimationStart((_index: number, targetIndex: number): void => {
       this.beginMotion()
       if (this.active && this.gestureTopology === this.snapshot.topologyRevision &&

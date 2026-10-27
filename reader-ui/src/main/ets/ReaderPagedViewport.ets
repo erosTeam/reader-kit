@@ -4,6 +4,7 @@ import { ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/cor
 import { ReaderFailurePanel } from './ReaderFailurePanel'
 import { ReaderAssetNoticePanel } from './ReaderAssetNoticePanel'
 import { ReaderTapSequence } from './ReaderTapSequence'
+import { ReaderTapArbiter, ReaderTapPoint } from './ReaderTapArbiter'
 import { ReaderEntryRect, ReaderEntryTarget, ReaderEntryTransition } from './ReaderEntryTransition'
 import { FrameCallback } from '@kit.ArkUI'
 import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
@@ -105,6 +106,8 @@ export struct ReaderPagedViewport {
   @Require @Param viewportHeight: number
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param pageGap: number = 0
+  @Param doubleTapEnabled: boolean = true
+  @Param doubleTapIntervalMs: number = 300
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
   @Param entryTransition: ReaderEntryTransition | null = null
@@ -140,7 +143,24 @@ export struct ReaderPagedViewport {
   private visibilityTimer: number = 0
   private lastZoomResetSerial: number = 0
   private tapSequence: ReaderTapSequence = new ReaderTapSequence()
+  private tapNavigation: string = ''
+  private tapArbiter: ReaderTapArbiter = new ReaderTapArbiter(
+    (point: ReaderTapPoint): void => {
+      if (this.active && this.selected && this.tapNavigation === this.tapNavigationKey()) {
+        this.onTap(point.x / this.viewportWidth, point.y / this.viewportHeight)
+      }
+    },
+    (point: ReaderTapPoint): void => {
+      if (this.tapNavigation === this.tapNavigationKey()) this.doubleTapAt(point.x, point.y)
+    })
   private entryMeasurement: ReaderEntryMeasurement = new ReaderEntryMeasurement()
+
+  private tapNavigationKey(): string {
+    return `${this.snapshot.topologyRevision}:${this.snapshot.navigationRevision}:${this.snapshot.displayIndex}`
+  }
+
+  @Monitor('doubleTapEnabled', 'doubleTapIntervalMs')
+  onTapPreferenceChanged(): void { this.tapArbiter.cancel() }
 
   private identity(): string {
     return `${this.snapshot.navigationRevision}:${this.snapshot.kind}:${this.snapshot.policy.layout}:${this.snapshot.policy.direction}:` +
@@ -151,6 +171,7 @@ export struct ReaderPagedViewport {
 
   @Monitor('snapshot', 'active', 'selected', 'pageGap')
   onContentChanged(): void {
+    if (!this.active || !this.selected || this.tapNavigation !== this.tapNavigationKey()) this.tapArbiter.cancel()
     const recoveryIdentity = `${this.snapshot.topologyRevision}:${this.snapshot.displayIndex}:${this.snapshot.kind}`
     if (recoveryIdentity !== this.recoveryIdentity) {
       this.recoveryIdentity = recoveryIdentity
@@ -208,6 +229,7 @@ export struct ReaderPagedViewport {
     this.onContentChanged()
   }
   aboutToDisappear(): void {
+    this.tapArbiter.cancel()
     this.cancelGesture()
     if (this.visibilityTimer !== 0) clearTimeout(this.visibilityTimer)
     this.visibilityTimer = 0
@@ -287,6 +309,13 @@ export struct ReaderPagedViewport {
   }
 
   private geometry(): ReaderViewportGeometry {
+    // Unknown source sizes cannot define zoom bounds yet. Use the current
+    // container and reconcile once the real image metadata arrives.
+    if (this.snapshot.frames.some((frame: ReaderPagedFrame): boolean =>
+      readerPagedFrameAspectRatio(frame, this.snapshot.policy) <= 0)) {
+      return new ReaderViewportGeometry(this.viewportWidth, this.viewportHeight,
+        this.viewportWidth, this.viewportHeight, 2)
+    }
     const height = this.frameHeight()
     const scales = this.snapshot.frames.map((frame: ReaderPagedFrame): number => {
       const rotated = rotatedFrame(frame, this.snapshot.policy)
@@ -316,8 +345,8 @@ export struct ReaderPagedViewport {
     console.info(`[ReaderViewport] action=${action} selection=${this.snapshot.selectionId} scale=${this.zoomState.scale.toFixed(3)} x=${this.zoomState.x.toFixed(2)} y=${this.zoomState.y.toFixed(2)}`)
   }
 
-  private doubleTap(event?: GestureEvent): void {
-    if (!this.gesturesEnabled() || this.pinching || event === undefined) return
+  private doubleTapAt(x: number, y: number): void {
+    if (!this.doubleTapEnabled || !this.gesturesEnabled() || this.pinching) return
     this.cancelGesture()
     const geometry = this.geometry()
     const target = this.zoomState.doubleTapScale(geometry, this.pinchAdjusted)
@@ -325,7 +354,7 @@ export struct ReaderPagedViewport {
     this.zoomAnimating = true
     this.zoomState = target === 1 ? new ReaderViewportTransform() :
       this.zoomState.zoom(geometry, target,
-        event.tapLocation?.x ?? geometry.width / 2, event.tapLocation?.y ?? geometry.height / 2)
+        x, y)
     this.animationTimer = setTimeout((): void => {
       this.animationTimer = 0
       this.zoomAnimating = false
@@ -335,6 +364,7 @@ export struct ReaderPagedViewport {
 
   private beginPinch(event?: GestureEvent): void {
     if (!this.gesturesEnabled() || event === undefined) return
+    this.tapArbiter.cancel()
     this.tapSequence.suppress()
     this.stopAnimation()
     this.gestureIdentity = this.identity()
@@ -364,6 +394,7 @@ export struct ReaderPagedViewport {
     this.ignorePan = this.pinching || !this.gesturesEnabled() || !this.zoomState.zoomed()
     this.panning = !this.ignorePan
     if (!this.panning) return
+    this.tapArbiter.cancel()
     this.tapSequence.suppress()
     this.stopAnimation()
     this.gestureIdentity = this.identity()
@@ -408,7 +439,23 @@ export struct ReaderPagedViewport {
         readerPagedFrameAspectRatio(frame, this.snapshot.policy)) : this.frameHeight()
   }
 
-  private equalSlots(): boolean { return this.recovering || this.splitLayout() }
+  private equalSlots(): boolean {
+    return this.recovering || this.splitLayout() || (this.snapshot.frames.length > 1 &&
+      this.snapshot.frames.some((frame: ReaderPagedFrame): boolean =>
+        readerPagedFrameAspectRatio(frame, this.snapshot.policy) <= 0))
+  }
+
+  /** Unknown ratios never determine image size. A single whole page fits the
+   * viewport; joined spreads temporarily keep separate slots until both real
+   * ratios are known. Entry/crop/rotation keep their measured contracts. */
+  private fitWholePageInViewport(): boolean {
+    if (this.snapshot.frames.length !== 1) return false
+    const frame = this.snapshot.frames[0]
+    if (readerPagedFrameAspectRatio(frame, this.snapshot.policy) <= 0) return true
+    return this.snapshot.policy.layout === 'single' && !this.snapshot.policy.splitWidePages &&
+      !this.snapshot.policy.rotateWidePages && frame.asset.kind === 'original' &&
+      frame.part.fragment === 'whole' && !frame.crop.applied() && this.entryTransition?.pending() !== true
+  }
 
   private entryRatiosReady(): boolean {
     return ReaderEntryGeometryGate.ready(this.snapshot.frames)
@@ -428,8 +475,11 @@ export struct ReaderPagedViewport {
             entryGeometryReady: this.entryViewportLaidOut && this.entryRatiosReady(),
             renderedFragment: frame.part.fragment,
             // Zero leaves the fitted width to the cell's current reactive frame, not this stable-key closure.
-            frameWidth: this.equalSlots() ? this.equalSlotWidth() : 0,
-            frameHeight: this.equalSlots() ? this.viewportHeight : this.frameHeight(),
+            frameWidth: this.fitWholePageInViewport() ? this.viewportWidth :
+              this.equalSlots() ? this.equalSlotWidth() : 0,
+            frameHeight: this.fitWholePageInViewport() || this.equalSlots() ? this.viewportHeight : this.frameHeight(),
+            fitViewport: this.fitWholePageInViewport() || (this.equalSlots() &&
+              readerPagedFrameAspectRatio(frame, this.snapshot.policy) <= 0),
             active: this.selected && this.active && !this.zoomAnimating && this.zoomState.scale === 1,
             onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onInvalidDecodedMetrics: (slotId: number, requestId: number, assetRequestId: number): void => {
@@ -442,8 +492,8 @@ export struct ReaderPagedViewport {
         }, (frame: ReaderPagedFrame): string => readerElementKey(`${frame.slotId}:${frame.part.fragment}`))
       }
       .direction(Direction.Ltr)
-      .width(this.equalSlots() ? this.viewportWidth : this.frameHeight() * this.totalRatio())
-      .height(this.equalSlots() ? this.viewportHeight : this.frameHeight())
+      .width(this.fitWholePageInViewport() || this.equalSlots() ? this.viewportWidth : this.frameHeight() * this.totalRatio())
+      .height(this.fitWholePageInViewport() || this.equalSlots() ? this.viewportHeight : this.frameHeight())
       .scale({ x: this.zoomState.scale, y: this.zoomState.scale })
       .translate({ x: this.zoomState.x, y: this.zoomState.y })
       .animation({ duration: this.zoomAnimating ? 180 : 0, curve: Curve.FastOutSlowIn })
@@ -456,7 +506,13 @@ export struct ReaderPagedViewport {
     .width('100%').height('100%')
     .clip(true)
     .id(this.selected ? 'rkit-image-viewport' : `rkit-cached-viewport-${this.snapshot.displayIndex}`)
-    .onTouch((event: TouchEvent): void => { this.tapSequence.touch(event) })
+    .onTouch((event: TouchEvent): void => {
+      this.tapSequence.touch(event)
+      if (event.type === TouchType.Down && this.tapSequence.allowed()) {
+        const point = event.touches[0]
+        if (point !== undefined) this.tapArbiter.down(point.x, point.y)
+      } else if (!this.tapSequence.allowed()) this.tapArbiter.cancel()
+    })
     .onAreaChange((_old: Area, area: Area): void => {
       if (this.entryViewportLaidOut && this.entryTransition !== null && this.entryTransition.target !== null &&
         (this.measuredViewportWidth !== Math.max(1, Number(area.width)) ||
@@ -468,18 +524,16 @@ export struct ReaderPagedViewport {
       this.zoomState = this.zoomState.settled(this.geometry())
     })
     .gesture(GestureGroup(GestureMode.Parallel,
-      GestureGroup(GestureMode.Exclusive,
-        TapGesture({ count: 2, distanceThreshold: 8 })
-          .onAction((event?: GestureEvent): void => { this.doubleTap(event) }),
-        TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => {
-          if (this.active && this.selected && !this.pinching && this.tapSequence.allowed() && event !== undefined) {
-            const location = event.tapLocation
-            if (location !== undefined && Number.isFinite(location.x) && Number.isFinite(location.y)) {
-              this.onTap(location.x / this.viewportWidth, location.y / this.viewportHeight)
-            }
+      TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => {
+        if (this.active && this.selected && !this.pinching && this.tapSequence.allowed() && event !== undefined) {
+          const location = event.tapLocation
+          if (location !== undefined && Number.isFinite(location.x) && Number.isFinite(location.y)) {
+            this.tapNavigation = this.tapNavigationKey()
+            this.tapArbiter.tap(new ReaderTapPoint(location.x, location.y, location.windowX, location.windowY),
+              this.doubleTapEnabled, this.doubleTapIntervalMs)
           }
-        }),
-      ),
+        }
+      }),
       PinchGesture({ fingers: 2 })
         .onActionStart((event?: GestureEvent): void => { this.beginPinch(event) })
         .onActionUpdate((event?: GestureEvent): void => { this.updatePinch(event) })
@@ -505,6 +559,7 @@ struct ReaderPagedCell {
   @Require @Param renderedFragment: ReaderFragment
   @Require @Param frameWidth: number
   @Require @Param frameHeight: number
+  @Param fitViewport: boolean = false
   @Require @Param active: boolean
   @Local private retainedFrameValue: ReaderPagedFrame | null = null
   @Local private decodedOriginalIdentity: string = ''
@@ -583,8 +638,12 @@ struct ReaderPagedCell {
       readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy)
   }
   private imageHeight(): number {
-    return Math.min(this.frameHeight, this.cellWidth() /
+    return this.fitViewport ? this.frameHeight : Math.min(this.frameHeight, this.cellWidth() /
       readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy))
+  }
+  private imageWidth(): number {
+    return this.fitViewport ? this.cellWidth() : this.imageHeight() *
+      readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy)
   }
 
   private rotateClockwise(): boolean { return rotatedFrame(this.frame(), this.snapshot.policy) }
@@ -638,9 +697,9 @@ struct ReaderPagedCell {
           entryMeasurement: this.entryMeasurement,
           entryPhase: this.entryTransition?.phase ?? 'finished',
           entryLayoutWidth: this.entryGeometryReady ?
-            this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy) : 0,
+            this.imageWidth() : 0,
           entryLayoutHeight: this.entryGeometryReady ? this.imageHeight() : 0,
-          allocatedWidth: this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy),
+          allocatedWidth: this.imageWidth(),
           allocatedHeight: this.imageHeight(),
           geometryAllocationRequired: true,
           slotId: this.slotId, assetRequestId: this.presentedFrame().asset.assetRequestId,
@@ -664,7 +723,7 @@ struct ReaderPagedCell {
           },
         })
           .opacity(this.imagePresentation().pixels ? 1 : 0)
-          .width(this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy))
+          .width(this.imageWidth())
           .height(this.imageHeight())
           .zIndex(this.retainedFrameValue !== null && this.frame().asset.phase === 'decoding' ? 1 : 0)
         if (this.retainedFrameValue !== null) {
@@ -676,9 +735,9 @@ struct ReaderPagedCell {
             entryMeasurement: this.entryMeasurement,
             entryPhase: this.entryTransition?.phase ?? 'finished',
             entryLayoutWidth: this.entryGeometryReady ?
-              this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy) : 0,
+              this.imageWidth() : 0,
             entryLayoutHeight: this.entryGeometryReady ? this.imageHeight() : 0,
-            allocatedWidth: this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy),
+            allocatedWidth: this.imageWidth(),
             allocatedHeight: this.imageHeight(),
             geometryAllocationRequired: true,
             slotId: this.slotId, assetRequestId: this.frame().asset.assetRequestId,
@@ -689,7 +748,7 @@ struct ReaderPagedCell {
             onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onInvalidDecodedMetrics: this.onInvalidDecodedMetrics,
           }).opacity(this.imagePresentation().pixels ? 1 : 0)
-            .width(this.imageHeight() * readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy))
+            .width(this.imageWidth())
             .height(this.imageHeight())
             .zIndex(this.frame().asset.phase === 'displayed' ? 1 : 0)
         }
@@ -708,6 +767,7 @@ export struct ReaderPagedImage {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param quarantineOriginal: boolean = false
   @Param guardUndecodedOriginal: boolean = false
+  @Param alignGeometryBeforeVisible: boolean = false
   @Param continuousEntry: ReaderContinuousEntryPosition | null = null
   @Require @Param frame: ReaderPagedFrame
   @Require @Param slotId: number
@@ -755,6 +815,7 @@ export struct ReaderPagedImage {
   private decodedHeight: number = 0
   private decodedGeometryIdentity: string = ''
   private decodedDrawableIdentity: string = ''
+  private pendingDecodedIdentity: string = ''
   private scheduledPresentationRequestId: number = 0
   private scheduledPresentationGeometryIdentity: string = ''
   private entryMounted: boolean = false
@@ -1069,9 +1130,19 @@ export struct ReaderPagedImage {
     this.decodedWidth = width
     this.decodedHeight = height
     this.decodedDrawableIdentity = this.drawableIdentity()
+    this.pendingDecodedIdentity = ''
     if (this.entryMounted && this.frame.asset.kind === 'original' &&
       ReaderEntryGeometryGate.dimensions(width, height) === 'ready') {
-      this.onDecodedOriginal(this.decodedDrawableIdentity)
+      const page = this.frame.asset.page
+      const hasRatio = page !== null && page.width > 0 && page.height > 0
+      const sameRatio = hasRatio && Math.abs(page!.width / page!.height - width / height) <= 0.000001
+      if (this.alignGeometryBeforeVisible && !sameRatio) {
+        // The loading slot has no real ratio yet. Publish native dimensions to
+        // Core before exposing its pixels, so a placeholder cannot resize them.
+        this.pendingDecodedIdentity = this.decodedDrawableIdentity
+      } else {
+        this.onDecodedOriginal(this.decodedDrawableIdentity)
+      }
     }
     this.decodedGeometryIdentity = this.originalGeometryReady() ? this.originalGeometryIdentity() : ''
     this.scheduleNativeStability()
@@ -1115,6 +1186,10 @@ export struct ReaderPagedImage {
       }
       this.decodedGeometryIdentity = geometryIdentity
       this.onPresented(this.slotId, requestId, true, width, height)
+      if (this.pendingDecodedIdentity === drawableIdentity) {
+        this.pendingDecodedIdentity = ''
+        this.onDecodedOriginal(drawableIdentity)
+      }
       this.scheduleNativeStability()
       this.reportVisible()
     }))
@@ -1123,6 +1198,7 @@ export struct ReaderPagedImage {
   private failed(): void {
     this.decoded = false
     this.decodedRequestId = 0
+    this.pendingDecodedIdentity = ''
     this.decodedGeometryIdentity = ''
     this.stableNativeIdentity = ''
     this.stableDrawableIdentity = ''

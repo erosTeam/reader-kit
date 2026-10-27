@@ -7,6 +7,7 @@ import { ReaderEntryTransition } from './ReaderEntryTransition'
 import { ReaderContinuousEntryPosition } from './ReaderContinuousEntryPosition'
 import { ReaderTapAction } from './ReaderTapAction'
 import { ReaderTapSequence } from './ReaderTapSequence'
+import { ReaderTapArbiter, ReaderTapPoint } from './ReaderTapArbiter'
 import { ReaderBoundaryDirection, ReaderBoundarySwipe } from './ReaderBoundarySwipe'
 import { normalizedReaderPageGap } from './ReaderPageGap'
 import { ReaderLoadingStage } from './ReaderLoadingStage'
@@ -34,6 +35,8 @@ class ReaderContinuousAfterLayout extends FrameCallback {
 @ComponentV2
 export struct ReaderContinuousSurface {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
+  @Param doubleTapEnabled: boolean = true
+  @Param doubleTapIntervalMs: number = 300
   @Param pageGap: number = 0
   @Param entryTransition: ReaderEntryTransition | null = null
   @Require @Param snapshot: ReaderPagedSnapshot
@@ -60,6 +63,7 @@ export struct ReaderContinuousSurface {
         ForEach([this.snapshot.topologyRevision], (revision: number) => {
           ReaderContinuousList({
             imageInterpolation: this.imageInterpolation,
+            doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
             pageGap: this.pageGap,
             snapshot: this.snapshot, active: this.active, createdRevision: revision,
             zoomResetCommand: this.zoomResetCommand,
@@ -82,6 +86,8 @@ export struct ReaderContinuousSurface {
 @ComponentV2
 struct ReaderContinuousList {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
+  @Param doubleTapEnabled: boolean = true
+  @Param doubleTapIntervalMs: number = 300
   @Param pageGap: number = 0
   @Param entryTransition: ReaderEntryTransition | null = null
   @Local private entryPosition: ReaderContinuousEntryPosition | null = null
@@ -287,8 +293,15 @@ struct ReaderContinuousList {
       const action = this.onTap(x / width, y / height)
       if (!this.active || this.disposed || this.pendingPosition || this.positionInFlight ||
         this.lockedKey.length > 0 || navigation !== this.snapshot.navigationRevision) return
-      if (action === 'previous' || action === 'left') this.scroller.scrollBy(0, -height * 0.75)
-      else if (action === 'next' || action === 'right') this.scroller.scrollBy(0, height * 0.75)
+      if (action === 'previous' || action === 'left') {
+        const atStart = this.first === 0 && this.scroller.currentOffset().yOffset <= 0.5
+        if (atStart) this.onBoundary('previous', this.createdRevision, navigation)
+        else this.scroller.scrollBy(0, -height * 0.75)
+      } else if (action === 'next' || action === 'right') {
+        const atEnd = this.last + 1 >= this.snapshot.displayCount && this.scroller.isAtEnd()
+        if (atEnd) this.onBoundary('next', this.createdRevision, navigation)
+        else this.scroller.scrollBy(0, height * 0.75)
+      }
     } catch (_) { /* A missing current viewport is not permission to infer a tap position. */ }
   }
 
@@ -299,7 +312,10 @@ struct ReaderContinuousList {
       frame.part.fragment === 'whole' &&
       !frame.crop.applied() && !this.snapshot.cropForPage(index).applied() &&
       !readerPolicyRotatesPage(this.snapshot.policy, page ?? null)) {
-      return readerPagedFrameAspectRatio(frame, this.snapshot.policy)
+      const ratio = readerPagedFrameAspectRatio(frame, this.snapshot.policy)
+      // The continuous list needs space for each loading row; this estimate is
+      // local to that placeholder and is never a source-image measurement.
+      return ratio > 0 ? ratio : 0.75
     }
     const crop = this.snapshot.cropForPage(index)
     const usePreview = this.snapshot.kind === 'original' && page?.hasWholePagePreviewGeometry() === true &&
@@ -494,6 +510,7 @@ struct ReaderContinuousList {
         ListItem() {
           ReaderContinuousCell({
             imageInterpolation: this.imageInterpolation,
+            doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
             snapshot: this.cellSnapshots.forItem(this.snapshot, key, this.entryTransition?.pending() !== true),
             entryTransition: this.entryTransition,
             entryPosition: this.entryPosition?.key === key ? this.entryPosition : null,
@@ -578,6 +595,8 @@ struct ReaderContinuousList {
 @ComponentV2
 struct ReaderContinuousCell {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
+  @Param doubleTapEnabled: boolean = true
+  @Param doubleTapIntervalMs: number = 300
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPosition: ReaderContinuousEntryPosition | null = null
   @Require @Param snapshot: ReaderContinuousCellSnapshot
@@ -599,6 +618,38 @@ struct ReaderContinuousCell {
   @Local private noticeActionBusy: boolean = false
   @Local private decodedOriginalIdentity: string = ''
   private terminalTapSequence: ReaderTapSequence = new ReaderTapSequence()
+  private terminalTapIdentity: string = ''
+  private terminalTapArbiter: ReaderTapArbiter = new ReaderTapArbiter(
+    (point: ReaderTapPoint): void => {
+      if (this.active && this.interactionAllowed && this.terminalTapIdentity === this.terminalIdentity()) {
+        this.onTap(point.windowX, point.windowY)
+      }
+    }, (_point: ReaderTapPoint): void => {})
+
+  private terminalIdentity(): string {
+    return `${this.snapshot.navigationRevision}:${this.snapshot.displayIndex}:` +
+      `${this.snapshot.frames[0]?.slotId ?? -1}:${this.snapshot.frames[0]?.asset.assetRequestId ?? -1}`
+  }
+
+  @Monitor('snapshot', 'active', 'interactionAllowed')
+  onTerminalStateChanged(): void {
+    if (!this.active || !this.interactionAllowed || this.terminalTapIdentity !== this.terminalIdentity()) {
+      this.terminalTapArbiter.cancel()
+    }
+  }
+
+  @Monitor('doubleTapEnabled', 'doubleTapIntervalMs')
+  onTerminalPreferenceChanged(): void { this.terminalTapArbiter.cancel() }
+
+  aboutToDisappear(): void { this.terminalTapArbiter.cancel() }
+
+  private terminalTouch(event: TouchEvent): void {
+    this.terminalTapSequence.touch(event)
+    if (event.type === TouchType.Down && this.terminalTapSequence.allowed()) {
+      const point = event.touches[0]
+      if (point !== undefined) this.terminalTapArbiter.down(point.x, point.y)
+    } else if (!this.terminalTapSequence.allowed()) this.terminalTapArbiter.cancel()
+  }
 
   private originalDrawableIdentity(): string {
     const frame = this.snapshot.frames[0]
@@ -623,8 +674,11 @@ struct ReaderContinuousCell {
   private terminalTap(event?: GestureEvent): void {
     const location = event?.tapLocation
     if (this.active && this.interactionAllowed && this.terminalTapSequence.allowed() &&
-      location !== undefined && Number.isFinite(location.windowX) && Number.isFinite(location.windowY)) {
-      this.onTap(location.windowX, location.windowY)
+      location !== undefined && Number.isFinite(location.x) && Number.isFinite(location.y) &&
+      Number.isFinite(location.windowX) && Number.isFinite(location.windowY)) {
+      this.terminalTapIdentity = this.terminalIdentity()
+      this.terminalTapArbiter.tap(new ReaderTapPoint(location.x, location.y, location.windowX, location.windowY),
+        this.doubleTapEnabled, this.doubleTapIntervalMs)
     }
   }
 
@@ -653,11 +707,8 @@ struct ReaderContinuousCell {
         }, (frame: ReaderPagedFrame): string =>
           readerElementKey(`${frame.slotId}:${frame.asset.assetRequestId}`))
       }.width('100%').height(220).id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
-        .onTouch((event: TouchEvent): void => { this.terminalTapSequence.touch(event) })
-        .gesture(GestureGroup(GestureMode.Exclusive,
-          TapGesture({ count: 2, distanceThreshold: 8 }).onAction((): void => {}),
-          TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => { this.terminalTap(event) }),
-        ))
+        .onTouch((event: TouchEvent): void => { this.terminalTouch(event) })
+        .gesture(TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => { this.terminalTap(event) }))
     } else if (this.snapshot.frames[0]?.asset.phase === 'failed') {
       Stack() {
         ForEach(this.snapshot.frames, (frame: ReaderPagedFrame) => {
@@ -670,16 +721,14 @@ struct ReaderContinuousCell {
         }, (frame: ReaderPagedFrame): string =>
           readerElementKey(`${frame.slotId}:${frame.asset.assetRequestId}`))
       }.width('100%').height(220).id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
-        .onTouch((event: TouchEvent): void => { this.terminalTapSequence.touch(event) })
-        .gesture(GestureGroup(GestureMode.Exclusive,
-          TapGesture({ count: 2, distanceThreshold: 8 }).onAction((): void => {}),
-          TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => { this.terminalTap(event) }),
-        ))
+        .onTouch((event: TouchEvent): void => { this.terminalTouch(event) })
+        .gesture(TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => { this.terminalTap(event) }))
     } else {
       Stack() {
         ForEach(this.snapshot.frames, (frame: ReaderPagedFrame) => {
           ReaderContinuousZoomImage({
             imageInterpolation: this.imageInterpolation,
+            doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
             frame: this.snapshot.frames[0], navigation: this.snapshot.navigationRevision,
             entryTransition: this.entryTransition, entryPosition: this.entryPosition,
             imageHeight: this.imageHeight, active: this.active, interactionAllowed: this.interactionAllowed,

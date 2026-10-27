@@ -33,6 +33,22 @@ test('real Surface preserves defaults and interprets physical directions once', 
   const c = surface('continuous'); c.host.pageTap(.1, .8); assert.deepEqual(c.moves, ['menu'])
   c.host.tapZoneResolver = () => 'next'; c.host.pageTap(.1, .8); assert.deepEqual(c.moves, ['menu'])
 })
+test('paged taps at a chapter edge request the same direction as a boundary swipe', () => {
+  for (const direction of ['ltr', 'rtl']) for (const action of ['previous', 'next', 'left', 'right']) {
+    const f = surface('single', direction), boundaries = []
+    f.host.state.displayIndex = 0
+    f.host.state.navigationRevision = 3
+    f.host.session.snapshot = () => ({ phase: 'ready', topologyRevision: 2, navigationRevision: 3,
+      displayIndex: 0, displayCount: 1 })
+    f.host.tapZoneResolver = () => action
+    f.host.requestBoundaryChapter = (...args) => boundaries.push(args)
+    f.host.pageTap(.2,.8)
+    const expected = action === 'left' ? (direction === 'ltr' ? 'previous' : 'next') :
+      action === 'right' ? (direction === 'ltr' ? 'next' : 'previous') : action
+    assert.deepEqual(boundaries, [[expected,2,3]])
+    assert.deepEqual(f.moves, [])
+  }
+})
 test('real Surface rejects blocked input', () => {
   for (const field of ['closing', 'chromeDisposed', 'chromeCloseRequested', 'menuVisible', 'shareBusy', 'saveBusy', 'informationBusy']) {
     const f = surface(); f.host[field] = true; assert.equal(f.host.pageTap(.1, .2), 'none'); assert.deepEqual(f.moves, [])
@@ -63,6 +79,20 @@ test('real List uses window viewport, not long image height, and scrolls 75 perc
     assert.deepEqual(f.scrolls, ['menu', 'none'].includes(action) ? [] : [[0, ['next', 'right'].includes(action) ? 450 : -450]])
   }
 })
+test('continuous taps cross only at the actual scroll edge', () => {
+  for (const action of ['previous','left','next','right']) {
+    const f=list(), boundaries=[]
+    f.h.first=0; f.h.last=0; f.h.snapshot.displayCount=1
+    f.h.scroller.currentOffset=()=>({yOffset:0})
+    f.h.scroller.isAtEnd=()=>true
+    f.h.onTap=()=>action
+    f.h.onBoundary=(...args)=>boundaries.push(args)
+    f.h.imageTap('row',150,400)
+    const direction=['previous','left'].includes(action)?'previous':'next'
+    assert.deepEqual(boundaries,[[direction,2,3]])
+    assert.deepEqual(f.scrolls,[])
+  }
+})
 test('real List rejects stale or locked geometry and callback navigation changes', () => {
   for (const field of ['disposed', 'pendingPosition', 'positionInFlight', 'moving']) {
     const f = list(); f.h[field] = true; f.h.imageTap('row', 150, 400); assert.deepEqual(f.calls, [])
@@ -81,4 +111,31 @@ test('stable continuous owner zoom permits menu resolution but no scrolling; non
   g.h.getUIContext = () => ({ px2vp: x => x / 2, getComponentUtils: () => ({ getRectangleById: () => ({
     windowOffset: { x: NaN, y: 200 }, size: { width: 800, height: 1200 } }) }) })
   g.h.imageTap('row', 150, 400); assert.deepEqual(g.calls, [])
+})
+
+
+test('configurable double tap interval preserves immediate singles when zoom is disabled', () => {
+  const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm')
+  const ts = require(process.env.READER_KIT_TYPESCRIPT || '/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/node_modules/typescript')
+  const source = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderTapArbiter.ets'), 'utf8')
+  const exports = {}, timers = new Map(), events = []; let now = 0, serial = 0
+  const Clock = class extends Date { static now() { return now } }
+  vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2020 } }).outputText, { exports, Date: Clock,
+    setTimeout: (action, delay) => { const id = ++serial; timers.set(id, { action, at: now + delay }); return id },
+    clearTimeout: id => timers.delete(id) })
+  const advance = ms => { now += ms; for (const [id, timer] of [...timers]) if (timer.at <= now) {
+    timers.delete(id); timer.action()
+  } }
+  const arbiter = new exports.ReaderTapArbiter(point => events.push('single:' + point.x),
+    point => events.push('double:' + point.x))
+  const point = x => new exports.ReaderTapPoint(x, 0, x, 0)
+  arbiter.tap(point(10), false, 300); assert.deepEqual(events, ['single:10']); assert.equal(timers.size, 0)
+  arbiter.tap(point(20), true, 200); advance(199); assert.equal(events.length, 1)
+  arbiter.down(21, 0); advance(100); arbiter.tap(point(21), true, 200)
+  assert.deepEqual(events, ['single:10', 'double:21'])
+  arbiter.tap(point(30), true, 200); advance(200)
+  assert.deepEqual(events, ['single:10', 'double:21', 'single:30'])
+  arbiter.tap(point(40), true, 200); arbiter.down(40, 0); arbiter.cancel(); advance(300)
+  assert.equal(events.length, 3, 'a second gesture that becomes a drag must not turn the page')
 })

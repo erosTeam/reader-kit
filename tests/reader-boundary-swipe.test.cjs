@@ -34,6 +34,21 @@ test('continuous one-page boundary selects intent from the completed drag direct
   assert.equal(swipe({ previous: true, next: true, y: 180, axis: 'vertical' }), 'previous')
 })
 
+test('paged chapter crossing follows the native pager gesture and both reading directions', () => {
+  for (const [direction, offset, expected] of [
+    ['ltr', -30, 'next'], ['ltr', 30, 'previous'],
+    ['rtl', 30, 'next'], ['rtl', -30, 'previous'],
+  ]) {
+    const edge = new ReaderBoundarySwipe()
+    edge.begin(100, 100, true, true)
+    edge.observeNative(offset)
+    assert.equal(edge.finishNative(offset < 0 ? 20 : 180, 100, 'horizontal', direction), expected)
+  }
+  const notRecognized = new ReaderBoundarySwipe()
+  notRecognized.begin(100, 100, true, true)
+  assert.equal(notRecognized.finishNative(20, 100, 'horizontal', 'ltr'), null)
+})
+
 test('wrong edge, short, cross-axis and cancelled sequences are rejected', () => {
   assert.equal(swipe({ previous: true, x: 20 }), null)
   assert.equal(swipe({ next: true, x: 70 }), null)

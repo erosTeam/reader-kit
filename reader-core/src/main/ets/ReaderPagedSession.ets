@@ -1,7 +1,7 @@
 import { ReaderUnitKey, ReaderUnit, ReaderPage } from './ReaderContent'
 import {
   ReaderSession, ReaderSnapshot, ReaderCatalog, ReaderAssetProvider, ReaderAssetKind, ReaderAssetVariant,
-  ReaderCancellation, ReaderProcessedAssetVariant, ReaderPreloadHost, ReaderAutoReadSourceHost,
+  ReaderCancellation, ReaderProcessedAssetVariant, ReaderVariantPreference, ReaderPreloadHost, ReaderAutoReadSourceHost,
   ReaderResolvedAssetPlan, ReaderVariantAssetPlan,
   ReaderAssetFailureClassifier,
 } from './ReaderSession'
@@ -43,9 +43,10 @@ export function readerPagedFrameAspectRatio(frame: ReaderPagedFrame,
   const fraction = frame.asset.kind === 'original' ? region.width / region.height : 1
   if (policy !== null && frame.part.fragment === 'whole' && readerPolicyRotatesPage(policy, page)) {
     const ratio = width > 0 && height > 0 ? width / height * fraction : 0
-    return ratio > 0 ? 1 / ratio : 0.75
+    return ratio > 0 ? 1 / ratio : 0
   }
-  return width > 0 && height > 0 ? width / height * fraction : 0.75
+  // Zero means unknown; a loading placeholder is not image geometry.
+  return width > 0 && height > 0 ? width / height * fraction : 0
 }
 
 export class ReaderPageCropMetadata {
@@ -226,7 +227,8 @@ export class ReaderPagedSession {
   private readonly assets: ReaderAssetProvider
   private readonly preloadHost: ReaderPreloadHost | null
   private readonly autoReadSourceHost: ReaderAutoReadSourceHost | null
-  private readonly processing: ReaderProcessingCoordinator
+  private processing: ReaderProcessingCoordinator
+  private futureProcessing: Map<string, ReaderProcessingCoordinator> = new Map()
   private processingPolicy: ReaderProcessingPolicy | null = null
   private processingAllowed: boolean = true
   private processingCropRevision: string = ''
@@ -281,14 +283,12 @@ export class ReaderPagedSession {
 
   constructor(catalog: ReaderCatalog, assets: ReaderAssetProvider, preloadHost: ReaderPreloadHost | null = null,
     failures: ReaderAssetFailureClassifier | null = null, autoReadSourceHost: ReaderAutoReadSourceHost | null = null) {
-    this.processing = new ReaderProcessingCoordinator(catalog, assets, preloadHost, (): void => {
-      if (!this.disposed && this.state.phase === 'ready') this.reconcile()
-    })
     this.catalog = catalog
     this.assets = assets
     this.preloadHost = preloadHost
     this.failures = failures
     this.autoReadSourceHost = autoReadSourceHost
+    this.processing = this.createProcessingCoordinator()
   }
 
   cancellationMode(): string { return this.assets.cancellationMode }
@@ -757,7 +757,7 @@ export class ReaderPagedSession {
   setProcessingPolicy(policy: ReaderProcessingPolicy | null, cropRevision: string = ''): void {
     if (this.disposed) return
     this.processingPolicy = policy; this.processingCropRevision = cropRevision
-    if (policy === null) this.processing.clear()
+    if (policy === null) { this.processing.clear(); this.retireFutureProcessing() }
     if (this.state.phase === 'ready') this.reconcile()
   }
 
@@ -798,28 +798,83 @@ export class ReaderPagedSession {
       this.active && this.processingAllowed, this.cropEnabled, this.processingCropRevision)
   }
 
-  /** The existing depth is both the end-of-unit lead and the next-unit budget.
+  private processingUnitId(key: ReaderUnitKey): string {
+    return JSON.stringify([key.scope, key.work, key.unit])
+  }
+
+  private createProcessingCoordinator(): ReaderProcessingCoordinator {
+    const owner = new ReaderProcessingCoordinator(this.catalog, this.assets, this.preloadHost, (): void => {
+      // A future unit can finish preparation without publishing the current unit.
+      if (this.processing === owner && !this.disposed && this.state.phase === 'ready') this.reconcile()
+    })
+    return owner
+  }
+
+  private retireFutureProcessing(keep: Set<string> = new Set<string>()): void {
+    this.futureProcessing.forEach((owner: ReaderProcessingCoordinator, id: string): void => {
+      if (!keep.has(id)) { this.futureProcessing.delete(id); owner.clear() }
+    })
+  }
+
+  private stageFutureProcessing(unit: ReaderUnit, indexes: number[], automaticIndex: number): void {
+    const policy = this.processingPolicy
+    if (policy === null || !this.active || !this.processingAllowed || this.disposed) return
+    const id = this.processingUnitId(unit.key)
+    let owner = this.futureProcessing.get(id)
+    if (owner === undefined) {
+      owner = this.createProcessingCoordinator()
+      this.futureProcessing.set(id, owner)
+    }
+    // Do not publish an index-only completion into the current chapter. The
+    // prepared owner is promoted when that exact unit becomes the live unit.
+    const futurePolicy = new ReaderProcessingPolicy(policy.revision, policy.automaticNext,
+      (page: ReaderPage, automatic: boolean): ReaderVariantPreference => policy.preference(page, automatic))
+    owner.update(unit, indexes, [], automaticIndex, futurePolicy, true, this.cropEnabled, this.processingCropRevision)
+  }
+
+  /** Spend only the remaining page budget after this unit on verified later units.
    * Hosts without verified multi-unit preparation keep their original behavior. */
   private scheduleNextUnitPreload(): void {
     const unit = this.state.unit
     const end = this.state.policy.layout === 'continuous' && this.continuousEnd >= 0
       ? this.continuousEnd : this.state.displayIndex
+    const lastSource = (this.map?.item(end)?.parts ?? []).reduce(
+      (last: number, part: ReaderDisplayPart): number => Math.max(last, part.sourceIndex), -1)
+    const remainingHere = unit === null || lastSource < 0 ? this.preloadDepth :
+      Math.max(0, unit.pageCount - 1 - lastSource)
+    const nextDepth = Math.max(0, this.preloadDepth - remainingHere)
     const eligible = !this.disposed && this.active && this.processingAllowed && this.state.phase === 'ready' &&
       this.state.kind === 'original' && unit !== null && this.map !== null && this.map.count() > 0 &&
-      this.preloadDepth > 0 && this.map.count() - 1 - end < this.preloadDepth &&
-      this.preloadHost?.preloadNextUnit !== undefined
+      nextDepth > 0 && this.preloadHost?.preloadNextUnit !== undefined
     const signature = !eligible || unit === null ? '' :
-      JSON.stringify([unit.key.scope, unit.key.work, unit.key.unit, this.preloadDepth])
-    if (signature === this.nextUnitPreloadSignature) return
+      JSON.stringify([unit.key.scope, unit.key.work, unit.key.unit, nextDepth,
+        this.processingPolicy?.revision ?? '', this.cropEnabled, this.processingCropRevision])
+    if (signature === this.nextUnitPreloadSignature) {
+      if (!eligible) this.retireFutureProcessing()
+      return
+    }
     this.nextUnitPreloadCancellation.cancel()
     this.nextUnitPreloadSignature = signature
-    if (signature.length === 0 || unit === null) return
+    if (signature.length === 0 || unit === null) { this.retireFutureProcessing(); return }
     const cancellation = new ReaderCancellation()
     this.nextUnitPreloadCancellation = cancellation
-    console.info(`[ReaderPreload] next_unit depth=${this.preloadDepth}`)
-    void this.preloadHost?.preloadNextUnit?.(unit.copy(), this.preloadDepth, cancellation).catch((): void => {
-      if (!cancellation.isCancelled()) console.warn('[ReaderPreload] next_unit_failed')
-    })
+    const touched: Set<string> = new Set<string>()
+    console.info(`[ReaderPreload] next_unit depth=${nextDepth}`)
+    const completed = (): void => {
+      if (!cancellation.isCancelled() && this.nextUnitPreloadCancellation === cancellation) {
+        this.retireFutureProcessing(touched)
+      }
+    }
+    void this.preloadHost?.preloadNextUnit?.(unit.copy(), nextDepth, cancellation,
+      (future: ReaderUnit, indexes: number[], precedingPages: number): void => {
+        if (cancellation.isCancelled() || this.nextUnitPreloadCancellation !== cancellation ||
+          this.state.phase !== 'ready' || this.state.unit?.key.equals(unit.key) !== true) return
+        touched.add(this.processingUnitId(future.key))
+        this.stageFutureProcessing(future, indexes, remainingHere === 0 && precedingPages === 0 ? 0 : -1)
+      }).then(completed, (): void => {
+        completed()
+        if (!cancellation.isCancelled()) console.warn('[ReaderPreload] next_unit_failed')
+      })
   }
 
   private schedulePreload(): void {
@@ -936,7 +991,14 @@ export class ReaderPagedSession {
     this.outgoingPositionKey = null
     this.cancelOriginalPreparations()
     this.cancelAutoReadSourcePreparations()
+    const preparedProcessing = this.futureProcessing.get(this.processingUnitId(key))
     this.processing.clear()
+    if (preparedProcessing !== undefined) {
+      this.futureProcessing.delete(this.processingUnitId(key))
+      this.processing = preparedProcessing
+    } else {
+      this.retireFutureProcessing()
+    }
     this.nextUnitPreloadSignature = ''
     this.nextUnitPreloadCancellation.cancel()
     this.preloadSignature = ''
@@ -1517,6 +1579,7 @@ export class ReaderPagedSession {
   close(): void {
     this.outgoingPositionKey = null
     this.processing.clear()
+    this.retireFutureProcessing()
     this.cancelOriginalPreparations()
     this.cancelAutoReadSourcePreparations()
     this.assetPlans.clear()

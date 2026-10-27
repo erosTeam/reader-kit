@@ -148,3 +148,48 @@ test('late invalid recipe after close is stale rather than a current resolution 
   const pending = f.choose(f.frame(0)); f.s.close(); resolve()
   assert.equal(await pending, 'stale')
 })
+
+
+// This exercises real sizing decisions; native pixels still require a device recording.
+test('ordinary single pages retain viewport constraints before and after source dimensions arrive', () => {
+  const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm')
+  const ts = require(process.env.READER_KIT_TYPESCRIPT || '/Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/node_modules/typescript')
+  const text = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderPagedViewport.ets'), 'utf8').replace(/\bstruct /g, 'class ')
+  const tree = ts.createSourceFile('viewport.ts', text, ts.ScriptTarget.Latest, true)
+  const extract = (name, methods) => {
+    const cls = tree.statements.find(value => ts.isClassDeclaration(value) && value.name?.getText(tree) === name)
+    return methods.map(method => cls.members.find(value => value.name?.getText(tree) === method).getText(tree)).join('\n')
+  }
+  const source = `export class Viewport { ${extract('ReaderPagedViewport', ['fitWholePageInViewport', 'equalSlots', 'splitLayout'])} }\n` +
+    `export class Cell { ${extract('ReaderPagedCell', ['cellWidth', 'imageHeight', 'imageWidth', 'frame'])} }`
+  const exports = {}, core = load('ReaderPagedSession')
+  vm.runInNewContext(ts.transpileModule(source,
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText,
+    { exports, readerPagedFrameAspectRatio: core.readerPagedFrameAspectRatio })
+  const { ReaderSnapshot } = load('ReaderSession'), { ReaderDisplayPart } = load('ReaderDisplayMap')
+  const key = new ReaderUnitKey('source', 'work', 'unit'), page = new ReaderPage(key, 'p0', 0)
+  const asset = new ReaderSnapshot(); asset.page = page; asset.kind = 'original'
+  const frame = new core.ReaderPagedFrame(5, new ReaderDisplayPart(key, 'p0', 0), asset)
+  const snapshot = { frames: [frame], policy: new ReaderDisplayPolicy() }
+  const view = new exports.Viewport(); Object.assign(view, { snapshot, entryTransition: null })
+  const cell = new exports.Cell(); Object.assign(cell, { snapshot, slotId: 5, renderedFragment: 'whole',
+    frameWidth: 360, frameHeight: 720, fitViewport: true })
+  for (const [width, height] of [[0, 0], [640, 960], [1920, 1080]]) {
+    frame.asset.page.width = width; frame.asset.page.height = height
+    assert.equal(view.fitWholePageInViewport(), true)
+    assert.deepEqual([cell.imageWidth(), cell.imageHeight()], [360, 720])
+  }
+  view.entryTransition = { pending: () => true }
+  assert.equal(view.fitWholePageInViewport(), false, 'entry measurement keeps its existing geometry')
+  view.entryTransition = null; snapshot.policy.splitWidePages = true
+  assert.equal(view.fitWholePageInViewport(), false, 'split-wide geometry keeps its existing path')
+  snapshot.policy.splitWidePages = false; snapshot.policy.layout = 'spread'
+  assert.equal(view.fitWholePageInViewport(), false, 'spread layout keeps its existing path')
+  const otherPage = new ReaderPage(key, 'p1', 1)
+  const otherAsset = new ReaderSnapshot(); otherAsset.page = otherPage; otherAsset.kind = 'original'
+  const other = new core.ReaderPagedFrame(6, new ReaderDisplayPart(key, 'p1', 1), otherAsset)
+  snapshot.frames = [frame, other]; view.recovering = false
+  assert.equal(view.equalSlots(), true, 'unknown second page occupies its own viewport half')
+  other.asset.page.width = 800; other.asset.page.height = 1200
+  assert.equal(view.equalSlots(), false, 'the joined spread is recalculated when both real sizes are known')
+})

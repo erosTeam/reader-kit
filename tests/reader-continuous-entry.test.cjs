@@ -173,12 +173,16 @@ test('paged default still rejects out-of-viewport geometry and does not get cont
 test('terminal backgrounds reuse single-pointer travel filtering and active input gates', () => {
   const TouchType = { Down: 0, Move: 1, Up: 2, Cancel: 3 }
   const { ReaderTapSequence } = evaluate(read('ReaderTapSequence'), {}, { TouchType })
+  const { ReaderTapArbiter, ReaderTapPoint } = evaluate(read('ReaderTapArbiter'), {}, { setTimeout, clearTimeout })
   const Cell = evaluate(`export class Cell { ${methods('ReaderContinuousSurface',
-    'ReaderContinuousCell', ['terminalTap'])} }`).Cell
+    'ReaderContinuousCell', ['terminalTap', 'terminalIdentity'])} }`, {}, { ReaderTapPoint }).Cell
   const cell = new Cell(), calls = [], sequence = new ReaderTapSequence()
   Object.assign(cell, { active: true, interactionAllowed: true,
+    snapshot: { navigationRevision: 3, displayIndex: 0, frames: [] },
+    doubleTapEnabled: false, doubleTapIntervalMs: 300,
     terminalTapSequence: sequence, onTap: (x, y) => calls.push([x, y]) })
-  const event = { tapLocation: { windowX: 150, windowY: 60 } }
+  cell.terminalTapArbiter = new ReaderTapArbiter(point => cell.onTap(point.windowX, point.windowY), () => {})
+  const event = { tapLocation: { x: 150, y: 60, windowX: 150, windowY: 60 } }
   const touch = (type, x, count = 1) => sequence.touch({ type,
     touches: Array.from({ length: count }, () => ({ x, y: 0 })), changedTouches: [{ x, y: 0 }] })
   touch(TouchType.Down, 0); cell.terminalTap(event)
@@ -194,6 +198,32 @@ test('terminal backgrounds reuse single-pointer travel filtering and active inpu
   cell.terminalTap(); cell.terminalTap({ tapLocation: { windowX: NaN, windowY: 0 } })
   assert.equal(calls.length, 1)
   cell.terminalTap(event); assert.deepEqual(calls, [[150, 60], [150, 60]])
+})
+
+test('continuous geometry can publish decoded dimensions before exposing pixels', () => {
+  const Native = evaluate(`export class Native { ${methods('ReaderPagedViewport', 'ReaderPagedImage',
+    ['completed', 'schedulePresentation'])} }`, {}, {
+    ReaderEntryGeometryGate: gate,
+    ReaderEntryAfterLayout: class { constructor(action) { this.action = action } },
+  }).Native
+  for (const [align, priorWidth, priorHeight, expected] of [
+    [true, 0, 0, ['presented', 'pixels']],
+    [true, 600, 900, ['pixels', 'presented']],
+    [false, 0, 0, ['pixels', 'presented']],
+  ]) {
+    const f = fixture(), events = [], callbacks = [], image = new Native()
+    f.frame.asset.page.width = priorWidth; f.frame.asset.page.height = priorHeight
+    Object.assign(image, { frame: f.frame, slotId: 7, assetRequestId: 3, entryMounted: true,
+      alignGeometryBeforeVisible: align, decoded: false, decodedRequestId: 0, scheduledPresentationRequestId: 0,
+      scheduledPresentationGeometryIdentity: '', drawableIdentity: () => 'same',
+      originalGeometryIdentity: () => 'layout', originalGeometryReady: () => true,
+      scheduleNativeStability() {}, reportInvalidDecodedMetrics() {}, publishEntryTarget() {}, reportVisible() {},
+      onDecodedOriginal: () => events.push('pixels'), onPresented: () => events.push('presented'),
+      getUIContext: () => ({ postFrameCallback: value => callbacks.push(value.action) }) })
+    image.completed(400, 600)
+    callbacks.shift()()
+    assert.deepEqual(events, expected)
+  }
 })
 
 test('continuous original uses attested whole-page preview geometry until native dimensions arrive', () => {

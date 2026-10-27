@@ -186,9 +186,10 @@ export interface ReaderAssetProvider {
  */
 export interface ReaderPreloadHost {
   preload(page: ReaderPage, cancellation: ReaderCancellation): Promise<void>
-  /** Optional verified adjacency only. Warm up to depth source pages in the next
-   * unit without opening it in the live session or publishing reading progress. */
-  preloadNextUnit?(unit: ReaderUnit, depth: number, cancellation: ReaderCancellation): Promise<void>
+  /** Optional verified adjacency only. Warm up to depth source pages across later
+   * units without opening them in the live session or publishing reading progress. */
+  preloadNextUnit?(unit: ReaderUnit, depth: number, cancellation: ReaderCancellation,
+    onPrepared?: (unit: ReaderUnit, indexes: number[], precedingPages: number) => void): Promise<void>
 }
 
 /**
