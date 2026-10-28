@@ -1,8 +1,10 @@
+import { ColorMetrics } from '@kit.ArkUI'
+
 /**
  * Faithful kit port of the legacy host ReaderLoadingBar + ReaderLoadingStage
  * presentation. Constants and timer mechanics are copied verbatim from the
  * NN/NE ReaderPage implementations (height 4, width 80%, maxWidth 180,
- * radius 2, track #33FFFFFF, fill white, slider ratio 0.3, progress anim
+ * radius 2, track alpha 0.2, slider ratio 0.3, progress anim
  * 220ms EaseOut, indeterminate step 900ms, stage spacing 8, label font 14,
  * padding 24): the shared cell reuses the existing product presentation
  * instead of inventing new geometry. A real received/total byte pair renders
@@ -160,6 +162,18 @@ export struct ReaderLoadingStage {
   @Param loaded: number = 0
   @Param total: number = 0
   @Param showTransitionBackground: boolean = false
+  @Param loadingInk: ResourceColor = LOADING_BAR_FG
+
+  // Plain feedback follows the host canvas. Retained entry pixels keep the
+  // existing dark transition panel and light ink, independent of canvas color.
+  private loadingForeground(): ResourceColor {
+    return this.showTransitionBackground ? LOADING_BAR_FG : this.loadingInk
+  }
+
+  private loadingTrack(): ResourceColor {
+    const color = ColorMetrics.resourceColor(this.loadingForeground())
+    return ColorMetrics.rgba(color.red, color.green, color.blue, 0.2).color
+  }
 
   private hasProgress(): boolean {
     return this.total > 0
@@ -185,10 +199,11 @@ export struct ReaderLoadingStage {
 
   @Builder
   private LoadingElements() {
-    ReaderLoadingBar({ determinate: this.hasProgress(), ratio: this.progressRatio() })
+    ReaderLoadingBar({ determinate: this.hasProgress(), ratio: this.progressRatio(),
+      barFillColor: this.loadingForeground(), barTrackColor: this.loadingTrack() })
     Text(this.hasProgress() ? this.progressPercent() : this.label)
       .fontSize(LOADING_STAGE_FONT)
-      .fontColor(LOADING_BAR_FG)
+      .fontColor(this.loadingForeground())
       .textAlign(TextAlign.Center)
   }
 

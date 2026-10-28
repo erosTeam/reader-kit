@@ -33,6 +33,7 @@ export class ReaderImagePresentation {
 /** Metadata selects the existing label only; the image owner supplies the display decision. */
 @ComponentV2
 export struct ReaderImagePlaceholder {
+  @Param loadingInk: ResourceColor = Color.White
   @Require @Param presentation: ReaderImagePresentation
   @Param frame: ReaderPagedFrame | null = null
   @Param entryTransition: ReaderEntryTransition | null = null
@@ -40,6 +41,7 @@ export struct ReaderImagePlaceholder {
   build() {
     if (this.presentation.loading) {
       ReaderLoadingStage({
+        loadingInk: this.loadingInk,
         showTransitionBackground: this.frame !== null &&
           this.entryTransition?.hasLoadingBackdrop(this.frame) === true,
         label: this.frame === null || this.frame.asset.phase === 'idle' ? $r('app.string.rkit_loading_resolving')

@@ -47,6 +47,9 @@ The following are existing preservation requirements, not new feature work:
   The retained in-place replacement branch keeps already readable pixels.
   Before a newly mounted pager reports its real dimensions, that same feedback
   belongs to the full viewport; measured page cells take it over after layout.
+  Plain loading bars, tracks and labels use the host loading ink (defaulting to
+  its canvas foreground) in both paged and continuous leaves. Feedback over retained entry pixels keeps its
+  established dark panel and light ink; canvas colors do not override that panel.
 - Toolbar reveal has two required cases: when the current native status-bar
   show operation applies, finish that operation before painting the toolbar;
   when status-bar control is absent or unsupported, keep the toolbar usable.

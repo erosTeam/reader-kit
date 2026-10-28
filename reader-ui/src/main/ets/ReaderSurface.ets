@@ -53,6 +53,7 @@ export struct ReaderSurface {
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param canvasBackground: ResourceColor = Color.Black
   @Param canvasForeground: ResourceColor = Color.White
+  @Param loadingInk: ResourceColor | null = null
   /** Hosts may fade the canvas independently while a root-owned transition proxy keeps the image visible. */
   @Param canvasBackdropOpacity: number = 1
   /** A close handoff may retire Reader controls and images without removing its canvas. */
@@ -982,6 +983,7 @@ export struct ReaderSurface {
         Stack() {
         if (this.state.policy.layout === 'continuous') {
           ReaderContinuousSurface({
+            loadingInk: this.loadingInk ?? this.canvasForeground,
             imageInterpolation: this.imageInterpolation,
             doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
             pageGap: this.pageGap,
@@ -1018,6 +1020,7 @@ export struct ReaderSurface {
           })
         } else {
           ReaderPagerSurface({
+            loadingInk: this.loadingInk ?? this.canvasForeground,
             imageInterpolation: this.imageInterpolation,
             doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
             pageGap: this.pageGap,

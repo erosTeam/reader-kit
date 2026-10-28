@@ -104,6 +104,7 @@ export struct ReaderPagedViewport {
   // current pager constraint for fitting instead of a per-item 1px bootstrap.
   @Require @Param viewportWidth: number
   @Require @Param viewportHeight: number
+  @Param loadingInk: ResourceColor = Color.White
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param pageGap: number = 0
   @Param doubleTapEnabled: boolean = true
@@ -468,7 +469,7 @@ export struct ReaderPagedViewport {
           // Only stable identity comes from the ForEach closure. Cell state is
           // resolved from the current snapshot so same-key updates are not lost.
           ReaderPagedCell({
-            imageInterpolation: this.imageInterpolation,
+            imageInterpolation: this.imageInterpolation, loadingInk: this.loadingInk,
             snapshot: this.snapshot, slotId: frame.slotId,
             entryTransition: this.entryTransition,
             entryMeasurement: this.entryMeasurement,
@@ -499,7 +500,7 @@ export struct ReaderPagedViewport {
       .animation({ duration: this.zoomAnimating ? 180 : 0, curve: Curve.FastOutSlowIn })
       .id(this.selected ? 'rkit-paged-content' : `rkit-cached-content-${this.snapshot.displayIndex}`)
       if (this.snapshot.phase === 'catalog' && this.snapshot.frames.length === 0) {
-        ReaderLoadingStage({ label: $r('app.string.rkit_loading_resolving') })
+        ReaderLoadingStage({ label: $r('app.string.rkit_loading_resolving'), loadingInk: this.loadingInk })
       }
     }
     .alignContent(Alignment.Center)
@@ -550,6 +551,7 @@ export struct ReaderPagedViewport {
 
 @ComponentV2
 struct ReaderPagedCell {
+  @Param loadingInk: ResourceColor = Color.White
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Require @Param snapshot: ReaderPagedSnapshot
   @Param entryTransition: ReaderEntryTransition | null = null
@@ -753,7 +755,7 @@ struct ReaderPagedCell {
             .zIndex(this.frame().asset.phase === 'displayed' ? 1 : 0)
         }
       }
-      ReaderImagePlaceholder({ presentation: this.imagePresentation(),
+      ReaderImagePlaceholder({ loadingInk: this.loadingInk, presentation: this.imagePresentation(),
         frame: this.frame(), entryTransition: this.entryTransition }).zIndex(2)
     }
     .width(this.cellWidth())

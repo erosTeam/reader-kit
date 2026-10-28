@@ -56,6 +56,7 @@ class ReaderContinuousAfterLayout extends FrameCallback {
 /** Continuous layout only. Host navigation, commands and resource ownership stay outside. */
 @ComponentV2
 export struct ReaderContinuousSurface {
+  @Param loadingInk: ResourceColor = Color.White
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param doubleTapEnabled: boolean = true
   @Param doubleTapIntervalMs: number = 300
@@ -84,7 +85,7 @@ export struct ReaderContinuousSurface {
       if (this.snapshot.displayKeys.length > 0) {
         ForEach([this.snapshot.topologyRevision], (revision: number) => {
           ReaderContinuousList({
-            imageInterpolation: this.imageInterpolation,
+            imageInterpolation: this.imageInterpolation, loadingInk: this.loadingInk,
             doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
             pageGap: this.pageGap,
             snapshot: this.snapshot,
@@ -102,7 +103,7 @@ export struct ReaderContinuousSurface {
           })
         }, (revision: number): string => `${revision}`)
       } else if (this.snapshot.phase === 'idle' || this.snapshot.phase === 'catalog') {
-        ReaderLoadingStage({ label: $r('app.string.rkit_loading_resolving') })
+        ReaderLoadingStage({ label: $r('app.string.rkit_loading_resolving'), loadingInk: this.loadingInk })
       }
     }.width('100%').height('100%').clip(true)
   }
@@ -110,6 +111,7 @@ export struct ReaderContinuousSurface {
 
 @ComponentV2
 struct ReaderContinuousList {
+  @Param loadingInk: ResourceColor = Color.White
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param doubleTapEnabled: boolean = true
   @Param doubleTapIntervalMs: number = 300
@@ -559,7 +561,7 @@ struct ReaderContinuousList {
       LazyForEach(this.source, (key: string) => {
         ListItem() {
           ReaderContinuousCell({
-            imageInterpolation: this.imageInterpolation,
+            imageInterpolation: this.imageInterpolation, loadingInk: this.loadingInk,
             doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
             snapshot: this.cellSnapshots.forItem(this.snapshot, key, this.entryTransition?.pending() !== true),
             entryTransition: this.entryTransition,
@@ -651,6 +653,7 @@ struct ReaderContinuousList {
 
 @ComponentV2
 struct ReaderContinuousCell {
+  @Param loadingInk: ResourceColor = Color.White
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param doubleTapEnabled: boolean = true
   @Param doubleTapIntervalMs: number = 300
@@ -807,7 +810,7 @@ struct ReaderContinuousCell {
             .onDisAppear((): void => { this.onRetired(frame.slotId, frame.asset.assetRequestId) })
         }, (frame: ReaderPagedFrame): string =>
           readerElementKey(`${frame.slotId}`))
-        ReaderImagePlaceholder({ presentation: this.imagePresentation(),
+        ReaderImagePlaceholder({ loadingInk: this.loadingInk, presentation: this.imagePresentation(),
           frame: this.snapshot.frames[0] ?? null,
           entryTransition: this.entryTransition }).zIndex(2)
       }.width('100%').aspectRatio(this.imageAspectRatio)

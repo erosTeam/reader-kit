@@ -88,6 +88,7 @@ class ReaderPagerDataSource implements IDataSource {
 /** Native page container only. Session ownership and diagnostic chrome stay outside. */
 @ComponentV2
 export struct ReaderPagerSurface {
+  @Param loadingInk: ResourceColor = Color.White
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param doubleTapEnabled: boolean = true
   @Param doubleTapIntervalMs: number = 300
@@ -117,7 +118,7 @@ export struct ReaderPagerSurface {
     Stack() {
       if (this.snapshot.pagerKeys.length > 0) {
         ReaderNativePager({
-          imageInterpolation: this.imageInterpolation,
+          imageInterpolation: this.imageInterpolation, loadingInk: this.loadingInk,
           doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
           pageGap: this.pageGap,
           snapshot: this.snapshot, active: this.active,
@@ -142,6 +143,7 @@ export struct ReaderPagerSurface {
 
 @ComponentV2
 struct ReaderNativePager {
+  @Param loadingInk: ResourceColor = Color.White
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param doubleTapEnabled: boolean = true
   @Param doubleTapIntervalMs: number = 300
@@ -353,7 +355,7 @@ struct ReaderNativePager {
     Swiper(this.controller) {
       LazyForEach(this.pageSource, (item: ReaderPagerRenderItem) => {
         ReaderPagedViewport({
-          imageInterpolation: this.imageInterpolation,
+          imageInterpolation: this.imageInterpolation, loadingInk: this.loadingInk,
           doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
           pageGap: this.pageGap,
           viewportWidth: this.viewportWidth, viewportHeight: this.viewportHeight,
@@ -432,6 +434,7 @@ struct ReaderNativePager {
     // never invent viewport dimensions or cover already drawable page pixels.
     if (this.viewportWidth <= 1 || this.viewportHeight <= 1) {
       ReaderImagePlaceholder({
+        loadingInk: this.loadingInk,
         presentation: new ReaderImagePresentation(this.snapshot.frames[0] ?? null, '', this.entryTransition),
         frame: this.snapshot.frames[0] ?? null,
         entryTransition: this.entryTransition,
