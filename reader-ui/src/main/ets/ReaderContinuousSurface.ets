@@ -506,9 +506,11 @@ struct ReaderContinuousList {
   private measuredPosition(start: number, end: number): number {
     for (let index = end; index >= start; index--) {
       const rect = this.scroller.getItemRect(index)
-      const height = this.imageHeight(index)
-      const top = rect.y + (rect.height - height) / 2
-      const bottom = top + height
+      // This row's aspect-ratio Stack is the drawable body. Native layout
+      // rounds its height to pixels; recomputing width / ratio can put a fully
+      // visible last row fractionally beyond the viewport and strand progress.
+      const top = rect.y
+      const bottom = top + rect.height
       if (rect.height > 0 && top < this.viewHeight && bottom > 0 &&
         (bottom <= this.viewHeight || top < 0)) return index
     }

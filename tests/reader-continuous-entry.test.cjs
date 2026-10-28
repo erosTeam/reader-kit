@@ -646,6 +646,8 @@ test('webtoon observed position follows measured page ends, including a short la
   Object.assign(value, { viewHeight: 800, imageHeight: index => rects[index].height,
     scroller: { getItemRect: index => rects[index] } })
   assert.equal(value.measuredPosition(0, 1), 1, 'the last page actually fits, even while the preceding page peeks above it')
+  value.imageHeight = index => rects[index].height + 0.25
+  assert.equal(value.measuredPosition(0, 1), 1, 'native pixel rounding, not the ideal image ratio, owns the visible page end')
   rects[1].height = 1000
   assert.equal(value.measuredPosition(0, 1), 0, 'an incomplete next page cannot displace the current page')
   rects[0] = { y: -100, height: 1400 }
