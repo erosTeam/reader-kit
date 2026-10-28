@@ -843,7 +843,7 @@ test('continuous observations require decoded active first-visible original and 
   await tick(); s = session.snapshot()
   const current = s.frames[0], next = s.window.find(w => w.index === 1).frames[0]
   const observe = (f, index, y) => session.reportContinuousVisible(s.topologyRevision, s.navigationRevision,
-    `${index}:whole`, f.slotId, f.asset.assetRequestId, 0.5, y)
+    s.displayKeys[index], f.slotId, f.asset.assetRequestId, 0.5, y)
   assert.equal(observe(current, 0, 0.25), false)
   decode(session, current); decode(session, next)
   assert.equal(session.snapshot().observedAnchor, null)
@@ -873,7 +873,7 @@ test('fractional continuous movement keeps exact progress without rebuilding pre
   const frame = s.frames[0]
   decode(session, frame)
   const observe = y => session.reportContinuousVisible(s.topologyRevision, s.navigationRevision,
-    '0:whole', frame.slotId, frame.asset.assetRequestId, 0.5, y)
+    s.displayKeys[0], frame.slotId, frame.asset.assetRequestId, 0.5, y)
   assert.equal(observe(0), true)
   const baseline = full
   for (let step = 1; step <= 120; step += 1) assert.equal(observe(step / 121), true)
@@ -933,7 +933,7 @@ test('old continuous demand and geometry cannot undo a navigation or mode comman
   session.move('next'); await tick()
   assert.equal(session.setContinuousRange(0, 0, s.topologyRevision, s.navigationRevision), false)
   assert.equal(session.reportContinuousVisible(s.topologyRevision, s.navigationRevision,
-    '0:whole', f.slotId, f.asset.assetRequestId, 0.5, 0.4), false)
+    s.displayKeys[0], f.slotId, f.asset.assetRequestId, 0.5, 0.4), false)
   assert.equal(session.snapshot().anchor.sourceIndexHint, 1)
   const newer = session.snapshot()
   session.setPolicy(policy({ layout: 'single' }))
@@ -948,12 +948,12 @@ test('continuous normalized original anchor survives thumbnail and layout transi
   let s = session.snapshot();session.setContinuousRange(0, 0, s.topologyRevision, s.navigationRevision)
   decode(session, s.frames[0]);s = session.snapshot()
   assert.equal(session.reportContinuousVisible(s.topologyRevision, s.navigationRevision,
-    '0:whole', s.frames[0].slotId, s.frames[0].asset.assetRequestId, 0.5, 0.6), true)
+    s.displayKeys[0], s.frames[0].slotId, s.frames[0].asset.assetRequestId, 0.5, 0.6), true)
   session.setAssetKind('thumbnail');await tick()
   s = session.snapshot();session.setContinuousRange(0, 0, s.topologyRevision, s.navigationRevision)
   decode(session, s.frames[0]);s = session.snapshot()
   assert.equal(session.reportContinuousVisible(s.topologyRevision, s.navigationRevision,
-    '0:whole', s.frames[0].slotId, s.frames[0].asset.assetRequestId, 0.5, 0), false)
+    s.displayKeys[0], s.frames[0].slotId, s.frames[0].asset.assetRequestId, 0.5, 0), false)
   assert.equal(session.snapshot().observedAnchor.y, 0.6)
   session.setAssetKind('original'); await tick()
   assert.equal(session.snapshot().anchor.y, 0.6)
@@ -985,12 +985,12 @@ test('visible neighbor failure retries exactly that request without changing the
   await session.open(key); await tick()
   let s = session.snapshot(); session.setContinuousRange(0, 1, s.topologyRevision, s.navigationRevision)
   decode(session, s.frames[0]); s = session.snapshot()
-  session.reportContinuousVisible(s.topologyRevision, s.navigationRevision, '0:whole',
+  session.reportContinuousVisible(s.topologyRevision, s.navigationRevision, s.displayKeys[0],
     s.frames[0].slotId, s.frames[0].asset.assetRequestId, 0.5, 0.8)
   s = session.snapshot()
   const failed = s.window.find(w => w.index === 1).frames[0]
   assert.equal(failed.asset.phase, 'failed'); assert.equal(failed.asset.assetRequestId, 0)
-  assert.equal(await session.retryItem(s.topologyRevision, '1:whole', failed.slotId, failed.asset.requestId), true)
+  assert.equal(await session.retryItem(s.topologyRevision, s.displayKeys[1], failed.slotId, failed.asset.requestId), true)
   const recovered = session.snapshot()
   assert.equal(recovered.displayIndex, 0)
   assert.equal(recovered.observedAnchor.y, 0.8)
@@ -1008,27 +1008,27 @@ test('item retry rejects cached-only, wrong, duplicate, retired and inactive req
   await session.open(key); await tick()
   let s = session.snapshot(); session.setContinuousRange(0, 0, s.topologyRevision, s.navigationRevision)
   let failed = s.window.find(w => w.index === 1).frames[0]
-  assert.equal(await session.retryItem(s.topologyRevision, '1:whole', failed.slotId, failed.asset.requestId), false)
+  assert.equal(await session.retryItem(s.topologyRevision, s.displayKeys[1], failed.slotId, failed.asset.requestId), false)
   session.setContinuousRange(0, 1, s.topologyRevision, s.navigationRevision); await tick()
   s = session.snapshot(); failed = s.window.find(w => w.index === 1).frames[0]
-  for (const args of [[s.topologyRevision + 1, '1:whole', failed.slotId, failed.asset.requestId],
-    [s.topologyRevision, '0:whole', failed.slotId, failed.asset.requestId],
-    [s.topologyRevision, '1:whole', failed.slotId + 100, failed.asset.requestId],
-    [s.topologyRevision, '1:whole', failed.slotId, failed.asset.requestId + 100]]) {
+  for (const args of [[s.topologyRevision + 1, s.displayKeys[1], failed.slotId, failed.asset.requestId],
+    [s.topologyRevision, s.displayKeys[0], failed.slotId, failed.asset.requestId],
+    [s.topologyRevision, s.displayKeys[1], failed.slotId + 100, failed.asset.requestId],
+    [s.topologyRevision, s.displayKeys[1], failed.slotId, failed.asset.requestId + 100]]) {
     assert.equal(await session.retryItem(...args), false)
   }
   session.setViewportActive(false)
-  assert.equal(await session.retryItem(s.topologyRevision, '1:whole', failed.slotId, failed.asset.requestId), false)
+  assert.equal(await session.retryItem(s.topologyRevision, s.displayKeys[1], failed.slotId, failed.asset.requestId), false)
   session.setViewportActive(true)
-  const retry = session.retryItem(s.topologyRevision, '1:whole', failed.slotId, failed.asset.requestId)
-  assert.equal(await session.retryItem(s.topologyRevision, '1:whole', failed.slotId, failed.asset.requestId), false)
+  const retry = session.retryItem(s.topologyRevision, s.displayKeys[1], failed.slotId, failed.asset.requestId)
+  assert.equal(await session.retryItem(s.topologyRevision, s.displayKeys[1], failed.slotId, failed.asset.requestId), false)
   assert.equal(await retry, true)
   const current = session.snapshot().window.find(w => w.index === 1).frames[0]
   decode(session, current)
-  session.reportCachedRenderFailure(s.topologyRevision, '1:whole', current.slotId, current.asset.assetRequestId, 'whole')
-  assert.equal(await session.retryItem(s.topologyRevision, '1:whole', failed.slotId, failed.asset.requestId), false)
+  session.reportCachedRenderFailure(s.topologyRevision, s.displayKeys[1], current.slotId, current.asset.assetRequestId, 'whole')
+  assert.equal(await session.retryItem(s.topologyRevision, s.displayKeys[1], failed.slotId, failed.asset.requestId), false)
   session.move('next'); session.move('next'); session.move('next'); await tick()
-  assert.equal(await session.retryItem(s.topologyRevision, '1:whole', current.slotId, current.asset.requestId), false)
+  assert.equal(await session.retryItem(s.topologyRevision, s.displayKeys[1], current.slotId, current.asset.requestId), false)
   assert.equal(calls.load.filter(c => c[2]).length, 1)
   session.close()
 })
@@ -1097,7 +1097,7 @@ test('late metrics for a previous continuous row preserve the core current origi
   decode(session, previous)
   decode(session, s.frames[0], 800, 1200)
   s = session.snapshot()
-  session.reportContinuousVisible(s.topologyRevision, s.navigationRevision, '1:whole',
+  session.reportContinuousVisible(s.topologyRevision, s.navigationRevision, s.displayKeys[1],
     s.frames[0].slotId, s.frames[0].asset.assetRequestId, 0.5, 0.35)
   decode(session, previous, 1200, 700)
   const refined = session.snapshot()
@@ -1656,5 +1656,93 @@ test('automatic translation prepares only the immediate next page across chapter
   await session.open(new ReaderUnitKey('source', 'work', 'B')); await tick()
   assert.equal(calls.filter(value => value === 'B').length, 1)
   assert.equal(session.snapshot().frames[0].asset.variant, 'translated')
+  session.close()
+})
+
+
+// The user's 197 v3 counterexample invalidated the two retained-overlay tests:
+// swapping whole chapters without black frames is still not continuous reading.
+test('continuous adjacent chapters share one topology and advance only from real visible rows', async () => {
+  const { session, key, calls } = setup({ count: 1 })
+  session.setPolicy(policy({ layout: 'continuous' })); session.setNeighborPreload(true)
+  await session.open(key); await tick(); await tick()
+  let state = session.snapshot()
+  assert.equal(state.displayKeys.length, 2)
+  assert.equal(new Set(state.displayKeys).size, 2, 'chapter-local page zero must have distinct identities')
+  const topology = state.topologyRevision, navigation = state.navigationRevision
+  const first = state.frames[0]
+  const next = state.window.find(item => item.index === 1).frames[0]
+  decode(session, first); decode(session, next)
+  session.setContinuousRange(0, 1, topology, navigation, 0)
+  assert.equal(session.reportContinuousVisible(topology, navigation, state.displayKeys[0],
+    first.slotId, first.asset.assetRequestId, .5, .7), true)
+  assert.equal(session.snapshot().unit.key.unit, 'A')
+  session.setContinuousRange(1, 1, topology, navigation, 1)
+  assert.equal(session.snapshot().observedPosition(), null, 'demand is not observation')
+  assert.equal(session.reportContinuousVisible(topology, navigation, state.displayKeys[1],
+    next.slotId, next.asset.assetRequestId, .5, .1), true)
+  state = session.snapshot()
+  assert.equal(state.unit.key.unit, 'B')
+  assert.equal(state.anchor.unit.unit, 'B'); assert.equal(state.anchor.sourceIndexHint, 0)
+  assert.equal(state.continuousIndex, 1); assert.equal(state.displayIndex, 0)
+  assert.equal(state.topologyRevision, topology); assert.equal(state.navigationRevision, navigation)
+  assert.equal(state.observedPosition().anchor.unit.unit, 'B')
+  assert.deepEqual(state.observedPosition().displayedSourceIndexes, [0])
+  assert.equal(calls.load.filter(call => call[0] === 'A-0').length, 1)
+  session.setContinuousRange(0, 1, topology, navigation, 0)
+  assert.equal(session.reportContinuousVisible(topology, navigation, state.displayKeys[0],
+    first.slotId, first.asset.assetRequestId, .5, .6), true)
+  assert.equal(session.snapshot().unit.key.unit, 'A')
+  session.close(); session.close()
+  assert.deepEqual(calls.release.sort(), ['original:A-0', 'original:B-0'])
+})
+
+
+test('continuous file processing spans five single-page units while native leases stay near the viewport', async () => {
+  const { ReaderProcessingPolicy } = load('ReaderProcessingCoordinator')
+  const { ReaderVariantPreference } = load('ReaderSession')
+  const prepared = [], released = []
+  const catalog = {
+    async open(key) { return new ReaderUnit(key, key.unit, 1) },
+    async page(unit, index) {
+      const page = new ReaderPage(unit.key, unit.key.unit + '-page', index)
+      page.width = 800; page.height = 1200; return page
+    },
+    adjacent(unit, direction) {
+      const value = Number(unit.key.unit) + (direction === 'next' ? 1 : -1)
+      return value >= 0 && value < 20 ? new ReaderUnitKey('source', 'work', String(value)) : null
+    },
+  }
+  const assets = {
+    cancellationMode: 'consumer-only',
+    async load(page) { return new ReaderAsset('original:' + page.unit.unit, () => released.push(page.unit.unit)) },
+    async prepareVariant(page, variant, identity) {
+      prepared.push(page.unit.unit)
+      return { page, variant, identity,
+        async load() { return new ReaderAsset('enhanced:' + page.unit.unit, () => {}) } }
+    },
+  }
+  const session = new ReaderPagedSession(catalog, assets)
+  session.setViewportActive(true); session.setPolicy(policy({ layout: 'continuous' }))
+  session.setNeighborPreload(true); session.setPagedPreloadDepth(5); session.setPreloadDepth(5)
+  session.setProcessingPolicy(new ReaderProcessingPolicy('enhance', false,
+    page => new ReaderVariantPreference('enhanced', 'enhance:' + page.unit.unit)))
+  await session.open(new ReaderUnitKey('source', 'work', '0'))
+  for (let count = 0; count < 8; count++) await tick()
+  let state = session.snapshot()
+  assert.deepEqual([...new Set(prepared)].sort(), ['0','1','2','3','4','5'])
+  assert.ok(state.window.length <= 3, 'file/processing lookahead must not mount all native images')
+  assert.equal(state.observedPosition(), null)
+  const topology = state.topologyRevision, navigation = state.navigationRevision
+  session.setContinuousRange(3, 3, topology, navigation)
+  for (let count = 0; count < 8; count++) await tick()
+  state = session.snapshot()
+  assert.equal(state.unit.key.unit, '3')
+  // 197 native counterexample: deleting unmeasured preceding rows changes the visible offset.
+  assert.ok(state.displayKeys.includes(JSON.stringify(['source', 'work', '0', 0])),
+    'reading keeps discovered row metadata; the bounded native/processing owners still retire assets')
+  assert.ok(state.window.length <= 4)
+  assert.equal(state.topologyRevision, topology); assert.equal(state.navigationRevision, navigation)
+  assert.equal(state.observedPosition(), null, 'prepared or demanded future pages cannot write reading progress')
   session.close()
 })

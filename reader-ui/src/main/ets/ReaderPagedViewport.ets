@@ -1186,7 +1186,13 @@ export struct ReaderPagedImage {
       }
       this.decodedGeometryIdentity = geometryIdentity
       this.onPresented(this.slotId, requestId, true, width, height)
-      if (this.pendingDecodedIdentity === drawableIdentity) {
+      const page = this.frame.asset.page
+      const ratioApplied = !this.alignGeometryBeforeVisible || (page !== null &&
+        page.width > 0 && page.height > 0 && Math.abs(page.width / page.height - width / height) <= 0.000001)
+      // onPresented publishes dimensions into Core, but the current @Param and
+      // parent row still describe the preceding layout. Expose only the later
+      // matching layout receipt; paging never opts into this continuous-row rule.
+      if (this.pendingDecodedIdentity === drawableIdentity && ratioApplied) {
         this.pendingDecodedIdentity = ''
         this.onDecodedOriginal(drawableIdentity)
       }

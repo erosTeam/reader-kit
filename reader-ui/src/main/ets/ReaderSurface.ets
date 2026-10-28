@@ -760,6 +760,10 @@ export struct ReaderSurface {
 
   private requestBoundaryChapter(direction: 'previous' | 'next', topology: number, navigation: number): void {
     const current = this.session.snapshot()
+    if (current.policy.layout === 'continuous') {
+      this.session.requestContinuousBoundary(topology, navigation)
+      return
+    }
     const available = direction === 'previous' ? current.canPreviousUnit : current.canNextUnit
     if (!available || topology !== current.topologyRevision || navigation !== current.navigationRevision ||
       current.unit === null) return

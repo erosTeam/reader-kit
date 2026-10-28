@@ -18,7 +18,7 @@ export class ReaderContinuousEntryPosition {
 
   constructor(epoch: number, snapshot: ReaderPagedSnapshot, frame: ReaderPagedFrame,
     width: number, height: number, entry: ReaderEntryTransition, current: () => boolean) {
-    this.epoch = epoch; this.key = snapshot.displayKeys[snapshot.displayIndex]
+    this.epoch = epoch; this.key = snapshot.displayKeys[snapshot.continuousIndex]
     this.selection = snapshot.selectionId; this.topology = snapshot.topologyRevision
     this.navigation = snapshot.navigationRevision; this.slot = frame.slotId
     this.load = frame.asset.requestId; this.asset = frame.asset.assetRequestId
@@ -27,7 +27,7 @@ export class ReaderContinuousEntryPosition {
 
   matches(snapshot: ReaderPagedSnapshot): boolean {
     const frame = snapshot.forItem(this.key).frames[0]
-    return snapshot.displayKeys[snapshot.displayIndex] === this.key &&
+    return snapshot.displayKeys[snapshot.continuousIndex] === this.key &&
       snapshot.selectionId === this.selection && snapshot.topologyRevision === this.topology &&
       snapshot.navigationRevision === this.navigation && frame !== undefined && this.entry.matches(frame.part) &&
       frame.slotId === this.slot && frame.asset.requestId === this.load && frame.asset.assetRequestId === this.asset

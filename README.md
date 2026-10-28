@@ -77,6 +77,18 @@ The following are existing preservation requirements, not new feature work:
 - Preload demand rolls with navigation, range, policy and unit changes; an
   initial warm window is not continuous preload. Transport warming is not
   decode or visible presentation. Hosts retain their own bounded cache owners.
+- Continuous reading presents verified adjacent chapters in one stable List.
+  Rows retain their real unit/page identity; append/prepend uses incremental data
+  notifications and preserves the visible key/offset. Native leases stay bounded
+  to the visible range and immediate neighbors; file/processing lookahead keeps
+  its separate budget. A real drawable observation alone advances the current
+  chapter/progress. Do not reopen the chapter or remount the List on crossing.
+  Discovered row identities and geometry stay for that reading session: deleting
+  unmeasured rows before the viewport changes ArkUI's offset estimate. Retaining
+  this metadata does not retain distant native images or processing leases.
+  Webtoon position follows measured page ends (falling back to the tall page
+  crossing the viewport top); native decoded-pixel receipts still gate progress.
+  An explicit seek retains its selected visible page until user scrolling takes over.
 - Close/background/unit replacement retire stale demand and callbacks. Return
   restores the source window and measures the current target; entry-time
   geometry cannot stand in for the current target after layout changes.

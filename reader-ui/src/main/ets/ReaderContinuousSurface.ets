@@ -18,11 +18,33 @@ import { ReaderContinuousCellSnapshot, ReaderContinuousCellSnapshots } from './R
 
 class ReaderContinuousIndexSource implements IDataSource {
   private keys: string[]
+  private listeners: DataChangeListener[] = []
   constructor(keys: string[]) { this.keys = keys.slice() }
   totalCount(): number { return this.keys.length }
   getData(index: number): string { return this.keys[index] }
-  registerDataChangeListener(_listener: DataChangeListener): void {}
-  unregisterDataChangeListener(_listener: DataChangeListener): void {}
+  registerDataChangeListener(listener: DataChangeListener): void {
+    if (!this.listeners.includes(listener)) this.listeners.push(listener)
+  }
+  unregisterDataChangeListener(listener: DataChangeListener): void {
+    this.listeners = this.listeners.filter((value: DataChangeListener): boolean => value !== listener)
+  }
+  update(keys: string[]): void {
+    // Chapter extension changes only the ends. Never reload/remount the List;
+    // ArkUI preserves its visible key/offset with add/delete notifications.
+    if (keys.length === this.keys.length && keys.every((key: string, index: number): boolean =>
+      key === this.keys[index])) return
+    const wanted = new Set<string>(keys)
+    for (let index = this.keys.length - 1; index >= 0; index--) {
+      if (wanted.has(this.keys[index])) continue
+      this.keys.splice(index, 1)
+      this.listeners.forEach((listener: DataChangeListener): void => listener.onDataDelete(index))
+    }
+    for (let index = 0; index < keys.length; index++) {
+      if (this.keys[index] === keys[index]) continue
+      this.keys.splice(index, 0, keys[index])
+      this.listeners.forEach((listener: DataChangeListener): void => listener.onDataAdd(index))
+    }
+  }
 }
 
 class ReaderContinuousAfterLayout extends FrameCallback {
@@ -59,13 +81,16 @@ export struct ReaderContinuousSurface {
 
   build() {
     Stack() {
-      if (this.snapshot.displayCount > 0) {
+      if (this.snapshot.displayKeys.length > 0) {
         ForEach([this.snapshot.topologyRevision], (revision: number) => {
           ReaderContinuousList({
             imageInterpolation: this.imageInterpolation,
             doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
             pageGap: this.pageGap,
-            snapshot: this.snapshot, active: this.active, createdRevision: revision,
+            snapshot: this.snapshot,
+            active: this.active && this.snapshot.phase === 'ready' &&
+              revision === this.snapshot.topologyRevision,
+            createdRevision: revision,
             zoomResetCommand: this.zoomResetCommand,
             entryTransition: this.entryTransition,
             onInputLockChange: this.onInputLockChange,
@@ -135,7 +160,7 @@ struct ReaderContinuousList {
   private lockedIdentity: string = ''
   private zoomedKey: string = ''
   private zoomedIdentity: string = ''
-  private cropRegions: Map<number, string> = new Map()
+  private cropRegions: Map<string, string> = new Map()
   private boundarySwipe: ReaderBoundarySwipe = new ReaderBoundarySwipe()
   private boundaryTopology: number = -1
   private boundaryNavigation: number = -1
@@ -156,7 +181,7 @@ struct ReaderContinuousList {
       let atEnd = false
       try {
         atStart = this.first === 0 && this.scroller.currentOffset().yOffset <= 0.5
-        atEnd = this.last + 1 >= this.snapshot.displayCount && this.scroller.isAtEnd()
+        atEnd = this.last + 1 >= this.snapshot.displayKeys.length && this.scroller.isAtEnd()
       } catch (_) {
         this.boundarySwipe.cancel()
         return
@@ -182,7 +207,7 @@ struct ReaderContinuousList {
   aboutToAppear(): void {
     this.source = new ReaderContinuousIndexSource(this.snapshot.displayKeys)
     this.lastNavigation = this.snapshot.navigationRevision
-    this.first = this.snapshot.displayIndex
+    this.first = this.snapshot.continuousIndex
     this.last = this.first
     this.reportExternalLock()
   }
@@ -205,22 +230,25 @@ struct ReaderContinuousList {
 
   @Monitor('snapshot', 'active')
   onSnapshotChanged(): void {
+    const positionedKey = this.positionTarget >= 0 ? this.source.getData(this.positionTarget) : ''
+    this.source.update(this.snapshot.displayKeys)
+    if (positionedKey.length > 0) this.positionTarget = this.snapshot.displayKeys.indexOf(positionedKey)
     const entryFrame = this.snapshot.frames.find((frame: ReaderPagedFrame): boolean =>
       this.entryTransition?.matches(frame.part) === true)
     if (entryFrame?.asset.phase === 'failed') this.entryTransition?.cancel()
     if (this.entryPosition !== null && entryFrame !== undefined &&
-      this.entryPosition.height !== this.imageHeight(entryFrame.part.sourceIndex)) this.invalidatePosition()
+      this.entryPosition.height !== this.imageHeight(this.snapshot.continuousIndex)) this.invalidatePosition()
     if (this.positionTarget >= 0) {
       const targetFrame = this.snapshot.forItem(this.snapshot.displayKeys[this.positionTarget]).frames[0]
       if (targetFrame?.asset.phase === 'failed' || targetFrame?.asset.phase === 'suppressed') this.releasePosition()
     }
     let cropChanged = false
-    this.snapshot.pageMetadata.forEach((page) => {
-      const crop = this.snapshot.cropForPage(page.sourceIndex)
+    this.snapshot.displayKeys.forEach((key: string, index: number): void => {
+      const crop = this.snapshot.continuousCrop(index)
       const value = `${crop.left}:${crop.top}:${crop.right}:${crop.bottom}`
-      const previous = this.cropRegions.get(page.sourceIndex)
+      const previous = this.cropRegions.get(key)
       if (previous !== undefined && previous !== value) cropChanged = true
-      this.cropRegions.set(page.sourceIndex, value)
+      this.cropRegions.set(key, value)
     })
     if (cropChanged) this.invalidatePosition()
     // A host sheet/background suspends input, not the current explicit page.
@@ -258,18 +286,18 @@ struct ReaderContinuousList {
     const entry = this.entryTransition
     if (entry === null || !entry.pending() || this.disposed || !this.active || this.pendingPosition ||
       this.positionInFlight || this.moving || this.lockedKey.length > 0 || this.snapshot.phase !== 'ready') return
-    const frame = this.snapshot.forItem(this.snapshot.displayKeys[this.snapshot.displayIndex]).frames[0]
+    const frame = this.snapshot.forItem(this.snapshot.displayKeys[this.snapshot.continuousIndex]).frames[0]
     if (frame === undefined || !entry.matches(frame.part)) return
     if (frame.asset.phase === 'failed') { entry.cancel(); return }
     const width = this.viewWidth
-    const height = this.imageHeight(frame.part.sourceIndex)
+    const height = this.imageHeight(this.snapshot.continuousIndex)
     const previous = this.entryPosition
     if (previous !== null && previous.matches(this.snapshot) && previous.width === width && previous.height === height) return
     const epoch = this.positionEpoch
     const token: ReaderContinuousEntryPosition = new ReaderContinuousEntryPosition(epoch, this.snapshot, frame, width, height, entry, (): boolean =>
       this.entryPosition === token && !this.disposed && this.active && !this.pendingPosition &&
       !this.positionInFlight && !this.moving && this.lockedKey.length === 0 && this.positionEpoch === epoch && token.matches(this.snapshot) &&
-      this.viewWidth === width && this.imageHeight(frame.part.sourceIndex) === height)
+      this.viewWidth === width && this.imageHeight(this.snapshot.continuousIndex) === height)
     this.entryPosition = token
   }
 
@@ -294,11 +322,15 @@ struct ReaderContinuousList {
       if (!this.active || this.disposed || this.pendingPosition || this.positionInFlight ||
         this.lockedKey.length > 0 || navigation !== this.snapshot.navigationRevision) return
       if (action === 'previous' || action === 'left') {
+        // An explicit scrollBy also supersedes entry positioning; it need not
+        // produce the same onWillScroll callback as a finger-driven gesture.
+        this.releasePosition()
         const atStart = this.first === 0 && this.scroller.currentOffset().yOffset <= 0.5
         if (atStart) this.onBoundary('previous', this.createdRevision, navigation)
         else this.scroller.scrollBy(0, -height * 0.75)
       } else if (action === 'next' || action === 'right') {
-        const atEnd = this.last + 1 >= this.snapshot.displayCount && this.scroller.isAtEnd()
+        this.releasePosition()
+        const atEnd = this.last + 1 >= this.snapshot.displayKeys.length && this.scroller.isAtEnd()
         if (atEnd) this.onBoundary('next', this.createdRevision, navigation)
         else this.scroller.scrollBy(0, height * 0.75)
       }
@@ -306,18 +338,18 @@ struct ReaderContinuousList {
   }
 
   private imageAspectRatio(index: number): number {
-    const page = this.snapshot.pageMetadata.find((value) => value.sourceIndex === index)
+    const page = this.snapshot.continuousPage(index)
     const frame = this.snapshot.window.find((item) => item.index === index)?.frames[0]
     if (this.snapshot.kind === 'original' && frame !== undefined && frame.asset.page !== null &&
       frame.part.fragment === 'whole' &&
-      !frame.crop.applied() && !this.snapshot.cropForPage(index).applied() &&
+      !frame.crop.applied() && !this.snapshot.continuousCrop(index).applied() &&
       !readerPolicyRotatesPage(this.snapshot.policy, page ?? null)) {
       const ratio = readerPagedFrameAspectRatio(frame, this.snapshot.policy)
       // The continuous list needs space for each loading row; this estimate is
       // local to that placeholder and is never a source-image measurement.
       return ratio > 0 ? ratio : 0.75
     }
-    const crop = this.snapshot.cropForPage(index)
+    const crop = this.snapshot.continuousCrop(index)
     const usePreview = this.snapshot.kind === 'original' && page?.hasWholePagePreviewGeometry() === true &&
       ((page?.width ?? 0) <= 0 || (page?.height ?? 0) <= 0) &&
       crop.left === 0 && crop.top === 0 && crop.right === 0 && crop.bottom === 0
@@ -329,13 +361,13 @@ struct ReaderContinuousList {
       ? (1 - crop.top - crop.bottom) / (1 - crop.left - crop.right) : 1
     const ratio = width > 0 && height > 0 ? width / height / heightRatio : 0.75
     if (!readerPolicyRotatesPage(this.snapshot.policy, page ?? null)) return ratio
-    const originalRatio = page !== undefined && page.width > 0 && page.height > 0
+    const originalRatio = page !== null && page.width > 0 && page.height > 0
       ? page.width / page.height / ((1 - crop.top - crop.bottom) / (1 - crop.left - crop.right)) : 0
     return originalRatio > 0 ? 1 / originalRatio : 0.75
   }
 
   private rotates(index: number): boolean {
-    const page = this.snapshot.pageMetadata.find((value) => value.sourceIndex === index)
+    const page = this.snapshot.continuousPage(index)
     return readerPolicyRotatesPage(this.snapshot.policy, page ?? null)
   }
 
@@ -426,12 +458,12 @@ struct ReaderContinuousList {
       this.positionTimer = 0
       if (!this.active) return
       if (this.positionTarget < 0) {
-        this.positionTarget = this.snapshot.displayIndex
+        this.positionTarget = this.snapshot.continuousIndex
         this.positionX = this.snapshot.anchor?.x ?? 0.5
         this.positionY = this.snapshot.anchor?.y ?? 0
       }
       const index = this.positionTarget
-      const crop = this.snapshot.cropForPage(index)
+      const crop = this.snapshot.continuousCrop(index)
       const sourceX = this.positionX
       const sourceY = this.positionY
       const rotated = this.rotates(index)
@@ -467,6 +499,22 @@ struct ReaderContinuousList {
     }, 0)
   }
 
+  /** Match the established webtoon page-end rule from actual body rectangles.
+   * A fully visible short last page can own progress while an earlier page still
+   * peeks above it. No isAtEnd or total-scroll estimate grants an observation.
+   */
+  private measuredPosition(start: number, end: number): number {
+    for (let index = end; index >= start; index--) {
+      const rect = this.scroller.getItemRect(index)
+      const height = this.imageHeight(index)
+      const top = rect.y + (rect.height - height) / 2
+      const bottom = top + height
+      if (rect.height > 0 && top < this.viewHeight && bottom > 0 &&
+        (bottom <= this.viewHeight || top < 0)) return index
+    }
+    return start
+  }
+
   private scheduleMeasure(): void {
     if (this.measureTimer !== 0 || !this.active || this.pendingPosition || !this.fullyVisible || this.lockedKey.length > 0) return
     const navigation = this.snapshot.navigationRevision
@@ -478,10 +526,10 @@ struct ReaderContinuousList {
       if (hit >= 0) this.first = hit
       const endHit = this.scroller.getItemIndex(this.viewWidth / 2, Math.max(1, this.viewHeight - 1))
       if (endHit >= 0) this.last = endHit
-      let first = this.first
-      const last = Math.max(first, this.last)
+      const last = Math.max(this.first, this.last)
+      let first = this.measuredPosition(this.first, last)
       const target = this.positionTarget
-      if (target >= first && target <= last) {
+      if (target >= this.first && target <= last) {
         const targetRect = this.scroller.getItemRect(target)
         if (targetRect.height > 0 && targetRect.y < this.viewHeight && targetRect.y + targetRect.height > 0) first = target
       }
@@ -504,7 +552,7 @@ struct ReaderContinuousList {
   }
 
   build() {
-    List({ initialIndex: this.snapshot.displayIndex, scroller: this.scroller,
+    List({ initialIndex: this.snapshot.continuousIndex, scroller: this.scroller,
       space: normalizedReaderPageGap(this.pageGap) }) {
       LazyForEach(this.source, (key: string) => {
         ListItem() {
@@ -534,9 +582,14 @@ struct ReaderContinuousList {
             onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
               const current = this.snapshot.forItem(key).frames[0]
               if (current === undefined || current.slotId !== slot || current.asset.assetRequestId !== request) return
-              if (success) this.nativeReady.set(key, `${slot}:${request}`)
-              else this.nativeReady.delete(key)
+              if (!success) this.nativeReady.delete(key)
               this.onPresented(slot, request, success, width, height)
+              this.scheduleMeasure()
+            },
+            onDecodedOriginal: (slot: number, request: number): void => {
+              const current = this.snapshot.forItem(key).frames[0]
+              if (current === undefined || current.slotId !== slot || current.asset.assetRequestId !== request) return
+              this.nativeReady.set(key, `${slot}:${request}`)
               this.scheduleMeasure()
             },
             onRetired: (slot: number, request: number): void => {
@@ -556,6 +609,7 @@ struct ReaderContinuousList {
     }
     .width('100%').height('100%').cachedCount(this.snapshot.nativeCacheDepth)
     .scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
+    .maintainVisibleContentPosition(true)
     .enableScrollInteraction(this.active && this.snapshot.phase === 'ready' && !this.pendingPosition && this.lockedKey.length === 0)
     .id('rkit-continuous-list')
     .onTouch((event: TouchEvent): void => { this.handleBoundaryTouch(event) })
@@ -590,6 +644,7 @@ struct ReaderContinuousList {
     })
     .onScrollStop((): void => { this.moving = false; this.scheduleMeasure() })
   }
+
 }
 
 @ComponentV2
@@ -611,6 +666,9 @@ struct ReaderContinuousCell {
   @Event onZoomedChange: (identity: string, zoomed: boolean) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onFailed: (slot: number, request: number, fragment: ReaderFragment) => void = () => {}
+  // Core may receive dimensions before the row has applied them. Only this
+  // actual drawable receipt allows continuous visibility and old-chapter retirement.
+  @Event onDecodedOriginal: (slot: number, request: number) => void = () => {}
   @Event onRetired: (slot: number, request: number) => void = () => {}
   @Event onRetry: (slot: number, request: number) => void = () => {}
   @Event onNoticeAction: (slot: number, request: number, noticeId: string) => Promise<boolean> =
@@ -661,6 +719,8 @@ struct ReaderContinuousCell {
   private originalDecoded(identity: string): void {
     if (this.snapshot.frames[0]?.asset.kind === 'original' && identity === this.originalDrawableIdentity()) {
       this.decodedOriginalIdentity = identity
+      const frame = this.snapshot.frames[0]
+      this.onDecodedOriginal(frame.slotId, frame.asset.assetRequestId)
     }
   }
 

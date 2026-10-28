@@ -29,7 +29,8 @@ function fixture(width = 400, height = 2400) {
   const frame = new core.ReaderPagedFrame(7, new core.ReaderDisplayPart(unit, 'page', 1), asset)
   const state = new core.ReaderPagedSnapshot()
   Object.assign(state, { phase: 'ready', selectionId: 4, topologyRevision: 5, navigationRevision: 6,
-    displayIndex: 1, displayKeys: ['other', 'selected'], frames: [frame] })
+    displayIndex: 1, continuousIndex: 1, continuousPages: [null, frame.asset.page],
+    displayKeys: ['other', 'selected'], frames: [frame] })
   state.forItem = key => ({ frames: key === 'selected' ? [frame] : [] })
   const transition = new entry.ReaderEntryTransition(9, frame.part); transition.update(state)
   return { frame, state, transition }
@@ -44,18 +45,21 @@ const List = evaluate(`export class List { ${methods('ReaderContinuousSurface', 
 function listFixture(ListType = List) {
   const f = fixture(), list = new ListType(), frames = []
   Object.assign(list, { snapshot: f.state, entryTransition: f.transition, entryPosition: null,
+    // This harness extracts methods rather than constructing the ArkUI struct.
+    // The single-chapter source still needs its List data interface.
+    source: { getData: index => f.state.displayKeys[index], update() {} },
     active: true, disposed: false, pendingPosition: false, positionInFlight: false, moving: false,
     positionTarget: -1, positionX: 0.5, positionY: 0, rowGeometry: new Map(), geometryRevision: 0, positionEpoch: 1, viewWidth: 400, positionTimer: 0, measureTimer: 0,
     lockedKey: '', lockedIdentity: '', zoomedKey: '', zoomedIdentity: '', cropRegions: new Map(), lastNavigation: f.state.navigationRevision,
     imageHeight: () => 2400, rowHeight: () => 2400, scheduleMeasure() {},
     scroller: { scrollToIndex() {} }, getUIContext: () => ({ postFrameCallback: value => frames.push(value.action) }),
   })
-  f.state.cropForPage = () => ({ top: 0, bottom: 0 })
+  f.state.continuousCrop = () => ({ top: 0, bottom: 0 })
   return { ...f, list, frames }
 }
 test('completed positioning token binds current row, revisions, slot and both asset epochs', () => {
   for (const alter of [f => f.state.selectionId++, f => f.state.topologyRevision++, f => f.state.navigationRevision++,
-    f => f.state.displayIndex = 0, f => f.frame.slotId++, f => f.frame.asset.requestId++, f => f.frame.asset.assetRequestId++]) {
+    f => f.state.continuousIndex = 0, f => f.frame.slotId++, f => f.frame.asset.requestId++, f => f.frame.asset.assetRequestId++]) {
     const f = listFixture(); f.list.refreshEntryPosition(); const token = f.list.entryPosition
     assert.ok(token.isCurrent()); alter(f); assert.equal(token.isCurrent(), false)
   }
@@ -207,7 +211,7 @@ test('continuous geometry can publish decoded dimensions before exposing pixels'
     ReaderEntryAfterLayout: class { constructor(action) { this.action = action } },
   }).Native
   for (const [align, priorWidth, priorHeight, expected] of [
-    [true, 0, 0, ['presented', 'pixels']],
+    [true, 0, 0, ['presented']],
     [true, 600, 900, ['pixels', 'presented']],
     [false, 0, 0, ['pixels', 'presented']],
   ]) {
@@ -223,6 +227,15 @@ test('continuous geometry can publish decoded dimensions before exposing pixels'
     image.completed(400, 600)
     callbacks.shift()()
     assert.deepEqual(events, expected)
+    if (align && priorWidth === 0) {
+      // Real 197 recording: Core's dimensions were published in this callback,
+      // while the cell still used its placeholder layout. Wait for that actual
+      // metadata/layout update, rather than exposing pixels in the same callback.
+      f.frame.asset.page.width = 400; f.frame.asset.page.height = 600
+      image.originalGeometryIdentity = () => 'applied-layout'
+      image.schedulePresentation(); callbacks.shift()()
+      assert.deepEqual(events, ['presented', 'presented', 'pixels'])
+    }
   }
 })
 
@@ -230,7 +243,7 @@ test('continuous original uses attested whole-page preview geometry until native
   const f = listFixture(), page = f.frame.asset.page
   f.state.kind = 'original'; f.state.pageMetadata = [page]
   f.state.policy = new core.ReaderDisplayPolicy()
-  f.state.cropForPage = () => ({ left: 0, top: 0, right: 0, bottom: 0 })
+  f.state.continuousCrop = () => ({ left: 0, top: 0, right: 0, bottom: 0 })
   page.width = 0; page.height = 0
   page.previewWidth = 690; page.previewHeight = 934; page.previewCoversWholePage = true
   assert.equal(f.list.imageAspectRatio(page.sourceIndex), 690 / 934)
@@ -239,7 +252,7 @@ test('continuous original uses attested whole-page preview geometry until native
   page.width = 0; page.height = 0; page.previewCoversWholePage = false
   assert.equal(f.list.imageAspectRatio(page.sourceIndex), 0.75)
   page.previewCoversWholePage = true
-  f.state.cropForPage = () => ({ left: 0.1, top: 0, right: 0, bottom: 0 })
+  f.state.continuousCrop = () => ({ left: 0.1, top: 0, right: 0, bottom: 0 })
   assert.equal(f.list.imageAspectRatio(page.sourceIndex), 0.75)
 })
 
@@ -305,7 +318,7 @@ test('ordinary chapter entry keeps its requested row when preceding geometry arr
   assert.deepEqual(positions, [1])
   // A range observation may include the preceding row while the selected last
   // row is shorter than the viewport; that observation is not a new user seek.
-  f.state.displayIndex = 0
+  f.state.displayIndex = 0; f.state.continuousIndex = 0
   const prior = new core.ReaderPage(f.frame.part.unit, 'earlier', 0)
   prior.width = 400; prior.height = 1800
   f.state.pageMetadata = [prior]
@@ -482,19 +495,22 @@ for (const kind of ['width', 'container height', 'image height']) {
 // still owns page selection while a host sheet temporarily suspends input.
 test('opening and closing a host sheet preserves explicit continuous page selection', () => {
   const Measure = evaluate(`export class Measure { ${methods('ReaderContinuousSurface',
-    'ReaderContinuousList', ['scheduleMeasure'])} }`, {}, {
+    'ReaderContinuousList', ['measuredPosition', 'scheduleMeasure'])} }`, {}, {
     setTimeout: callback => { callback(); return 1 },
   }).Measure
   const f = listFixture(), observed = []
   f.list.entryTransition = null
   Object.assign(f.list, { fullyVisible: true, viewHeight: 800,
     createdRevision: f.state.topologyRevision, nativeReady: new Map(),
+    measuredPosition: Measure.prototype.measuredPosition,
     scheduleMeasure: Measure.prototype.scheduleMeasure,
     onRange: (_start, _end, _topology, _navigation, position) => observed.push(position),
   })
   f.list.scroller.getItemIndex = (_x, y) => y <= 1 ? 0 : 1
   f.list.scroller.getItemRect = index => index === 1
     ? { y: 200, height: 600 } : { y: -1600, height: 1800 }
+  f.list.imageHeight = index => f.list.scroller.getItemRect(index).height
+  f.list.rowHeight = f.list.imageHeight
   f.list.pendingPosition = true
   f.list.schedulePosition(); f.frames.shift()(); f.list.positionTimer = 0
   assert.equal(observed.at(-1), 1)
@@ -502,7 +518,11 @@ test('opening and closing a host sheet preserves explicit continuous page select
   f.list.measureTimer = 0
   f.list.active = true; f.list.onSnapshotChanged()
   assert.equal(observed.at(-1), 1, 'sheet dismissal must not replace the explicit last page with its visible predecessor')
-  // Actual scrolling must still take over from the retained command.
+  // Actual scrolling must still take over from the retained command. Move
+  // the last page below the viewport; merely dropping the command while that
+  // whole page remains visible is not evidence of a different reading position.
+  f.list.scroller.getItemRect = index => index === 1
+    ? { y: 300, height: 600 } : { y: -1500, height: 1800 }
   f.list.releasePosition(); f.list.measureTimer = 0; f.list.scheduleMeasure()
   assert.equal(observed.at(-1), 0)
 })
@@ -600,4 +620,34 @@ test('a pending entry retains the uncached frame path even when the original is 
   const before = bound.project('selected')
   bound.snapshot = copyContinuousCellState(bound.snapshot)
   assert.notEqual(bound.project('selected'), before)
+})
+
+
+test('continuous entry token uses the global row while preserving its real source-page identity', () => {
+  const f = fixture()
+  f.state.continuousIndex = 2
+  f.state.displayKeys = ['preceding-chapter', 'other', 'selected']
+  const token = new Position(1, f.state, f.frame, 400, 2400, f.transition, () => true)
+  assert.equal(token.key, 'selected')
+  assert.equal(token.matches(f.state), true)
+  // Insertion above this row changes its List index without changing the image.
+  f.state.displayKeys.unshift('earlier-chapter'); f.state.continuousIndex++
+  assert.equal(token.matches(f.state), true)
+  f.state.continuousIndex--
+  assert.equal(token.matches(f.state), false)
+})
+
+
+test('webtoon observed position follows measured page ends, including a short last chapter', () => {
+  const Visible = evaluate(`export class Visible { ${methods('ReaderContinuousSurface',
+    'ReaderContinuousList', ['measuredPosition'])} }`).Visible
+  const value = new Visible()
+  const rects = [{ y: -400, height: 600 }, { y: 200, height: 600 }]
+  Object.assign(value, { viewHeight: 800, imageHeight: index => rects[index].height,
+    scroller: { getItemRect: index => rects[index] } })
+  assert.equal(value.measuredPosition(0, 1), 1, 'the last page actually fits, even while the preceding page peeks above it')
+  rects[1].height = 1000
+  assert.equal(value.measuredPosition(0, 1), 0, 'an incomplete next page cannot displace the current page')
+  rects[0] = { y: -100, height: 1400 }
+  assert.equal(value.measuredPosition(0, 0), 0, 'a tall current page remains selected while reading within it')
 })
