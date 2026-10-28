@@ -71,13 +71,17 @@ class ReaderPagerDataSource implements IDataSource {
     const start = oldKeys.length === 0 ? -1 : this.items.findIndex((item: ReaderPagerRenderItem): boolean => item.nativeKey === oldKeys[0])
     const insertion = start >= 0 && this.items.length >= oldKeys.length && oldKeys.every(
       (key: string, index: number): boolean => this.items[start + index]?.nativeKey === key)
+    // A whole chapter is one dataset insertion, not many independent adds.
+    // Swiper's visible-position owner must receive the complete count at once.
+    // ArkUI forbids mixing onDatasetChange with the legacy callbacks, including
+    // reload, so this source publishes all structural changes through one API.
+    const operations: DataOperation[] = []
     if (insertion) {
-      // Native Swiper keeps the visible page when real neighboring chapters arrive.
-      for (let index = 0; index < start; index++) this.listeners.forEach(
-        (listener: DataChangeListener): void => listener.onDataAdd(index))
-      for (let index = start + oldKeys.length; index < this.items.length; index++) this.listeners.forEach(
-        (listener: DataChangeListener): void => listener.onDataAdd(index))
-    } else this.listeners.forEach((listener: DataChangeListener): void => listener.onDataReloaded())
+      if (start > 0) operations.push({ type: DataOperationType.ADD, index: 0, count: start })
+      const tail = this.items.length - start - oldKeys.length
+      if (tail > 0) operations.push({ type: DataOperationType.ADD, index: start + oldKeys.length, count: tail })
+    } else operations.push({ type: DataOperationType.RELOAD })
+    this.listeners.forEach((listener: DataChangeListener): void => listener.onDatasetChange(operations))
   }
 }
 

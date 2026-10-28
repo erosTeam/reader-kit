@@ -88,7 +88,8 @@ The following are existing preservation requirements, not new feature work:
   Swiper. Its render index/keys are separate from the selected chapter's local
   display index/count; every frame keeps its real unit/page identity. A boundary
   swipe or tap promotes that prepared chapter without reopening/releasing its
-  decoded slots. Native insertion preserves visible keys; processing/transport
+  decoded slots. Native chapter insertion publishes its full count in one
+  dataset operation and preserves visible keys; processing/transport
   still follow their own bounded demand and a cached decode cannot write progress.
   Spread pairing and split-page decisions remain chapter-local. Hosts without
   verified adjacent-unit preparation retain their original optional capability.

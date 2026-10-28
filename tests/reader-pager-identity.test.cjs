@@ -40,10 +40,10 @@ test('native datasource publishes a matching map before reload and retains obser
  const names=['ReaderPagerRenderItem','ReaderPagerDataSource']
  const classes=names.map(name=>tree.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.getText(tree)===name).getText(tree)).join('\n')
  const out={}
- vm.runInNewContext(ts.transpileModule(classes+'\nexports.Source=ReaderPagerDataSource', {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020,experimentalDecorators:true}}).outputText,{exports:out,ObservedV2:c=>c,Trace:()=>undefined})
+ vm.runInNewContext(ts.transpileModule(classes+'\nexports.Source=ReaderPagerDataSource', {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020,experimentalDecorators:true}}).outputText,{exports:out,ObservedV2:c=>c,Trace:()=>undefined,DataOperationType:{ADD:'add',RELOAD:'reload'}})
  const ids=new exports_.ReaderPagerIdentityMap(), ds=new out.Source()
  let reloads=0, expectedIndex=244, expectedKey='244:whole'
- const listener={onDataReloaded(){reloads++;assert.equal(ds.getData(expectedIndex).key,expectedKey);assert.equal(ds.getData(expectedIndex).snapshot.displayIndex,expectedIndex)}}
+ const listener={onDatasetChange(operations){assert.equal(operations.length,1);assert.equal(operations[0].type,'reload');reloads++;assert.equal(ds.getData(expectedIndex).key,expectedKey);assert.equal(ds.getData(expectedIndex).snapshot.displayIndex,expectedIndex)}}
  ds.registerDataChangeListener(listener)
  const first={displayIndex:244}
  ds.update(ids.update(singles(300),244,1,'a'),first)
@@ -62,6 +62,14 @@ test('native datasource publishes a matching map before reload and retains obser
  ds.unregisterDataChangeListener(listener)
  ds.update(ids.update(singles(300),246,3,'a'),{displayIndex:246})
  assert.equal(reloads,2)
+ const beforeInsert=ds.getData(246), batches=[]
+ ds.registerDataChangeListener({onDatasetChange(operations){batches.push(JSON.parse(JSON.stringify(operations)))}})
+ const keys=[...Array.from({length:12},(_,i)=>`previous-${i}`),...singles(300),'next-0','next-1']
+ ds.update(ids.update(keys,258,3,'a'),{displayIndex:246})
+ assert.equal(ds.getData(258),beforeInsert,'the selected viewport retains its observable identity')
+ assert.deepEqual(batches,[[{type:'add',index:0,count:12},{type:'add',index:312,count:2}]])
+ ds.update(ids.update(keys,258,3,'a'),{displayIndex:246,frames:['updated']})
+ assert.equal(batches.length,1,'image updates do not publish another structural event')
 })
 
 
