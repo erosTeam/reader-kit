@@ -1,5 +1,5 @@
 import { ColorMetrics } from '@kit.ArkUI'
-import { readerEnhancementContentColor } from './ReaderEnhancementContrast'
+import { READER_ENHANCEMENT_ACTIVE_ALPHA, readerEnhancementContentColor } from './ReaderEnhancementContrast'
 
 /** Hosts own processors; reader-kit shows only current presentation state. */
 @ComponentV2
@@ -19,9 +19,9 @@ export struct ReaderEnhancementStatus {
 
   private activeFill(): string {
     const color = ColorMetrics.resourceColor(this.accent)
-    // Opaque fill keeps ink contrast independent of the underlying comic and
-    // of a host supplying a translucent accent. Idle keeps NextE's shallow base.
-    return ColorMetrics.rgba(color.red, color.green, color.blue).color
+    // Keep the adopted theme fill, but let the comic show through. Ink selection
+    // accounts for both darkest and lightest content underneath this 80% fill.
+    return ColorMetrics.rgba(color.red, color.green, color.blue, READER_ENHANCEMENT_ACTIVE_ALPHA).color
   }
 
   private activeInk(): string {

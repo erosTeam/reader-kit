@@ -40,17 +40,19 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname,
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
 }).outputText, contrastContext)
 
-test('active enhancement ink stays distinct for dark green and light themes', () => {
-  const ink = contrastContext.exports.readerEnhancementContentColor
-  for (const [red, green, blue, expected] of [
-    [37, 110, 93, '#FFFFFF'], // Koma's dark green
-    [0, 0, 0, '#FFFFFF'],
-    [32, 48, 64, '#FFFFFF'],
-    [117, 117, 117, '#FFFFFF'],
-    [118, 118, 118, '#000000'],
-    [255, 255, 255, '#000000'],
-    [255, 255, 0, '#000000'],
-  ]) assert.equal(ink(red, green, blue), expected)
+test('translucent enhancement fill keeps icon contrast over light and dark comics', () => {
+  const { readerEnhancementContentColor: ink, READER_ENHANCEMENT_ACTIVE_ALPHA: alpha } = contrastContext.exports
+  assert.equal(alpha, 0.8) // User requested some transparency while keeping the adopted theme fill.
+  const linear = channel => { const v = channel / 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4 }
+  for (const rgb of [[37, 110, 93], [166, 106, 31], [0, 0, 0], [117, 117, 117], [118, 118, 118], [255, 255, 255], [255, 255, 0]]) {
+    const color = ink(...rgb)
+    for (const page of [0, 255]) {
+      const channels = rgb.map(channel => linear(channel * alpha + page * (1 - alpha)))
+      const l = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+      const ratio = color === '#000000' ? (l + 0.05) / 0.05 : 1.05 / (l + 0.05)
+      assert.ok(ratio >= 3, `Icon contrast ${ratio} for ${rgb} over ${page}`)
+    }
+  }
 })
 
 function surface() {
