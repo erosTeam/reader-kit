@@ -20,7 +20,7 @@ export struct ReaderEnhancementStatus {
   private activeFill(): string {
     const color = ColorMetrics.resourceColor(this.accent)
     // Keep the adopted theme fill, but let the comic show through. Ink selection
-    // accounts for both darkest and lightest content underneath this 80% fill.
+    // accounts for both darkest and lightest content underneath the user-selected 40% fill.
     return ColorMetrics.rgba(color.red, color.green, color.blue, READER_ENHANCEMENT_ACTIVE_ALPHA).color
   }
 

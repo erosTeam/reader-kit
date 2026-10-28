@@ -40,18 +40,25 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname,
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
 }).outputText, contrastContext)
 
-test('translucent enhancement fill keeps icon contrast over light and dark comics', () => {
+test('40-percent enhancement fill selects the stronger fixed ink over light and dark comics', () => {
   const { readerEnhancementContentColor: ink, READER_ENHANCEMENT_ACTIVE_ALPHA: alpha } = contrastContext.exports
-  assert.equal(alpha, 0.8) // User requested some transparency while keeping the adopted theme fill.
+  assert.equal(alpha, 0.4) // User explicitly selected 40% opacity / 60% transparency.
   const linear = channel => { const v = channel / 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4 }
   for (const rgb of [[37, 110, 93], [166, 106, 31], [0, 0, 0], [117, 117, 117], [118, 118, 118], [255, 255, 255], [255, 255, 0]]) {
     const color = ink(...rgb)
+    const ratios = []
+    const alternateRatios = []
     for (const page of [0, 255]) {
       const channels = rgb.map(channel => linear(channel * alpha + page * (1 - alpha)))
       const l = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
       const ratio = color === '#000000' ? (l + 0.05) / 0.05 : 1.05 / (l + 0.05)
-      assert.ok(ratio >= 3, `Icon contrast ${ratio} for ${rgb} over ${page}`)
+      ratios.push(ratio)
+      alternateRatios.push(color === '#000000' ? 1.05 / (l + 0.05) : (l + 0.05) / 0.05)
     }
+    // At the explicitly requested 40% opacity neither fixed ink can guarantee 3:1
+    // over every comic color. Preserve the strongest available choice, and review
+    // visible legibility on the ordinary device route rather than asserting 80% math.
+    assert.ok(Math.min(...ratios) >= Math.min(...alternateRatios), `Weaker ink for ${rgb}`)
   }
 })
 

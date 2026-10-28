@@ -67,7 +67,7 @@ The following are existing preservation requirements, not new feature work:
   appearance parameters cannot change reading policy or action ownership.
 - Enhancement status preserves its host-owned processing/applied/temporary-off
   states and toggle. Idle uses the shallow neutral base; processing/applied use
-  an 80%-opaque theme fill with black/white ink selected for contrast. A dark accent
+  a 40%-opaque theme fill with black/white ink selected for contrast. A dark accent
   must not be painted as status ink on a dark translucent background; readability
   must hold across themes and underlying comic colors without changing processing.
 - Keep one canonical value for a setting. The row label, menu check, bottom

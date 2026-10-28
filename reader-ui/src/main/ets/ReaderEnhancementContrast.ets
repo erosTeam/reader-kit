@@ -1,4 +1,4 @@
-export const READER_ENHANCEMENT_ACTIVE_ALPHA: number = 0.8
+export const READER_ENHANCEMENT_ACTIVE_ALPHA: number = 0.4
 
 function linearChannel(channel: number): number {
   const value = channel / 255
