@@ -1,4 +1,7 @@
-/** Passive processed-image status. Hosts own processors; reader-kit shows only current presentation state. */
+import { ColorMetrics } from '@kit.ArkUI'
+import { readerEnhancementContentColor } from './ReaderEnhancementContrast'
+
+/** Hosts own processors; reader-kit shows only current presentation state. */
 @ComponentV2
 export struct ReaderEnhancementStatus {
   @Param processing: boolean = false
@@ -10,17 +13,34 @@ export struct ReaderEnhancementStatus {
   @Param accent: ResourceColor = '#D93646'
   @Event onToggle: () => void = () => {}
 
+  private active(): boolean {
+    return this.enhancementEnabled && (this.processing || this.applied)
+  }
+
+  private activeFill(): string {
+    const color = ColorMetrics.resourceColor(this.accent)
+    // Opaque fill keeps ink contrast independent of the underlying comic and
+    // of a host supplying a translucent accent. Idle keeps NextE's shallow base.
+    return ColorMetrics.rgba(color.red, color.green, color.blue).color
+  }
+
+  private activeInk(): string {
+    const color = ColorMetrics.resourceColor(this.accent)
+    return readerEnhancementContentColor(color.red, color.green, color.blue)
+  }
+
   build() {
     Stack({ alignContent: Alignment.Center }) {
       if (this.enhancementEnabled && this.processing) {
-        LoadingProgress().width(14).height(14).color(Color.White).opacity(0.78)
+        LoadingProgress().width(14).height(14).color(this.activeInk())
       } else {
         SymbolGlyph($r('sys.symbol.AI_hd_rectangle')).fontSize(14)
-          .fontColor([this.enhancementEnabled && this.applied ? this.accent : Color.White])
-          .opacity(this.enhancementEnabled ? 0.78 : 0.39)
+          .fontColor([this.active() ? this.activeInk() : Color.White])
+          .opacity(this.active() ? 1 : this.enhancementEnabled ? 0.78 : 0.39)
       }
     }
-      .width(22).height(22).borderRadius(11).backgroundColor('#66000000')
+      .width(22).height(22).borderRadius(11)
+      .backgroundColor(this.active() ? this.activeFill() : '#26000000')
       .hitTestBehavior(this.toggleAvailable ? HitTestMode.Block : HitTestMode.None)
       .enabled(this.toggleAvailable)
       .onClick((): void => { if (this.toggleAvailable) this.onToggle() })

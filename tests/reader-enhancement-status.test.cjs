@@ -34,6 +34,25 @@ const Surface = methods([
   'enhancementApplied',
 ])
 
+const contrastContext = { exports: {} }
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname,
+  '../reader-ui/src/main/ets/ReaderEnhancementContrast.ets'), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+}).outputText, contrastContext)
+
+test('active enhancement ink stays distinct for dark green and light themes', () => {
+  const ink = contrastContext.exports.readerEnhancementContentColor
+  for (const [red, green, blue, expected] of [
+    [37, 110, 93, '#FFFFFF'], // Koma's dark green
+    [0, 0, 0, '#FFFFFF'],
+    [32, 48, 64, '#FFFFFF'],
+    [117, 117, 117, '#FFFFFF'],
+    [118, 118, 118, '#000000'],
+    [255, 255, 255, '#000000'],
+    [255, 255, 0, '#000000'],
+  ]) assert.equal(ink(red, green, blue), expected)
+})
+
 function surface() {
   const value = new Surface()
   value.variantPolicy = { defaultPreference: () => ({ variant: 'enhanced', identity: 'model:v1' }) }
