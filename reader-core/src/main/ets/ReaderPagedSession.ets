@@ -120,6 +120,10 @@ export class ReaderPagedSnapshot {
   /** Geometry metadata may outlive an evicted asset; it is never an image lease. */
   pageMetadata: ReaderPage[] = []
   cropMetadata: ReaderPageCropMetadata[] = []
+  /** Native pager projection; displayIndex/count remain chapter-local. */
+  pagerIndex: number = 0
+  pagerKeys: string[] = []
+  pagerWindow: ReaderPagedItemSnapshot[] = []
   /** A List position is independent from the selected chapter's source-page index. */
   continuousIndex: number = 0
   continuousPages: Array<ReaderPage | null> = []
@@ -187,7 +191,8 @@ export class ReaderPagedSnapshot {
     value.preparingVariants = this.preparingVariants.slice()
     value.processingStates = this.processingStates.slice()
     value.cropEnabled = this.cropEnabled
-    value.displayIndex = this.displayKeys.indexOf(key)
+    value.displayIndex = this.policy.layout === 'continuous' ? this.displayKeys.indexOf(key) :
+      this.pagerKeys.indexOf(key) >= 0 ? this.pagerKeys.indexOf(key) : this.displayKeys.indexOf(key)
     value.displayCount = this.displayCount
     value.selectionId = this.selectionId
     value.anchor = this.anchor?.copy() ?? null
@@ -195,7 +200,9 @@ export class ReaderPagedSnapshot {
     value.navigationRevision = this.navigationRevision
     value.visibleDisplayStart = this.visibleDisplayStart
     value.visibleDisplayEnd = this.visibleDisplayEnd
-    value.frames = (this.window.find((item: ReaderPagedItemSnapshot) => item.key === key)?.frames ?? [])
+    value.frames = ((this.policy.layout === 'continuous' ? this.window : this.pagerWindow)
+      .find((item: ReaderPagedItemSnapshot) => item.key === key)?.frames ??
+      this.window.find((item: ReaderPagedItemSnapshot) => item.key === key)?.frames ?? [])
       .map((frame: ReaderPagedFrame) => {
         const copy = new ReaderPagedFrame(frame.slotId, frame.part, frame.asset, frame.crop)
         copy.cropPending = frame.cropPending
@@ -227,25 +234,39 @@ class ReaderPageSlot {
   }
 }
 
-class ReaderContinuousUnit {
+class ReaderWindowUnit {
   unit: ReaderUnit
   pages: Map<number, ReaderPage> = new Map()
   crops: Map<number, ReaderImageCropBounds> = new Map()
   plans: Map<number, ReaderResolvedAssetPlan> = new Map()
   processing: ReaderProcessingCoordinator
+  map: ReaderDisplayMap | null = null
   constructor(unit: ReaderUnit, processing: ReaderProcessingCoordinator) {
     this.unit = unit.copy(); this.processing = processing
   }
 }
 
 class ReaderContinuousRow {
-  context: ReaderContinuousUnit
+  context: ReaderWindowUnit
   index: number
   key: string
-  constructor(context: ReaderContinuousUnit, index: number) {
+  constructor(context: ReaderWindowUnit, index: number) {
     this.context = context; this.index = index
     const key = context.unit.key
     this.key = JSON.stringify([key.scope, key.work, key.unit, index])
+  }
+}
+
+/** A native item references a real chapter-local display map. No spread spans chapters. */
+class ReaderPagerRow {
+  context: ReaderWindowUnit
+  index: number
+  key: string
+  constructor(context: ReaderWindowUnit, index: number) {
+    this.context = context; this.index = index
+    const unit = context.unit.key
+    this.key = (context.map?.item(index)?.parts ?? []).map((part: ReaderDisplayPart): string =>
+      encodeURIComponent(JSON.stringify([unit.scope, unit.work, unit.unit, part.sourceIndex, part.fragment]))).join('+')
   }
 }
 
@@ -274,9 +295,10 @@ export class ReaderPagedSession {
   private pages: Map<number, ReaderPage> = new Map()
   private cropPages: Map<number, ReaderImageCropBounds> = new Map()
   private slots: ReaderPageSlot[] = []
-  private continuousUnits: ReaderContinuousUnit[] = []
+  private windowUnits: ReaderWindowUnit[] = []
   private continuousRows: ReaderContinuousRow[] = []
-  private continuousProcessingUnits: ReaderContinuousUnit[] = []
+  private pagerRows: ReaderPagerRow[] = []
+  private continuousProcessingUnits: ReaderWindowUnit[] = []
   private continuousCatalogTasks: Set<string> = new Set()
   private continuousCatalogCancellation: ReaderCancellation = new ReaderCancellation()
   private reconcileDepth: number = 0
@@ -355,7 +377,7 @@ export class ReaderPagedSession {
   refreshCrop(): void {
     if (this.disposed) return
     this.cropPages.clear()
-    this.continuousUnits.forEach((context: ReaderContinuousUnit): void => context.crops.clear())
+    this.windowUnits.forEach((context: ReaderWindowUnit): void => context.crops.clear())
     this.slots.forEach((slot: ReaderPageSlot): void => {
       slot.cropRevision += 1
       slot.cropRequestId = 0
@@ -383,7 +405,7 @@ export class ReaderPagedSession {
         slot.session.snapshot().assetRequestId !== requestId) return
       slot.crop = crop?.copy() ?? null
       slot.cropSettled = true
-      const crops = this.continuousUnits.find((context: ReaderContinuousUnit): boolean =>
+      const crops = this.windowUnits.find((context: ReaderWindowUnit): boolean =>
         slot.unit?.key.equals(context.unit.key) === true)?.crops ?? this.cropPages
       crops.set(slot.index, crop?.copy() ?? new ReaderImageCropBounds())
       if (this.cropEnabled) this.emit()
@@ -656,8 +678,21 @@ export class ReaderPagedSession {
       this.continuousRowCrop(row))
     value.frames = this.framesAt(this.state.policy.layout === 'continuous'
       ? value.continuousIndex : this.state.displayIndex)
-    value.window = this.resourceWindowIndexes.map((index: number) =>
-      new ReaderPagedItemSnapshot(this.displayKeys[index], index, this.framesAt(index)))
+    if (this.state.policy.layout === 'continuous') {
+      value.window = this.resourceWindowIndexes.map((index: number) =>
+        new ReaderPagedItemSnapshot(this.displayKeys[index], index, this.framesAt(index)))
+    } else {
+      value.pagerIndex = this.pagerSelectedIndex()
+      value.pagerKeys = this.pagerRows.map((row: ReaderPagerRow): string => row.key)
+      value.pagerWindow = this.resourceWindowIndexes.map((index: number): ReaderPagedItemSnapshot =>
+        new ReaderPagedItemSnapshot(this.pagerRows[index].key, index, this.framesForPagerRow(index)))
+      value.window = this.resourceWindowIndexes.filter((index: number): boolean =>
+        this.pagerRows[index]?.context.unit.key.equals(this.state.unit!.key) === true)
+        .map((index: number): ReaderPagedItemSnapshot => {
+          const local = this.pagerRows[index].index
+          return new ReaderPagedItemSnapshot(this.displayKeys[local], local, this.framesAt(local))
+        })
+    }
     return value
   }
 
@@ -679,9 +714,11 @@ export class ReaderPagedSession {
     }
     const parts = this.map?.item(index)?.visualParts(this.state.policy.direction) ?? []
     return parts.filter((part: ReaderDisplayPart) =>
-      this.slots.some((slot: ReaderPageSlot) => slot.index === part.sourceIndex))
+      this.slots.some((slot: ReaderPageSlot) => slot.index === part.sourceIndex &&
+        slot.unit?.key.equals(part.unit) === true))
       .map((part: ReaderDisplayPart): ReaderPagedFrame => {
-      const slot = this.slots.find((candidate: ReaderPageSlot) => candidate.index === part.sourceIndex)
+      const slot = this.slots.find((candidate: ReaderPageSlot) => candidate.index === part.sourceIndex &&
+        candidate.unit?.key.equals(part.unit) === true)
       const asset = slot?.session.snapshot() ?? new ReaderSnapshot()
       const page = this.pages.get(part.sourceIndex)
       if (page !== undefined && asset.page !== null) asset.page = page.copy()
@@ -714,7 +751,7 @@ export class ReaderPagedSession {
   private nativeWindowDistance(index: number): number {
     if (this.state.policy.layout !== 'continuous' || this.continuousStart < 0) {
       return Math.abs(index - (this.state.policy.layout === 'continuous'
-        ? this.continuousSelectedIndex() : this.state.displayIndex))
+        ? this.continuousSelectedIndex() : this.pagerSelectedIndex()))
     }
     return index < this.continuousStart ? this.continuousStart - index :
       Math.max(0, index - this.continuousEnd)
@@ -734,22 +771,23 @@ export class ReaderPagedSession {
       }
       return indexes
     }
-    const indexes: number[] = [this.state.displayIndex]
+    const selected = this.pagerSelectedIndex()
+    const indexes: number[] = [selected]
     if (this.prefetchNeighbors) {
       const depth = this.nativeNeighborDepth()
       for (let offset = 1; offset <= depth; offset++) {
-        if (this.state.displayIndex - offset >= 0) indexes.push(this.state.displayIndex - offset)
-        if (this.state.displayIndex + offset < this.map.count()) indexes.push(this.state.displayIndex + offset)
+        if (selected - offset >= 0) indexes.push(selected - offset)
+        if (selected + offset < this.pagerRows.length) indexes.push(selected + offset)
       }
     }
     if (this.outgoingPositionKey !== null) {
-      const outgoing = this.displayKeys.indexOf(this.outgoingPositionKey)
+      const outgoing = this.pagerRows.findIndex((row: ReaderPagerRow): boolean => row.key === this.outgoingPositionKey)
       if (outgoing >= 0 && !indexes.includes(outgoing)) indexes.push(outgoing)
     }
     if (this.pagedTargetIndex >= 0 && this.pagedTargetTopology === this.topologyRevision &&
       this.pagedTargetNavigation === this.navigationRevision) {
       const add = (index: number): void => {
-        if (index >= 0 && index < this.map!.count() && !indexes.includes(index)) indexes.push(index)
+        if (index >= 0 && index < this.pagerRows.length && !indexes.includes(index)) indexes.push(index)
       }
       add(this.pagedTargetIndex)
       if (this.prefetchNeighbors) {
@@ -765,7 +803,16 @@ export class ReaderPagedSession {
     if (this.disposed || !this.active || this.state.phase !== 'ready' || this.map === null ||
       this.state.policy.layout === 'continuous' || topology !== this.topologyRevision ||
       navigation !== this.navigationRevision || !Number.isSafeInteger(index) || index < 0 || index >= this.map.count()) return false
-    const target = index === this.state.displayIndex ? -1 : index
+    const native = this.pagerRows.findIndex((row: ReaderPagerRow): boolean =>
+      row.context.unit.key.equals(this.state.unit!.key) && row.index === index)
+    return this.preparePagerTarget(native, topology, navigation)
+  }
+
+  preparePagerTarget(index: number, topology: number, navigation: number): boolean {
+    if (this.disposed || !this.active || this.state.phase !== 'ready' || this.state.policy.layout === 'continuous' ||
+      topology !== this.topologyRevision || navigation !== this.navigationRevision ||
+      !Number.isSafeInteger(index) || index < 0 || index >= this.pagerRows.length) return false
+    const target = index === this.pagerSelectedIndex() ? -1 : index
     if (target === this.pagedTargetIndex && topology === this.pagedTargetTopology &&
       navigation === this.pagedTargetNavigation) return true
     this.pagedTargetIndex = target
@@ -819,7 +866,8 @@ export class ReaderPagedSession {
             ? this.resourceWindowIndexes.some((index: number): boolean =>
               this.continuousRows[index]?.context.unit.key.equals(this.state.unit!.key) === true &&
               this.continuousRows[index]?.index === part.sourceIndex)
-            : this.slots.some((slot: ReaderPageSlot): boolean => slot.index === part.sourceIndex))
+            : this.slots.some((slot: ReaderPageSlot): boolean => slot.index === part.sourceIndex &&
+              slot.unit?.key.equals(part.unit) === true))
         if (!preparedByWindow && !indexes.includes(part.sourceIndex)) indexes.push(part.sourceIndex)
       })
     }
@@ -832,7 +880,7 @@ export class ReaderPagedSession {
     this.processingPolicy = policy; this.processingCropRevision = cropRevision
     if (policy === null) {
       this.processing.clear(); this.retireFutureProcessing()
-      this.continuousUnits.forEach((context: ReaderContinuousUnit): void => context.processing.clear())
+      this.windowUnits.forEach((context: ReaderWindowUnit): void => context.processing.clear())
     }
     if (this.state.phase === 'ready') this.reconcile()
   }
@@ -849,6 +897,7 @@ export class ReaderPagedSession {
     if (this.state.policy.layout === 'continuous' && this.continuousRows.length > 0) {
       this.syncContinuousProcessing(); return
     }
+    if (this.pagerRows.length > 0) { this.syncPagerProcessing(); return }
     const unit = this.state.unit
     const policy = this.processingPolicy
     if (unit === null || policy === null || this.state.phase !== 'ready' || this.state.kind !== 'original') {
@@ -885,7 +934,7 @@ export class ReaderPagedSession {
     const owner = new ReaderProcessingCoordinator(this.catalog, this.assets, this.preloadHost, (): void => {
       // A future unit can finish preparation without publishing the current unit.
       if (!this.disposed && this.state.phase === 'ready' &&
-        (this.processing === owner || this.continuousProcessingUnits.some((context: ReaderContinuousUnit): boolean =>
+        (this.processing === owner || this.continuousProcessingUnits.some((context: ReaderWindowUnit): boolean =>
           context.processing === owner))) this.reconcile()
     })
     return owner
@@ -952,11 +1001,7 @@ export class ReaderPagedSession {
         if (cancellation.isCancelled() || this.nextUnitPreloadCancellation !== cancellation ||
           this.state.phase !== 'ready' || this.state.unit?.key.equals(unit.key) !== true) return
         touched.add(this.processingUnitId(future.key))
-        if (this.state.policy.layout === 'continuous') {
-          this.appendContinuousUnit(future)
-          return
-        }
-        this.stageFutureProcessing(future, indexes, remainingHere === 0 && precedingPages === 0 ? 0 : -1)
+        this.appendWindowUnit(future)
       }).then(completed, (): void => {
         completed()
         if (!cancellation.isCancelled()) console.warn('[ReaderPreload] next_unit_failed')
@@ -1074,12 +1119,13 @@ export class ReaderPagedSession {
 
   async open(key: ReaderUnitKey, index: number = 0): Promise<void> {
     if (this.disposed) return
-    this.clearContinuousUnits()
+    const preparedProcessing = this.windowUnits.find((context: ReaderWindowUnit): boolean =>
+      context.unit.key.equals(key) && this.state.unit?.key.equals(key) !== true)?.processing ?? this.futureProcessing.get(this.processingUnitId(key))
+    this.clearWindowUnits(preparedProcessing ?? null)
     this.outgoingPositionKey = null
     this.cancelOriginalPreparations()
     this.cancelAutoReadSourcePreparations()
-    const preparedProcessing = this.futureProcessing.get(this.processingUnitId(key))
-    this.processing.clear()
+    if (this.processing !== preparedProcessing) this.processing.clear()
     if (preparedProcessing !== undefined) {
       this.futureProcessing.delete(this.processingUnitId(key))
       this.processing = preparedProcessing
@@ -1148,9 +1194,10 @@ export class ReaderPagedSession {
         this.slots = this.slots.filter((slot: ReaderPageSlot): boolean => !removed.includes(slot))
         removed.forEach((slot: ReaderPageSlot): void => slot.session.close())
       }
-      this.clearContinuousUnits()
+      this.clearWindowUnits()
       this.resourceWindowIndexes = []
     }
+    this.windowUnits.forEach((context: ReaderWindowUnit): void => { context.map = null })
     this.state.policy = policy.copy()
     this.outgoingPositionKey = null
     this.cancelOriginalPreparations()
@@ -1230,7 +1277,7 @@ export class ReaderPagedSession {
     }
     if (this.outgoingPositionKey !== null) return
     if (this.state.observedSelectionId !== this.state.selectionId) return
-    this.outgoingPositionKey = this.displayKeys[this.state.displayIndex] ?? null
+    this.outgoingPositionKey = this.pagerRows[this.pagerSelectedIndex()]?.key ?? null
   }
 
   /** A source-page command, not a display index or an observed/saved reading position.
@@ -1266,7 +1313,8 @@ export class ReaderPagedSession {
     this.continuousStart = -1
     this.continuousEnd = -1
     this.state.anchor = this.map.anchorAt(index)
-    this.rebuild()
+    // A native selection changes position, not chapter maps or their keyed row projection.
+    this.resolvePosition()
     return true
   }
 
@@ -1302,10 +1350,17 @@ export class ReaderPagedSession {
     }
   }
 
+  private localIndexForItemKey(key: string): number {
+    if (this.state.policy.layout === 'continuous') return this.displayKeys.indexOf(key)
+    const row = this.pagerRows.find((value: ReaderPagerRow): boolean => value.key === key)
+    if (row !== undefined) return row.context.unit.key.equals(this.state.unit!.key) ? row.index : -1
+    return this.displayKeys.indexOf(key)
+  }
+
   /** Retry one visible failed asset without selecting it or reopening its host unit. */
   async retryItem(topologyRevision: number, itemKey: string, slotId: number, requestId: number): Promise<boolean> {
     if (this.disposed || !this.active || this.state.phase !== 'ready' || topologyRevision !== this.topologyRevision) return false
-    const index = this.displayKeys.indexOf(itemKey)
+    const index = this.localIndexForItemKey(itemKey)
     const visible = this.state.policy.layout === 'continuous'
       ? this.continuousStart >= 0 && index >= this.continuousStart && index <= this.continuousEnd
       : index === this.state.displayIndex
@@ -1324,7 +1379,7 @@ export class ReaderPagedSession {
     slotId: number, requestId: number, noticeId: string): Promise<boolean> {
     if (this.disposed || !this.active || this.state.phase !== 'ready' ||
       topologyRevision !== this.topologyRevision || navigationRevision !== this.navigationRevision) return false
-    const index = this.displayKeys.indexOf(itemKey)
+    const index = this.localIndexForItemKey(itemKey)
     const visible = this.state.policy.layout === 'continuous'
       ? this.continuousStart >= 0 && index >= this.continuousStart && index <= this.continuousEnd
       : index === this.state.displayIndex
@@ -1343,7 +1398,7 @@ export class ReaderPagedSession {
     slotId: number, requestId: number): Promise<boolean> {
     if (this.disposed || !this.active || this.state.phase !== 'ready' ||
       topologyRevision !== this.topologyRevision || navigationRevision !== this.navigationRevision) return false
-    const index = this.displayKeys.indexOf(itemKey)
+    const index = this.localIndexForItemKey(itemKey)
     const visible = this.state.policy.layout === 'continuous'
       ? this.continuousStart >= 0 && index >= this.continuousStart && index <= this.continuousEnd
       : index === this.state.displayIndex
@@ -1369,7 +1424,7 @@ export class ReaderPagedSession {
     if (this.state.unit === null || this.state.anchor === null) return
     this.map = new ReaderDisplayMap(this.state.unit, Array.from(this.pages.values()), this.state.policy)
     if (this.state.policy.layout === 'continuous') {
-      this.ensureContinuousCurrent()
+      this.ensureWindowCurrent()
       this.rebuildContinuousRows()
       const signature = `continuous:${this.state.policy.direction}:${this.state.policy.rotateWidePages}`
       if (signature !== this.topologySignature) {
@@ -1386,13 +1441,15 @@ export class ReaderPagedSession {
     }
     const pagingAxis = this.state.policy.pagingAxis
     const signature = `${this.state.policy.layout}:${this.state.policy.direction}:${pagingAxis}:` +
-      `${this.state.policy.rotateWidePages}:` + keys.join('|')
+      `${this.state.policy.rotateWidePages}:${this.state.policy.splitWidePages}:${this.state.policy.firstPageAlone}`
     if (signature !== this.topologySignature) {
       this.topologySignature = signature
       this.topologyRevision += 1
       this.displayKeys = keys
-      this.resourceWindowIndexes = []
     }
+    this.displayKeys = keys
+    this.ensureWindowCurrent()
+    this.rebuildPagerRows()
     this.resolvePosition()
   }
 
@@ -1408,8 +1465,8 @@ export class ReaderPagedSession {
     }
     this.state.anchor = resolved.anchor
     this.state.displayIndex = resolved.displayIndex
-    if (this.outgoingPositionKey === this.displayKeys[this.state.displayIndex] ||
-      (this.outgoingPositionKey !== null && !this.displayKeys.includes(this.outgoingPositionKey))) {
+    if (this.outgoingPositionKey === this.pagerRows[this.pagerSelectedIndex()]?.key ||
+      (this.outgoingPositionKey !== null && !this.pagerRows.some((row: ReaderPagerRow): boolean => row.key === this.outgoingPositionKey))) {
       this.outgoingPositionKey = null
     }
     this.state.selectionId += 1
@@ -1431,68 +1488,45 @@ export class ReaderPagedSession {
 
   private reconcileSlots(): void {
     if (this.state.policy.layout === 'continuous') { this.reconcileContinuousSlots(); return }
-    const unit = this.state.unit
     const requested = this.windowIndexes()
-    const canRetainEdge = this.prefetchNeighbors && this.pagedPreloadDepth !== null &&
-      this.pagedPreloadDepth > 0
-    // f260c8a already keeps one leased reverse edge for paging. Candidate133
-    // exposed short blanks on reverse scroll; a just-exited neighbor is still
-    // near-screen demand until it leaves the adjacent-edge bound.
-    // Retain at most one existing adjacent edge, including an in-flight decode;
-    // never keep a distant seek target or grow the five-page native window back.
-    const spare = canRetainEdge ? this.resourceWindowIndexes.filter((index: number): boolean =>
-      !requested.includes(index) && (this.state.policy.layout !== 'continuous' ||
-        this.nativeWindowDistance(index) === this.nativeNeighborDepth() + 1) &&
-      (this.map?.item(index)?.parts ?? []).length > 0 &&
-      (this.map?.item(index)?.parts ?? []).every((part: ReaderDisplayPart): boolean =>
-        this.slots.some((slot: ReaderPageSlot): boolean =>
-          slot.index === part.sourceIndex && slot.kind === this.state.kind)))
-      .sort((left: number, right: number): number =>
-        this.nativeWindowDistance(left) - this.nativeWindowDistance(right)).slice(0, 1) : []
+    const spare = this.prefetchNeighbors && this.pagedPreloadDepth !== null && this.pagedPreloadDepth > 0
+      ? this.resourceWindowIndexes.filter((index: number): boolean => !requested.includes(index) &&
+        this.nativeWindowDistance(index) <= this.nativeNeighborDepth() + 1).slice(0, 1) : []
     this.resourceWindowIndexes = requested.concat(spare)
+    this.syncPagerProcessing()
     const parts: ReaderDisplayPart[] = []
-    this.resourceWindowIndexes.forEach((index: number) => {
-      (this.map?.item(index)?.parts ?? []).forEach((part: ReaderDisplayPart) => {
-        if (!parts.some((other: ReaderDisplayPart) => other.sourceIndex === part.sourceIndex)) parts.push(part)
+    this.resourceWindowIndexes.forEach((index: number): void => {
+      const row = this.pagerRows[index]
+      row?.context.map?.item(row.index)?.parts.forEach((part: ReaderDisplayPart): void => {
+        if (!parts.some((other: ReaderDisplayPart): boolean => other.unit.equals(part.unit) &&
+          other.sourceIndex === part.sourceIndex)) parts.push(part)
       })
     })
-    if (unit === null) return
-    this.syncProcessing()
-    const targetPlan = (index: number): ReaderResolvedAssetPlan | null => {
-      if (this.state.kind !== 'original') return null
-      const explicit = this.assetPlans.get(index) ?? null
-      if (this.processingPolicy === null || explicit?.variant === 'original') return explicit
-      return this.processing.plan(index)
-    }
-    const retained = this.slots.filter((slot: ReaderPageSlot) => slot.kind === this.state.kind &&
-      parts.some((part: ReaderDisplayPart) => part.sourceIndex === slot.index))
-    const removed = this.slots.filter((slot: ReaderPageSlot) => !retained.includes(slot))
-    this.slots = retained
-    removed.forEach((slot: ReaderPageSlot) => slot.session.close())
-    const added: ReaderPageSlot[] = []
-    parts.forEach((part: ReaderDisplayPart) => {
-      if (this.slots.some((slot: ReaderPageSlot) => slot.index === part.sourceIndex)) return
-      const slot = new ReaderPageSlot(++this.slotSerial, part.sourceIndex, this.state.kind,
-        new ReaderSession(this.catalog, this.assets, this.failures),
-        targetPlan(part.sourceIndex))
-      slot.unit = unit.copy()
-      this.slots.push(slot)
-      added.push(slot)
-    })
-    retained.forEach((slot: ReaderPageSlot) => {
-      const plan = targetPlan(slot.index)
-      if (slot.assetPlan !== plan) {
-        slot.assetPlan = plan
-        void slot.session.show(slot.index, slot.kind, false, plan)
+    const removed = this.slots.filter((slot: ReaderPageSlot): boolean => slot.kind !== this.state.kind ||
+      !parts.some((part: ReaderDisplayPart): boolean => slot.unit?.key.equals(part.unit) === true && slot.index === part.sourceIndex))
+    this.slots = this.slots.filter((slot: ReaderPageSlot): boolean => !removed.includes(slot))
+    removed.forEach((slot: ReaderPageSlot): void => slot.session.close())
+    parts.forEach((part: ReaderDisplayPart): void => {
+      const context = this.windowUnits.find((value: ReaderWindowUnit): boolean => value.unit.key.equals(part.unit))
+      if (context === undefined) return
+      const explicit = context.plans.get(part.sourceIndex) ?? null
+      const plan = this.state.kind !== 'original' ? null : explicit?.variant === 'original' || this.processingPolicy === null
+        ? explicit : context.processing.plan(part.sourceIndex)
+      const existing = this.slots.find((slot: ReaderPageSlot): boolean => slot.unit?.key.equals(part.unit) === true &&
+        slot.index === part.sourceIndex)
+      if (existing !== undefined) {
+        if (existing.assetPlan !== plan) { existing.assetPlan = plan; void existing.session.show(part.sourceIndex, this.state.kind, false, plan) }
+        return
       }
-    })
-    this.emit()
-    added.forEach((slot: ReaderPageSlot) => {
-      if (!this.slots.includes(slot)) return
-      slot.session.subscribe((snapshot: ReaderSnapshot): void => { this.slotChanged(slot, snapshot) })
-      void slot.session.openPrepared(unit, slot.index, slot.kind, slot.assetPlan)
+      const slot = new ReaderPageSlot(++this.slotSerial, part.sourceIndex, this.state.kind,
+        new ReaderSession(this.catalog, this.assets, this.failures), plan)
+      slot.unit = context.unit.copy()
+      this.slots.push(slot)
+      slot.session.subscribe((snapshot: ReaderSnapshot): void => this.slotChanged(slot, snapshot))
+      void slot.session.openPrepared(context.unit, part.sourceIndex, slot.kind, plan)
     })
     this.schedulePreload()
+    if (this.preloadHost?.preloadNextUnit !== undefined) this.prepareWindowAdjacent()
   }
 
   private slotChanged(slot: ReaderPageSlot, snapshot: ReaderSnapshot): void {
@@ -1502,8 +1536,8 @@ export class ReaderPagedSession {
     // slot setup once, and later asset progress keeps its normal notifications.
     if (snapshot.phase === 'idle' && snapshot.requestId === 0) return
     this.requestCrop(slot, snapshot)
-    if (this.state.policy.layout === 'continuous') {
-      if (snapshot.page !== null) this.installContinuousPage(slot, snapshot.page)
+    if (this.state.policy.layout === 'continuous' || slot.unit?.key.equals(this.state.unit!.key) !== true) {
+      if (snapshot.page !== null) this.installWindowPage(slot, snapshot.page)
       this.emit()
       return
     }
@@ -1582,8 +1616,8 @@ export class ReaderPagedSession {
       page.width = width
       page.height = height
     }
-    if (this.state.policy.layout === 'continuous') {
-      this.installContinuousPage(slot, page); this.emit(); return
+    if (this.state.policy.layout === 'continuous' || slot.unit?.key.equals(this.state.unit!.key) !== true) {
+      this.installWindowPage(slot, page); this.emit(); return
     }
     const previous = this.pages.get(page.sourceIndex)?.copy()
     if (!this.installSlotPage(page)) return
@@ -1596,7 +1630,7 @@ export class ReaderPagedSession {
     const slot = this.slots.find((candidate: ReaderPageSlot) => candidate.id === slotId)
     if (slot === undefined || requestId === 0 || slot.session.snapshot().assetRequestId !== requestId) return undefined
     return this.map?.item(this.state.displayIndex)?.parts.some((part: ReaderDisplayPart) =>
-      part.sourceIndex === slot.index && part.fragment === fragment) ? slot : undefined
+      part.unit.equals(slot.unit!.key) && part.sourceIndex === slot.index && part.fragment === fragment) ? slot : undefined
   }
 
   reportRenderFailure(selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void {
@@ -1607,8 +1641,10 @@ export class ReaderPagedSession {
   reportCachedRenderFailure(topologyRevision: number, itemKey: string, slotId: number,
     requestId: number, fragment: ReaderFragment): void {
     if (this.disposed || topologyRevision !== this.topologyRevision || this.state.phase !== 'ready') return
-    const index = this.displayKeys.indexOf(itemKey)
-    const frame = this.framesAt(index).find((candidate: ReaderPagedFrame) =>
+    const nativeIndex = this.pagerRows.findIndex((row: ReaderPagerRow): boolean => row.key === itemKey)
+    const frames = this.state.policy.layout !== 'continuous' && nativeIndex >= 0
+      ? this.framesForPagerRow(nativeIndex) : this.framesAt(this.localIndexForItemKey(itemKey))
+    const frame = frames.find((candidate: ReaderPagedFrame) =>
       candidate.slotId === slotId && candidate.asset.assetRequestId === requestId && candidate.part.fragment === fragment)
     if (frame !== undefined) this.slots.find((slot: ReaderPageSlot) => slot.id === slotId)?.session.reportRenderFailure(requestId)
   }
@@ -1673,21 +1709,133 @@ export class ReaderPagedSession {
     return true
   }
 
+  private pagerSelectedIndex(): number {
+    return Math.max(0, this.pagerRows.findIndex((row: ReaderPagerRow): boolean =>
+      this.state.unit?.key.equals(row.context.unit.key) === true && row.index === this.state.displayIndex))
+  }
+
+  private rebuildPagerRows(): void {
+    const oldResources = this.resourceWindowIndexes.map((index: number): string => this.pagerRows[index]?.key ?? '')
+    const rows: ReaderPagerRow[] = []
+    this.windowUnits.forEach((context: ReaderWindowUnit): void => {
+      context.map = context.unit.key.equals(this.state.unit!.key) ? this.map : context.map ??
+        new ReaderDisplayMap(context.unit, Array.from(context.pages.values()), this.state.policy)
+      for (let index = 0; index < (context.map?.count() ?? 0); index++) rows.push(new ReaderPagerRow(context, index))
+    })
+    const previousUnits: Set<ReaderWindowUnit> = new Set(this.pagerRows.map((row: ReaderPagerRow): ReaderWindowUnit => row.context))
+    const nextUnits: Set<ReaderWindowUnit> = new Set(rows.map((row: ReaderPagerRow): ReaderWindowUnit => row.context))
+    const sameUnits = previousUnits.size > 0 && previousUnits.size === nextUnits.size &&
+      Array.from(previousUnits).every((context: ReaderWindowUnit): boolean => nextUnits.has(context))
+    if (sameUnits && (this.pagerRows.length !== rows.length || this.pagerRows.some(
+      (row: ReaderPagerRow, index: number): boolean => row.key !== rows[index].key))) this.topologyRevision += 1
+    this.pagerRows = rows
+    this.resourceWindowIndexes = oldResources.map((key: string): number => rows.findIndex(
+      (row: ReaderPagerRow): boolean => row.key === key)).filter((index: number): boolean => index >= 0)
+  }
+
+  private framesForPagerRow(index: number): ReaderPagedFrame[] {
+    const row = this.pagerRows[index]
+    if (row === undefined) return []
+    return (row.context.map?.item(row.index)?.visualParts(this.state.policy.direction) ?? [])
+      .map((part: ReaderDisplayPart): ReaderPagedFrame | null => {
+        const slot = this.slots.find((candidate: ReaderPageSlot): boolean =>
+          candidate.unit?.key.equals(part.unit) === true && candidate.index === part.sourceIndex)
+        if (slot === undefined) return null
+        const asset = slot.session.snapshot()
+        const page = row.context.pages.get(part.sourceIndex)
+        if (page !== undefined && asset.page !== null) asset.page = page.copy()
+        const crop = this.cropEnabled && !this.cropPresentationDeferred && slot.cropRequestId === asset.assetRequestId
+          ? slot.crop?.copy() ?? new ReaderImageCropBounds() : new ReaderImageCropBounds()
+        const frame = new ReaderPagedFrame(slot.id, part, asset, crop)
+        frame.cropPending = this.cropEnabled && !this.cropPresentationDeferred && asset.kind === 'original' &&
+          (slot.cropRequestId !== asset.assetRequestId || !slot.cropSettled)
+        return frame
+      }).filter((frame: ReaderPagedFrame | null): boolean => frame !== null) as ReaderPagedFrame[]
+  }
+
+  /** A native swipe/tap promotes an already prepared real chapter, retaining its Image slots. */
+  selectPagerIndex(index: number, topology: number, navigation: number): boolean {
+    if (!this.active || this.disposed || this.state.phase !== 'ready' || this.state.policy.layout === 'continuous' ||
+      topology !== this.topologyRevision || navigation !== this.navigationRevision || !Number.isInteger(index)) return false
+    const row = this.pagerRows[index]
+    if (row === undefined) return false
+    if (row.context.unit.key.equals(this.state.unit!.key)) return this.selectDisplay(row.index, topology, navigation)
+    this.beginPositionHandoff()
+    this.cancelOriginalPreparations(); this.cancelAutoReadSourcePreparations()
+    this.navigationRevision += 1
+    this.state.unit = row.context.unit.copy()
+    this.pages = row.context.pages; this.cropPages = row.context.crops; this.assetPlans = row.context.plans
+    this.processing = row.context.processing; this.map = row.context.map
+    this.state.displayIndex = row.index
+    this.state.anchor = this.map?.anchorAt(row.index) ?? null
+    this.state.selectionId += 1
+    this.state.canPreviousUnit = this.catalog.adjacent(row.context.unit.copy(), 'previous') !== null
+    this.state.canNextUnit = this.catalog.adjacent(row.context.unit.copy(), 'next') !== null
+    this.displayKeys = []
+    for (let local = 0; local < (this.map?.count() ?? 0); local++) {
+      this.displayKeys.push((this.map?.item(local)?.parts ?? []).map((part: ReaderDisplayPart): string =>
+        `${part.sourceIndex}:${part.fragment}`).join('+'))
+    }
+    this.reconcile()
+    return true
+  }
+
+  private syncPagerProcessing(): void {
+    const policy = this.state.kind === 'original' && this.state.phase === 'ready' ? this.processingPolicy : null
+    const selected = this.pagerSelectedIndex()
+    const demanded = this.resourceWindowIndexes.slice()
+    for (let index = selected + 1; index < this.pagerRows.length && index <= selected + this.preloadDepth; index++) {
+      if (!demanded.includes(index)) demanded.push(index)
+    }
+    const contexts: ReaderWindowUnit[] = []
+    demanded.forEach((index: number): void => {
+      const context = this.pagerRows[index]?.context
+      if (context !== undefined && !contexts.includes(context)) contexts.push(context)
+    })
+    this.continuousProcessingUnits.forEach((context: ReaderWindowUnit): void => {
+      if (!contexts.includes(context) || policy === null) context.processing.clear()
+    })
+    this.continuousProcessingUnits = contexts
+    if (policy === null) return
+    contexts.forEach((context: ReaderWindowUnit): void => {
+      const indexes: number[] = []
+      demanded.forEach((index: number): void => {
+        const row = this.pagerRows[index]
+        if (row?.context !== context) return
+        row.context.map?.item(row.index)?.parts.forEach((part: ReaderDisplayPart): void => {
+          if (!indexes.includes(part.sourceIndex)) indexes.push(part.sourceIndex)
+        })
+      })
+      const current = context.unit.key.equals(this.state.unit!.key)
+        ? (this.map?.item(this.state.displayIndex)?.parts ?? []).map((part: ReaderDisplayPart): number => part.sourceIndex) : []
+      const nextRow = this.pagerRows[selected + 1]
+      const automatic = nextRow?.context === context ? nextRow.context.map?.item(nextRow.index)?.parts[0]?.sourceIndex ?? -1 : -1
+      const contextPolicy = context.processing === this.processing ? policy :
+        new ReaderProcessingPolicy(policy.revision, policy.automaticNext,
+          (page: ReaderPage, automatic: boolean): ReaderVariantPreference => policy.preference(page, automatic))
+      context.processing.update(context.unit, indexes.filter((index: number): boolean =>
+        (!context.unit.key.equals(this.state.unit!.key) || !this.processingReloads.has(index)) &&
+        context.plans.get(index)?.variant !== 'original'), current, automatic, contextPolicy,
+        this.active && this.processingAllowed, this.cropEnabled, this.processingCropRevision)
+    })
+  }
+
   private continuousSelectedIndex(): number {
     if (this.state.policy.layout !== 'continuous') return this.state.displayIndex
     return Math.max(0, this.continuousRows.findIndex((row: ReaderContinuousRow): boolean =>
       this.state.unit?.key.equals(row.context.unit.key) === true && row.index === this.state.displayIndex))
   }
 
-  private ensureContinuousCurrent(): ReaderContinuousUnit | null {
+  private ensureWindowCurrent(): ReaderWindowUnit | null {
     const unit = this.state.unit
     if (unit === null) return null
-    let context = this.continuousUnits.find((value: ReaderContinuousUnit): boolean => value.unit.key.equals(unit.key))
+    let context = this.windowUnits.find((value: ReaderWindowUnit): boolean => value.unit.key.equals(unit.key))
     if (context === undefined) {
-      context = new ReaderContinuousUnit(unit, this.processing)
+      context = new ReaderWindowUnit(unit, this.processing)
       context.pages = this.pages; context.crops = this.cropPages; context.plans = this.assetPlans
-      this.continuousUnits.push(context)
+      this.windowUnits.push(context)
     }
+    context.map = this.map
     return context
   }
 
@@ -1701,7 +1849,7 @@ export class ReaderPagedSession {
     const previousStart = this.displayKeys[this.continuousStart]
     const previousEnd = this.displayKeys[this.continuousEnd]
     const rows: ReaderContinuousRow[] = []
-    this.continuousUnits.forEach((context: ReaderContinuousUnit): void => {
+    this.windowUnits.forEach((context: ReaderWindowUnit): void => {
       for (let index = 0; index < context.unit.pageCount; index++) rows.push(new ReaderContinuousRow(context, index))
     })
     this.continuousRows = rows
@@ -1712,15 +1860,16 @@ export class ReaderPagedSession {
     if (previousEnd !== undefined) this.continuousEnd = this.displayKeys.indexOf(previousEnd)
   }
 
-  private appendContinuousUnit(unit: ReaderUnit, before: boolean = false): void {
-    if (this.state.policy.layout !== 'continuous' || unit.pageCount < 1 ||
-      this.continuousUnits.some((context: ReaderContinuousUnit): boolean => context.unit.key.equals(unit.key))) return
-    const context = new ReaderContinuousUnit(unit, this.futureProcessing.get(this.processingUnitId(unit.key)) ??
+  private appendWindowUnit(unit: ReaderUnit, before: boolean = false): void {
+    if (unit.pageCount < 1 ||
+      this.windowUnits.some((context: ReaderWindowUnit): boolean => context.unit.key.equals(unit.key))) return
+    const context = new ReaderWindowUnit(unit, this.futureProcessing.get(this.processingUnitId(unit.key)) ??
       this.createProcessingCoordinator())
     this.futureProcessing.delete(this.processingUnitId(unit.key))
-    if (before) this.continuousUnits.unshift(context)
-    else this.continuousUnits.push(context)
-    this.rebuildContinuousRows()
+    if (before) this.windowUnits.unshift(context)
+    else this.windowUnits.push(context)
+    if (this.state.policy.layout === 'continuous') this.rebuildContinuousRows()
+    else this.rebuildPagerRows()
     this.reconcile()
   }
 
@@ -1748,8 +1897,8 @@ export class ReaderPagedSession {
         .forContinuousPage(row.index, row.context.unit.pageCount) : new ReaderImageCropBounds()
   }
 
-  private installContinuousPage(slot: ReaderPageSlot, page: ReaderPage): void {
-    const context = this.continuousUnits.find((value: ReaderContinuousUnit): boolean => value.unit.key.equals(page.unit))
+  private installWindowPage(slot: ReaderPageSlot, page: ReaderPage): void {
+    const context = this.windowUnits.find((value: ReaderWindowUnit): boolean => value.unit.key.equals(page.unit))
     if (context === undefined || slot.unit?.key.equals(page.unit) !== true || page.sourceIndex !== slot.index) return
     const previous = context.pages.get(page.sourceIndex)
     const value = page.copy()
@@ -1759,6 +1908,9 @@ export class ReaderPagedSession {
       value.bodySourceReady = value.bodySourceReady || previous.bodySourceReady
     }
     context.pages.set(page.sourceIndex, value)
+    if (this.state.policy.layout !== 'continuous') {
+      if (context.map?.updatePage(value) !== true) { context.map = null; this.rebuildPagerRows() }
+    }
     if (this.state.unit?.key.equals(page.unit) === true) {
       this.map?.updatePage(value)
       if (this.state.anchor?.sourceIndexHint === page.sourceIndex && this.state.anchor.pageKey === null) {
@@ -1777,16 +1929,16 @@ export class ReaderPagedSession {
     for (let index = end + 1; index < this.continuousRows.length && index <= end + this.preloadDepth; index++) {
       if (!demanded.includes(index)) demanded.push(index)
     }
-    const contexts: ReaderContinuousUnit[] = []
+    const contexts: ReaderWindowUnit[] = []
     demanded.forEach((index: number): void => {
       const context = this.continuousRows[index]?.context
       if (context !== undefined && !contexts.includes(context)) contexts.push(context)
     })
-    this.continuousProcessingUnits.forEach((context: ReaderContinuousUnit): void => {
+    this.continuousProcessingUnits.forEach((context: ReaderWindowUnit): void => {
       if (!contexts.includes(context)) context.processing.clear()
     })
     this.continuousProcessingUnits = contexts
-    contexts.forEach((context: ReaderContinuousUnit): void => {
+    contexts.forEach((context: ReaderWindowUnit): void => {
       const indexes = demanded.filter((index: number): boolean => this.continuousRows[index]?.context === context)
         .map((index: number): number => this.continuousRows[index].index)
       const current = this.continuousRows[selected]?.context === context ? [this.continuousRows[selected].index] : []
@@ -1802,36 +1954,37 @@ export class ReaderPagedSession {
   requestContinuousBoundary(topology: number, navigation: number): void {
     if (!this.active || this.state.policy.layout !== 'continuous' ||
       topology !== this.topologyRevision || navigation !== this.navigationRevision) return
-    this.prepareContinuousAdjacent()
+    this.prepareWindowAdjacent()
   }
 
-  private prepareContinuousAdjacent(): void {
-    if (!this.active || this.disposed || this.continuousUnits.length === 0) return
-    const selected = this.continuousSelectedIndex()
-    const prepare = (context: ReaderContinuousUnit, direction: 'previous' | 'next'): void => {
+  private prepareWindowAdjacent(): void {
+    if (!this.active || this.disposed || this.windowUnits.length === 0) return
+    const selected = this.state.policy.layout === 'continuous' ? this.continuousSelectedIndex() : this.pagerSelectedIndex()
+    const prepare = (context: ReaderWindowUnit, direction: 'previous' | 'next'): void => {
       const key = this.catalog.adjacent(context.unit.copy(), direction)
-      if (key === null || this.continuousUnits.some((value: ReaderContinuousUnit): boolean => value.unit.key.equals(key))) return
+      if (key === null || this.windowUnits.some((value: ReaderWindowUnit): boolean => value.unit.key.equals(key))) return
       const id = this.processingUnitId(key)
       if (this.continuousCatalogTasks.has(id)) return
       this.continuousCatalogTasks.add(id)
       const cancellation = this.continuousCatalogCancellation
       void this.catalog.open(key.copy(), cancellation).then((unit: ReaderUnit): void => {
         if (cancellation.isCancelled() || this.disposed || !unit.key.equals(key)) return
-        this.appendContinuousUnit(unit, direction === 'previous')
+        this.appendWindowUnit(unit, direction === 'previous')
       }).catch((): void => {}).finally((): void => {
         if (this.continuousCatalogCancellation === cancellation) this.continuousCatalogTasks.delete(id)
       })
     }
     // One adjacent chapter remains available even when transport lookahead is off.
     const previousLead = Math.max(2, this.continuousEnd - this.continuousStart + 1)
-    if (selected <= previousLead) prepare(this.continuousUnits[0], 'previous')
-    if (this.continuousRows.length - selected <= Math.max(2, this.preloadDepth + 1)) {
-      prepare(this.continuousUnits[this.continuousUnits.length - 1], 'next')
+    if (selected <= previousLead) prepare(this.windowUnits[0], 'previous')
+    const count = this.state.policy.layout === 'continuous' ? this.continuousRows.length : this.pagerRows.length
+    if (this.state.policy.layout === 'continuous' && count - selected <= Math.max(2, this.preloadDepth + 1)) {
+      prepare(this.windowUnits[this.windowUnits.length - 1], 'next')
     }
   }
 
   private reconcileContinuousSlots(): void {
-    this.ensureContinuousCurrent()
+    this.ensureWindowCurrent()
     const selected = this.continuousSelectedIndex()
     const start = this.continuousStart >= 0 ? this.continuousStart : selected
     const end = this.continuousEnd >= start ? this.continuousEnd : selected
@@ -1870,17 +2023,18 @@ export class ReaderPagedSession {
       void slot.session.openPrepared(row.context.unit, row.index, slot.kind, plan)
     })
     this.schedulePreload()
-    this.prepareContinuousAdjacent()
+    this.prepareWindowAdjacent()
   }
 
-  private clearContinuousUnits(): void {
+  private clearWindowUnits(keep: ReaderProcessingCoordinator | null = null): void {
     this.continuousCatalogCancellation.cancel()
     this.continuousCatalogCancellation = new ReaderCancellation()
     this.continuousCatalogTasks.clear()
-    this.continuousUnits.forEach((context: ReaderContinuousUnit): void => {
-      if (context.processing !== this.processing) context.processing.clear()
+    this.windowUnits.forEach((context: ReaderWindowUnit): void => {
+      if (context.processing !== this.processing && context.processing !== keep) context.processing.clear()
     })
-    this.continuousUnits = []; this.continuousRows = []; this.continuousProcessingUnits = []
+    this.windowUnits = []; this.continuousRows = []; this.pagerRows = []; this.continuousProcessingUnits = []
+    this.resourceWindowIndexes = []
   }
 
   private releaseSlots(): void {
@@ -1908,7 +2062,7 @@ export class ReaderPagedSession {
     this.preloadSignature = ''
     this.epoch += 1
     this.releaseSlots()
-    this.clearContinuousUnits()
+    this.clearWindowUnits()
     this.state.phase = 'closed'
     this.emit()
     this.listener = null

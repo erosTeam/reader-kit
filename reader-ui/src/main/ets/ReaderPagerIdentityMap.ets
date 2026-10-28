@@ -13,7 +13,8 @@ export class ReaderPagerIdentityMap {
   private serial: number = 0
 
   update(keys: string[], selected: number, topology: number, unit: string): ReaderPagerItemIdentity[] {
-    if (unit === this.unit && topology === this.topology) {
+    if (unit === this.unit && topology === this.topology && keys.length === this.items.length &&
+      keys.every((key: string, index: number): boolean => this.items[index].key === key)) {
       this.selected = selected
       return this.items
     }

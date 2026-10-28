@@ -1746,3 +1746,65 @@ test('continuous file processing spans five single-page units while native lease
   assert.equal(state.observedPosition(), null, 'prepared or demanded future pages cannot write reading progress')
   session.close()
 })
+
+
+// 197 recording 66: chapter replacement cleared the canvas despite warmed files.
+// A page in another real unit must be a native neighbor, not a new open().
+test('prepared native chapter neighbors retain decoded slots, local progress and the previous final page', async () => {
+  for (const direction of ['ltr', 'rtl']) {
+    const opens = [], loads = [], releases = []
+    const a = new ReaderUnitKey('source', 'work', 'A'), b = new ReaderUnitKey('source', 'work', 'B')
+    const catalog = {
+      async open(key) { opens.push(key.unit); return new ReaderUnit(key, key.unit, key.unit === 'A' ? 3 : 1) },
+      async page(unit, index) {
+        const page = new ReaderPage(unit.key, `${unit.key.unit}-${index}`, index)
+        page.width = 800; page.height = 1200; return page
+      },
+      adjacent(unit, d) { return unit.key.unit === 'A' && d === 'next' ? b :
+        unit.key.unit === 'B' && d === 'previous' ? a : null },
+    }
+    const assets = { cancellationMode: 'consumer-only', async load(page) {
+      loads.push(page.key); return new ReaderAsset(page.key, () => releases.push(page.key))
+    } }
+    const preload = { async preload() {}, async preloadNextUnit(unit, depth, cancel, prepared) {
+      if (unit.key.unit === 'A' && depth > 0) prepared(new ReaderUnit(b, 'B', 1), [0], 0)
+    } }
+    const session = new ReaderPagedSession(catalog, assets, preload)
+    session.setPolicy(policy({ direction })); session.setViewportActive(true)
+    session.setNeighborPreload(true); session.setPagedPreloadDepth(1); session.setPreloadDepth(2)
+    await session.open(a, 2); await tick(); await tick()
+    let state = session.snapshot()
+    assert.equal(state.displayCount, 3)
+    assert.equal(state.pagerKeys.length, 4)
+    assert.equal(new Set(state.pagerKeys).size, 4)
+    const lastA = state.frames[0], next = state.pagerWindow.find(x => x.index === state.pagerIndex + 1).frames[0]
+    assert.equal(next.part.unit.unit, 'B'); assert.equal(next.part.sourceIndex, 0)
+    decode(session, lastA); decode(session, next)
+    state = session.snapshot()
+    assert.equal(session.reportVisible(state.selectionId, next.slotId, next.asset.assetRequestId, 'whole'), false,
+      'cached chapter decode is not visible progress')
+    const nativeKeys = state.pagerKeys.slice(), topology = state.topologyRevision
+    assert.equal(session.selectPagerIndex(state.pagerIndex + 1, topology, state.navigationRevision), true)
+    state = session.snapshot()
+    assert.equal(state.unit.key.unit, 'B'); assert.equal(state.displayIndex, 0); assert.equal(state.displayCount, 1)
+    assert.equal(state.frames[0].slotId, next.slotId)
+    assert.equal(state.frames[0].asset.phase, 'displayed')
+    assert.equal(state.observedPosition(), null)
+    assert.deepEqual(state.pagerKeys, nativeKeys); assert.equal(state.topologyRevision, topology)
+    assert.equal(session.reportVisible(state.selectionId, lastA.slotId, lastA.asset.assetRequestId, 'whole'), false)
+    assert.equal(session.reportVisible(state.selectionId, next.slotId, next.asset.assetRequestId, 'whole'), true)
+    assert.equal(session.snapshot().observedPosition().anchor.unit.unit, 'B')
+    state = session.snapshot()
+    assert.equal(session.selectPagerIndex(state.pagerIndex - 1, topology, state.navigationRevision), true)
+    state = session.snapshot()
+    assert.equal(state.unit.key.unit, 'A'); assert.equal(state.anchor.sourceIndexHint, 2)
+    assert.equal(state.frames[0].slotId, lastA.slotId)
+    assert.equal(loads.filter(x => x === 'A-2').length, 1)
+    assert.equal(loads.filter(x => x === 'B-0').length, 1)
+    assert.deepEqual(opens, ['A'])
+    assert.equal(releases.includes('A-2'), false); assert.equal(releases.includes('B-0'), false)
+    session.close()
+    assert.equal(releases.filter(x => x === 'A-2').length, 1)
+    assert.equal(releases.filter(x => x === 'B-0').length, 1)
+  }
+})

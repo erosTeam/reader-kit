@@ -63,3 +63,15 @@ test('native datasource publishes a matching map before reload and retains obser
  ds.update(ids.update(singles(300),246,3,'a'),{displayIndex:246})
  assert.equal(reloads,2)
 })
+
+
+test('adjacent chapter insertion preserves keyed native pages within the same work and topology', () => {
+ const map = new exports_.ReaderPagerIdentityMap()
+ const first = map.update(['A0','A1'],1,7,'work')
+ const next = map.update(['P0','A0','A1','B0'],2,7,'work')
+ assert.equal(next[2].nativeKey, first[1].nativeKey)
+ assert.equal(next[1].nativeKey, first[0].nativeKey)
+ assert.notEqual(next[0].nativeKey,next[3].nativeKey)
+ assert.equal(map.update(['P0','A0','A1','B0'],3,7,'work'),next)
+ unique(next)
+})

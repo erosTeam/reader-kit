@@ -77,6 +77,14 @@ The following are existing preservation requirements, not new feature work:
 - Preload demand rolls with navigation, range, policy and unit changes; an
   initial warm window is not continuous preload. Transport warming is not
   decode or visible presentation. Hosts retain their own bounded cache owners.
+- Paged reading projects host-verified neighboring chapters into the same native
+  Swiper. Its render index/keys are separate from the selected chapter's local
+  display index/count; every frame keeps its real unit/page identity. A boundary
+  swipe or tap promotes that prepared chapter without reopening/releasing its
+  decoded slots. Native insertion preserves visible keys; processing/transport
+  still follow their own bounded demand and a cached decode cannot write progress.
+  Spread pairing and split-page decisions remain chapter-local. Hosts without
+  verified adjacent-unit preparation retain their original optional capability.
 - Continuous reading presents verified adjacent chapters in one stable List.
   Rows retain their real unit/page identity; append/prepend uses incremental data
   notifications and preserves the visible key/offset. Native leases stay bounded

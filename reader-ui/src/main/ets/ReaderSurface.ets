@@ -850,7 +850,9 @@ export struct ReaderSurface {
     const current = session.snapshot()
     const atBoundary = current.displayCount > 0 && current.displayIndex === this.state.displayIndex &&
       (direction === 'previous' ? current.displayIndex === 0 : current.displayIndex + 1 === current.displayCount)
-    if (atBoundary && !this.inputLocked) {
+    const nativeTarget = current.pagerIndex + (direction === 'next' ? 1 : -1)
+    const preparedNeighbor = nativeTarget >= 0 && nativeTarget < current.pagerKeys.length
+    if (atBoundary && !preparedNeighbor && !this.inputLocked) {
       this.requestBoundaryChapter(direction, topology, navigation)
     } else {
       this.requestMove(direction)
@@ -881,18 +883,21 @@ export struct ReaderSurface {
       before.topologyRevision === this.state.topologyRevision &&
       before.navigationRevision === this.state.navigationRevision &&
       before.displayIndex === this.state.displayIndex) {
-      const target = before.displayIndex + (intent === 'next' ? 1 : -1)
-      if (target < 0 || target >= before.displayCount) return false
+      const target = before.pagerIndex + (intent === 'next' ? 1 : -1)
+      if (target < 0 || target >= before.pagerKeys.length) return false
       this.pagerCommand = new ReaderPagerCommand(
         ++this.pagerCommandSerial,
         target,
         before.topologyRevision,
         before.navigationRevision,
+        before.pagerKeys[target],
       )
       return true
     }
     const navigation = before.navigationRevision
-    this.session.move(intent)
+    if (before.policy.layout === 'continuous') this.session.move(intent)
+    else this.session.selectPagerIndex(before.pagerIndex + (intent === 'next' ? 1 : -1),
+      before.topologyRevision, before.navigationRevision)
     return this.session.snapshot().navigationRevision !== navigation
   }
 
@@ -1029,10 +1034,10 @@ export struct ReaderSurface {
             },
             onTap: (x: number, y: number): void => { this.pageTap(x, y) },
             onPrepareTarget: (index: number, topology: number, navigation: number): void => {
-              this.session.preparePagedTarget(index, topology, navigation)
+              this.session.preparePagerTarget(index, topology, navigation)
             },
             onSelect: (index: number, topology: number, navigation: number): void => {
-              this.session.selectDisplay(index, topology, navigation)
+              this.session.selectPagerIndex(index, topology, navigation)
             },
             onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
               this.reportAssetPresented(slot, request, success, width, height)
