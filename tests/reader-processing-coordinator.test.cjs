@@ -110,12 +110,38 @@ test('prepared and rendered consumers release independently; disabling keeps rea
 })
 
 test('automatic translation prepares exactly one future source even at zero image preload without a displayed future frame', async () => {
-  const { key, session, calls } = scenario({ translation: true })
-  session.setNeighborPreload(false); session.setPreloadDepth(0)
+  for (const continuous of [false, true]) {
+    const { key, session, calls } = scenario({ translation: true })
+    session.setNeighborPreload(false); session.setPreloadDepth(0)
+    if (continuous) { const display = session.snapshot().policy.copy(); display.layout = 'continuous'; session.setPolicy(display) }
+    await session.open(key); await tick(); await tick()
+    assert.deepEqual(calls.prepared.map(c => c[0]).sort(), [0,1])
+    assert.equal(session.snapshot().window.length, 1)
+    assert.equal(calls.raw.includes(1), false)
+    assert.equal(session.snapshot().observedAnchor, null)
+    session.close()
+  }
+})
+
+test('crop visibility across a settings pause retains ready processed pixels; detector revision still refreshes', async () => {
+  const { key, session, calls, policy } = scenario()
+  session.setCropEnabled(true)
+  session.setProcessingPolicy(policy('v1'), 'detector-v1')
   await session.open(key); await tick(); await tick()
-  assert.deepEqual(calls.prepared.map(c => c[0]).sort(), [0,1])
-  assert.equal(session.snapshot().window.length, 1)
-  assert.equal(calls.raw.includes(1), false)
-  assert.equal(session.snapshot().observedAnchor, null)
+  present(session, session.snapshot().frames[0])
+  const before = session.snapshot().frames[0], prepared = calls.prepared.length
+  session.setViewportActive(false)
+  session.setCropEnabled(false)
+  session.setProcessingPolicy(policy('v1'), 'detector-v1')
+  session.setViewportActive(true)
+  await tick(); await tick()
+  const after = session.snapshot().frames[0]
+  assert.equal(calls.prepared.length, prepared, 'a presentation switch must not process every cached page again')
+  assert.equal(after.asset.assetRequestId, before.asset.assetRequestId)
+  assert.equal(after.asset.phase, 'displayed')
+  session.setCropEnabled(true)
+  session.setProcessingPolicy(policy('v1'), 'detector-v2')
+  await tick(); await tick()
+  assert.ok(calls.prepared.length > prepared, 'a changed detector still invalidates prepared crop metadata')
   session.close()
 })

@@ -194,7 +194,10 @@ export class ReaderProcessingCoordinator {
   }
   private signature(page: ReaderPage, preference: ReaderVariantPreference): string {
     return JSON.stringify([page.unit.scope, page.unit.work, page.unit.unit, page.key, page.sourceIndex,
-      preference.variant, preference.identity, this.cropEnabled, this.cropRevision])
+      // Crop visibility only changes presentation; it does not change pixels in
+      // an already prepared enhanced/translated file. Keep that recipe while
+      // the settings sheet pauses demand. Detector changes still retire bounds.
+      preference.variant, preference.identity, this.cropRevision])
   }
   private async prepare(entry: ReaderProcessingEntry, unit: ReaderUnit): Promise<void> {
     let asset: ReaderAsset | null = null

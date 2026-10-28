@@ -82,6 +82,8 @@ The following are existing preservation requirements, not new feature work:
 - Preload demand rolls with navigation, range, policy and unit changes; an
   initial warm window is not continuous preload. Transport warming is not
   decode or visible presentation. Hosts retain their own bounded cache owners.
+- Crop on/off reuses ready enhanced/translated recipes. Model/translation
+  identity and detector revision still invalidate their prepared results.
 - Paged reading projects host-verified neighboring chapters into the same native
   Swiper. Its render index/keys are separate from the selected chapter's local
   display index/count; every frame keeps its real unit/page identity. A boundary

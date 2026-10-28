@@ -1784,7 +1784,10 @@ export class ReaderPagedSession {
     const policy = this.state.kind === 'original' && this.state.phase === 'ready' ? this.processingPolicy : null
     const selected = this.pagerSelectedIndex()
     const demanded = this.resourceWindowIndexes.slice()
-    for (let index = selected + 1; index < this.pagerRows.length && index <= selected + this.preloadDepth; index++) {
+    // Automatic translation owns one future recipe even when image preloading
+    // is zero. This does not add a native Image lease or invent another chapter.
+    const lookahead = Math.max(this.preloadDepth, policy?.automaticNext === true ? 1 : 0)
+    for (let index = selected + 1; index < this.pagerRows.length && index <= selected + lookahead; index++) {
       if (!demanded.includes(index)) demanded.push(index)
     }
     const contexts: ReaderWindowUnit[] = []
@@ -1926,7 +1929,8 @@ export class ReaderPagedSession {
     const selected = this.continuousSelectedIndex()
     const end = this.continuousEnd >= 0 ? this.continuousEnd : selected
     const demanded = this.resourceWindowIndexes.slice()
-    for (let index = end + 1; index < this.continuousRows.length && index <= end + this.preloadDepth; index++) {
+    const lookahead = Math.max(this.preloadDepth, policy.automaticNext ? 1 : 0)
+    for (let index = end + 1; index < this.continuousRows.length && index <= end + lookahead; index++) {
       if (!demanded.includes(index)) demanded.push(index)
     }
     const contexts: ReaderWindowUnit[] = []
