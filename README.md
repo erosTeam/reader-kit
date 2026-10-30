@@ -85,6 +85,9 @@ The following are existing preservation requirements, not new feature work:
 - Preload demand rolls with navigation, range, policy and unit changes; an
   initial warm window is not continuous preload. Transport warming is not
   decode or visible presentation. Hosts retain their own bounded cache owners.
+  A host resolving legacy chapter chronology beside a readable page can call
+  `refreshAdjacency()` to publish the resulting neighbors and resume lookahead;
+  this must retain the current anchor, native topology and decoded images.
 - Crop on/off reuses ready enhanced/translated recipes. Model/translation
   identity and detector revision still invalidate their prepared results.
 - Paged reading projects host-verified neighboring chapters into the same native

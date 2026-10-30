@@ -1504,6 +1504,25 @@ test('continuous demand retains preceding rows while a proven terminal row owns 
 })
 
 
+test('background chronology refresh keeps the current image and anchor while enabling adjacency', async () => {
+  const { session, key, calls } = setup({ count: 1 })
+  let ready = false
+  session.catalog.adjacent = (unit, direction) => ready && direction === 'next'
+    ? new ReaderUnitKey(unit.key.scope, unit.key.work, 'B') : null
+  await session.open(key); await tick()
+  const before = session.snapshot(), loaded = calls.load.length, released = calls.release.length
+  assert.equal(before.canNextUnit, false)
+  ready = true
+  session.refreshAdjacency()
+  const after = session.snapshot()
+  assert.equal(after.canNextUnit, true)
+  assert.deepEqual(after.anchor, before.anchor)
+  assert.equal(after.topologyRevision, before.topologyRevision)
+  assert.equal(calls.load.length, loaded)
+  assert.equal(calls.release.length, released)
+  session.close()
+})
+
 test('next-unit warming uses the remaining page budget without selecting or opening that unit', async () => {
   // The user requested a page-count budget that continues across chapters:
   // the one remaining page in this unit consumes one of two lookahead pages.

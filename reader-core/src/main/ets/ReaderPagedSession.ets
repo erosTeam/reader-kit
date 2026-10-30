@@ -1339,6 +1339,17 @@ export class ReaderPagedSession {
     if (target !== null) await this.open(target)
   }
 
+  /** A host may resolve legacy chapter chronology beside a readable page.
+   * Refresh only its neighboring units, retaining current images and position. */
+  refreshAdjacency(): void {
+    if (this.disposed || this.state.phase !== 'ready' || this.state.unit === null) return
+    this.state.canPreviousUnit = this.catalog.adjacent(this.state.unit.copy(), 'previous') !== null
+    this.state.canNextUnit = this.catalog.adjacent(this.state.unit.copy(), 'next') !== null
+    this.nextUnitPreloadSignature = ''
+    this.scheduleNextUnitPreload()
+    this.emit()
+  }
+
   async retry(): Promise<void> {
     if (this.disposed) return
     if (this.pendingUnit !== null) await this.open(this.pendingUnit, this.pendingIndex)
