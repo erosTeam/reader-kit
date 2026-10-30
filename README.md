@@ -116,6 +116,10 @@ The following are existing preservation requirements, not new feature work:
   Reuse existing leaves/adapters; do not copy a complete app into the Kit.
   Hosts retain manual resume semantics and authorize automatic continuation
   from their own verified sequence; a manual catalog fallback is not automatic authorization.
+- Sharing from the native More menu waits for its real disappearance before
+  notifying the media action. Dismissal alone does not share; inactive/disposed
+  chrome or a changed chapter, topology or navigation cancels the pending action.
+  Hosts using the separate share button keep their existing direct action.
 
 Validate every exposed behavior in one declared complete user interval, from
 its source state through return. A visible missing background, premature

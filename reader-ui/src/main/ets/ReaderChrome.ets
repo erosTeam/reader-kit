@@ -92,6 +92,7 @@ export struct ReaderChrome {
   private moreUnit: ReaderUnitKey | null = null
   private moreTopology: number = -1
   private moreNavigation: number = -1
+  private moreSharePending: boolean = false
 
   @Monitor('snapshot', 'active')
   onSnapshotChanged(): void {
@@ -106,7 +107,7 @@ export struct ReaderChrome {
         this.snapshot.navigationRevision !== this.seekNavigation)) this.cancelSeek()
   }
 
-  aboutToDisappear(): void { this.cancelSeek(); this.onMenuVisible(false) }
+  aboutToDisappear(): void { this.moreSharePending = false; this.cancelSeek(); this.onMenuVisible(false) }
 
   private cancelSeek(): void {
     const hadPreview = this.seekUnit !== null
@@ -373,6 +374,20 @@ export struct ReaderChrome {
       this.saveTarget(choice) !== null) this.onSave(choice)
   }
 
+  private finishMoreMenu(): void {
+    this.moreShown = false
+    this.onMenuVisible(false)
+    const share = this.moreSharePending
+    this.moreSharePending = false
+    // Surface rejects sharing while a native menu is visible. Dispatch only
+    // after bindMenu's real disappearance, retaining the selected chapter/page.
+    if (share && this.active && this.shareAvailable && !this.shareBusy && !this.saveBusy &&
+      !this.informationBusy && !this.snapshot.originalPreparing && this.snapshot.phase === 'ready' &&
+      this.moreUnit !== null && this.snapshot.unit?.key.equals(this.moreUnit) &&
+      this.snapshot.topologyRevision === this.moreTopology &&
+      this.snapshot.navigationRevision === this.moreNavigation) this.onShare()
+  }
+
   @Builder
   private MoreSaveChoice() {
     Menu() {
@@ -429,9 +444,8 @@ export struct ReaderChrome {
         MenuItem({ content: $r('app.string.rkit_share_image') })
           .enabled(this.active && !this.shareBusy && !this.saveBusy && !this.snapshot.originalPreparing)
           .onClick((): void => {
+            this.moreSharePending = true
             this.moreShown = false
-            if (this.moreUnit !== null && this.snapshot.unit?.key.equals(this.moreUnit) &&
-              this.snapshot.navigationRevision === this.moreNavigation) this.onShare()
           })
       }
       if (this.externalOpenAvailable) {
@@ -654,6 +668,7 @@ export struct ReaderChrome {
                 this.chapterNavigationAvailable && this.snapshot.phase === 'ready') &&
                 !this.chapterNavigationBusy && !this.informationBusy && !this.shareBusy && !this.saveBusy && !this.snapshot.originalPreparing)
               .onClick((): void => {
+                this.moreSharePending = false
                 this.moreUnit = this.snapshot.unit?.key.copy() ?? null
                 this.moreTopology = this.snapshot.topologyRevision
                 this.moreNavigation = this.snapshot.navigationRevision
@@ -663,7 +678,7 @@ export struct ReaderChrome {
                 placement: Placement.BottomRight,
                 systemMaterial: this.menuMaterial(),
                 aboutToAppear: (): void => { this.onMenuVisible(true) },
-                onDisappear: (): void => { this.moreShown = false; this.onMenuVisible(false) },
+                onDisappear: (): void => { this.finishMoreMenu() },
               })
           }
         }.width('100%').height(56).alignItems(VerticalAlign.Center)
