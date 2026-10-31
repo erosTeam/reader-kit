@@ -1,3 +1,4 @@
+import { ReaderImageEffects, ReaderImageEffectsLayer } from './ReaderImageEffects'
 import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPart, ReaderDisplayPolicy, ReaderSnapshot, ReaderAssetNotice,
   ReaderUnitKey, ReaderFragment, readerPolicyRotatesPage, readerPagedFrameAspectRatio } from '@reader-kit/core'
 import { ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/core'
@@ -105,6 +106,7 @@ export struct ReaderPagedViewport {
   @Require @Param viewportWidth: number
   @Require @Param viewportHeight: number
   @Param loadingInk: ResourceColor = Color.White
+  @Param imageEffects: ReaderImageEffects = new ReaderImageEffects()
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param pageGap: number = 0
   @Param doubleTapEnabled: boolean = true
@@ -469,7 +471,7 @@ export struct ReaderPagedViewport {
           // Only stable identity comes from the ForEach closure. Cell state is
           // resolved from the current snapshot so same-key updates are not lost.
           ReaderPagedCell({
-            imageInterpolation: this.imageInterpolation, loadingInk: this.loadingInk,
+            imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects, loadingInk: this.loadingInk,
             snapshot: this.snapshot, slotId: frame.slotId,
             entryTransition: this.entryTransition,
             entryMeasurement: this.entryMeasurement,
@@ -552,6 +554,7 @@ export struct ReaderPagedViewport {
 @ComponentV2
 struct ReaderPagedCell {
   @Param loadingInk: ResourceColor = Color.White
+  @Param imageEffects: ReaderImageEffects = new ReaderImageEffects()
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Require @Param snapshot: ReaderPagedSnapshot
   @Param entryTransition: ReaderEntryTransition | null = null
@@ -692,7 +695,7 @@ struct ReaderPagedCell {
         // replacement it keeps the same presented URI/id/native node in front;
         // the conditional second site below alone owns the new request.
         ReaderPagedImage({
-          imageInterpolation: this.imageInterpolation,
+          imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
           frame: this.presentedFrame(), selectionId: this.snapshot.selectionId,
           topologyRevision: this.snapshot.topologyRevision, navigationRevision: this.snapshot.navigationRevision,
           entryTransition: this.retainedFrameValue === null ? this.entryTransition : null,
@@ -730,7 +733,7 @@ struct ReaderPagedCell {
           .zIndex(this.retainedFrameValue !== null && this.frame().asset.phase === 'decoding' ? 1 : 0)
         if (this.retainedFrameValue !== null) {
           ReaderPagedImage({
-            imageInterpolation: this.imageInterpolation,
+            imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
             frame: this.frame(), selectionId: this.snapshot.selectionId,
             topologyRevision: this.snapshot.topologyRevision, navigationRevision: this.snapshot.navigationRevision,
             entryTransition: this.entryTransition,
@@ -766,6 +769,7 @@ struct ReaderPagedCell {
 
 @ComponentV2
 export struct ReaderPagedImage {
+  @Param imageEffects: ReaderImageEffects = new ReaderImageEffects()
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param quarantineOriginal: boolean = false
   @Param guardUndecodedOriginal: boolean = false
@@ -1229,6 +1233,7 @@ export struct ReaderPagedImage {
   private renderHeight(): number { return this.rotateClockwise ? this.paintWidth() : this.paintHeight() }
 
   build() {
+    ReaderImageEffectsLayer({ effects: this.imageEffects }) {
     Stack() {
       if (this.frame.asset.uri.length > 0 && this.frame.asset.kind === 'thumbnail' &&
         this.frame.asset.page?.thumbnail.kind === 'sprite') {
@@ -1316,5 +1321,6 @@ export struct ReaderPagedImage {
       this.publishEntryTarget()
       this.scheduleNativeStability()
     })
+    }
   }
 }

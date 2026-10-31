@@ -1,3 +1,4 @@
+import { ReaderImageEffects, ReaderImageEffectsLayer } from './ReaderImageEffects'
 import { ReaderChromeAppearance, DEFAULT_READER_CHROME_APPEARANCE } from './ReaderChromeAppearance'
 import { ReaderSystemBarController } from './ReaderSystemBarController'
 import { ReaderModeControlParams } from './ReaderModeControl'
@@ -50,6 +51,7 @@ class ReaderChromeAfterFrame extends FrameCallback {
 /** Reading composition only. The host owns its route, window and persistence. */
 @ComponentV2
 export struct ReaderSurface {
+  @Param imageEffects: ReaderImageEffects = new ReaderImageEffects()
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param canvasBackground: ResourceColor = Color.Black
   @Param canvasForeground: ResourceColor = Color.White
@@ -984,7 +986,7 @@ export struct ReaderSurface {
         if (this.state.policy.layout === 'continuous') {
           ReaderContinuousSurface({
             loadingInk: this.loadingInk ?? this.canvasForeground,
-            imageInterpolation: this.imageInterpolation,
+            imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
             doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
             pageGap: this.pageGap,
             snapshot: this.state, active: this.active,
@@ -1021,7 +1023,7 @@ export struct ReaderSurface {
         } else {
           ReaderPagerSurface({
             loadingInk: this.loadingInk ?? this.canvasForeground,
-            imageInterpolation: this.imageInterpolation,
+            imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
             doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
             pageGap: this.pageGap,
             snapshot: this.state, active: this.active,

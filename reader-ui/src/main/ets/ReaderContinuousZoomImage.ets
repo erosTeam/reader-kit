@@ -1,3 +1,4 @@
+import { ReaderImageEffects, ReaderImageEffectsLayer } from './ReaderImageEffects'
 import { ReaderPagedFrame, ReaderFragment, ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/core'
 import { ReaderPagedImage } from './ReaderPagedViewport'
 import { ReaderTapSequence } from './ReaderTapSequence'
@@ -10,6 +11,7 @@ import { readerRetainedFrame } from './ReaderRetainedFrame'
 /** Image interaction only. The parent List owns scrolling, stacking and visible-position reporting. */
 @ComponentV2
 export struct ReaderContinuousZoomImage {
+  @Param imageEffects: ReaderImageEffects = new ReaderImageEffects()
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param doubleTapEnabled: boolean = true
   @Param doubleTapIntervalMs: number = 300
@@ -237,7 +239,7 @@ export struct ReaderContinuousZoomImage {
   build() {
     Stack() {
       ReaderPagedImage({
-        imageInterpolation: this.imageInterpolation,
+        imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
         frame: this.presentedFrame(), slotId: this.frame.slotId, assetRequestId: this.presentedFrame().asset.assetRequestId,
         alignGeometryBeforeVisible: this.retainedFrameValue === null,
         selectionId: 0, renderedFragment: this.frame.part.fragment, active: false,
@@ -260,7 +262,7 @@ export struct ReaderContinuousZoomImage {
         .zIndex(this.retainedFrameValue !== null && this.frame.asset.phase === 'decoding' ? 1 : 0)
       if (this.retainedFrameValue !== null) {
         ReaderPagedImage({
-          imageInterpolation: this.imageInterpolation,
+          imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
           frame: this.frame, slotId: this.frame.slotId, assetRequestId: this.frame.asset.assetRequestId,
           alignGeometryBeforeVisible: true,
           selectionId: 0, renderedFragment: this.frame.part.fragment, active: false,

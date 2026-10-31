@@ -1,3 +1,4 @@
+import { ReaderImageEffects, ReaderImageEffectsLayer } from './ReaderImageEffects'
 import { FrameCallback, LengthMetrics } from '@kit.ArkUI'
 import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderFragment, ReaderAssetNotice, readerPolicyRotatesPage, readerPagedFrameAspectRatio } from '@reader-kit/core'
 import { ReaderContinuousZoomImage } from './ReaderContinuousZoomImage'
@@ -57,6 +58,7 @@ class ReaderContinuousAfterLayout extends FrameCallback {
 @ComponentV2
 export struct ReaderContinuousSurface {
   @Param loadingInk: ResourceColor = Color.White
+  @Param imageEffects: ReaderImageEffects = new ReaderImageEffects()
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param doubleTapEnabled: boolean = true
   @Param doubleTapIntervalMs: number = 300
@@ -85,7 +87,7 @@ export struct ReaderContinuousSurface {
       if (this.snapshot.displayKeys.length > 0) {
         ForEach([this.snapshot.topologyRevision], (revision: number) => {
           ReaderContinuousList({
-            imageInterpolation: this.imageInterpolation, loadingInk: this.loadingInk,
+            imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects, loadingInk: this.loadingInk,
             doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
             pageGap: this.pageGap,
             snapshot: this.snapshot,
@@ -112,6 +114,7 @@ export struct ReaderContinuousSurface {
 @ComponentV2
 struct ReaderContinuousList {
   @Param loadingInk: ResourceColor = Color.White
+  @Param imageEffects: ReaderImageEffects = new ReaderImageEffects()
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param doubleTapEnabled: boolean = true
   @Param doubleTapIntervalMs: number = 300
@@ -561,7 +564,7 @@ struct ReaderContinuousList {
       LazyForEach(this.source, (key: string) => {
         ListItem() {
           ReaderContinuousCell({
-            imageInterpolation: this.imageInterpolation, loadingInk: this.loadingInk,
+            imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects, loadingInk: this.loadingInk,
             doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
             snapshot: this.cellSnapshots.forItem(this.snapshot, key, this.entryTransition?.pending() !== true),
             entryTransition: this.entryTransition,
@@ -654,6 +657,7 @@ struct ReaderContinuousList {
 @ComponentV2
 struct ReaderContinuousCell {
   @Param loadingInk: ResourceColor = Color.White
+  @Param imageEffects: ReaderImageEffects = new ReaderImageEffects()
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param doubleTapEnabled: boolean = true
   @Param doubleTapIntervalMs: number = 300
@@ -792,7 +796,7 @@ struct ReaderContinuousCell {
       Stack() {
         ForEach(this.snapshot.frames, (frame: ReaderPagedFrame) => {
           ReaderContinuousZoomImage({
-            imageInterpolation: this.imageInterpolation,
+            imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
             doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
             frame: this.snapshot.frames[0], navigation: this.snapshot.navigationRevision,
             entryTransition: this.entryTransition, entryPosition: this.entryPosition,

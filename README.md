@@ -114,6 +114,7 @@ The following are existing preservation requirements, not new feature work:
 - Close/background/unit replacement retire stale demand and callbacks. Return
   restores the source window and measures the current target; entry-time
   geometry cannot stand in for the current target after layout changes.
+- Display effects are optional drawable-only presentation. Tint blending, grayscale, inversion and dimming never mutate prepared files or loading/chrome/status siblings. Host preferences and window brightness remain host-owned; the all-disabled default preserves the other consumers.
 - A consumer-specific capability remains optional. A host without chapter,
   processed-image or media support does not gain placeholder product actions.
   Reuse existing leaves/adapters; do not copy a complete app into the Kit.

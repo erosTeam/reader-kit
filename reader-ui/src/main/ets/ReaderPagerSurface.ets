@@ -1,3 +1,4 @@
+import { ReaderImageEffects, ReaderImageEffectsLayer } from './ReaderImageEffects'
 import { ReaderPagedSnapshot, ReaderFragment } from '@reader-kit/core'
 import { ReaderPagedViewport } from './ReaderPagedViewport'
 import { ReaderImagePlaceholder, ReaderImagePresentation } from './ReaderImagePlaceholder'
@@ -89,6 +90,7 @@ class ReaderPagerDataSource implements IDataSource {
 @ComponentV2
 export struct ReaderPagerSurface {
   @Param loadingInk: ResourceColor = Color.White
+  @Param imageEffects: ReaderImageEffects = new ReaderImageEffects()
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param doubleTapEnabled: boolean = true
   @Param doubleTapIntervalMs: number = 300
@@ -118,7 +120,7 @@ export struct ReaderPagerSurface {
     Stack() {
       if (this.snapshot.pagerKeys.length > 0) {
         ReaderNativePager({
-          imageInterpolation: this.imageInterpolation, loadingInk: this.loadingInk,
+          imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects, loadingInk: this.loadingInk,
           doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
           pageGap: this.pageGap,
           snapshot: this.snapshot, active: this.active,
@@ -144,6 +146,7 @@ export struct ReaderPagerSurface {
 @ComponentV2
 struct ReaderNativePager {
   @Param loadingInk: ResourceColor = Color.White
+  @Param imageEffects: ReaderImageEffects = new ReaderImageEffects()
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param doubleTapEnabled: boolean = true
   @Param doubleTapIntervalMs: number = 300
@@ -355,7 +358,7 @@ struct ReaderNativePager {
     Swiper(this.controller) {
       LazyForEach(this.pageSource, (item: ReaderPagerRenderItem) => {
         ReaderPagedViewport({
-          imageInterpolation: this.imageInterpolation, loadingInk: this.loadingInk,
+          imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects, loadingInk: this.loadingInk,
           doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
           pageGap: this.pageGap,
           viewportWidth: this.viewportWidth, viewportHeight: this.viewportHeight,
