@@ -1,6 +1,6 @@
 import { ReaderImageEffects, ReaderImageEffectsLayer } from './ReaderImageEffects'
 import { FrameCallback, LengthMetrics } from '@kit.ArkUI'
-import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderFragment, ReaderAssetNotice, readerPolicyRotatesPage, readerPagedFrameAspectRatio } from '@reader-kit/core'
+import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderFragment, ReaderAssetNotice, ReaderInputPort, ReaderMoveIntent, readerPolicyRotatesPage, readerPagedFrameAspectRatio } from '@reader-kit/core'
 import { ReaderContinuousZoomImage } from './ReaderContinuousZoomImage'
 import { ReaderFailurePanel } from './ReaderFailurePanel'
 import { ReaderAssetNoticePanel } from './ReaderAssetNoticePanel'
@@ -63,6 +63,8 @@ export struct ReaderContinuousSurface {
   @Param doubleTapEnabled: boolean = true
   @Param doubleTapIntervalMs: number = 300
   @Param pageGap: number = 0
+  @Param pageTurnAnimation: boolean = false
+  @Param input: ReaderInputPort | null = null
   @Param entryTransition: ReaderEntryTransition | null = null
   @Require @Param snapshot: ReaderPagedSnapshot
   @Require @Param active: boolean
@@ -89,7 +91,7 @@ export struct ReaderContinuousSurface {
           ReaderContinuousList({
             imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects, loadingInk: this.loadingInk,
             doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
-            pageGap: this.pageGap,
+            pageGap: this.pageGap, pageTurnAnimation: this.pageTurnAnimation, input: this.input,
             snapshot: this.snapshot,
             active: this.active && this.snapshot.phase === 'ready' &&
               revision === this.snapshot.topologyRevision,
@@ -119,6 +121,8 @@ struct ReaderContinuousList {
   @Param doubleTapEnabled: boolean = true
   @Param doubleTapIntervalMs: number = 300
   @Param pageGap: number = 0
+  @Param pageTurnAnimation: boolean = false
+  @Param input: ReaderInputPort | null = null
   @Param entryTransition: ReaderEntryTransition | null = null
   @Local private entryPosition: ReaderContinuousEntryPosition | null = null
   @Require @Param snapshot: ReaderPagedSnapshot
@@ -139,6 +143,7 @@ struct ReaderContinuousList {
       _request: number, _noticeId: string): Promise<boolean> => false
   @Event onBoundary: (direction: ReaderBoundaryDirection, topologyRevision: number,
     navigationRevision: number) => void = () => {}
+  private inputConnection: number = 0
   private source: ReaderContinuousIndexSource = new ReaderContinuousIndexSource([])
   private cellSnapshots: ReaderContinuousCellSnapshots = new ReaderContinuousCellSnapshots()
   private scroller: ListScroller = new ListScroller()
@@ -210,6 +215,7 @@ struct ReaderContinuousList {
   }
 
   aboutToAppear(): void {
+    this.inputConnection = this.input?.connect((intent: ReaderMoveIntent): boolean => this.moveViewport(intent)) ?? 0
     this.source = new ReaderContinuousIndexSource(this.snapshot.displayKeys)
     this.lastNavigation = this.snapshot.navigationRevision
     this.first = this.snapshot.continuousIndex
@@ -219,6 +225,7 @@ struct ReaderContinuousList {
 
   aboutToDisappear(): void {
     this.disposed = true
+    this.input?.disconnect(this.inputConnection)
     this.positionTarget = -1
     this.entryTransition?.cancel()
     this.entryPosition = null
@@ -326,20 +333,33 @@ struct ReaderContinuousList {
       const action = this.onTap(x / width, y / height)
       if (!this.active || this.disposed || this.pendingPosition || this.positionInFlight ||
         this.lockedKey.length > 0 || navigation !== this.snapshot.navigationRevision) return
-      if (action === 'previous' || action === 'left') {
-        // An explicit scrollBy also supersedes entry positioning; it need not
-        // produce the same onWillScroll callback as a finger-driven gesture.
-        this.releasePosition()
-        const atStart = this.first === 0 && this.scroller.currentOffset().yOffset <= 0.5
-        if (atStart) this.onBoundary('previous', this.createdRevision, navigation)
-        else this.scroller.scrollBy(0, -height * 0.75)
-      } else if (action === 'next' || action === 'right') {
-        this.releasePosition()
-        const atEnd = this.last + 1 >= this.snapshot.displayKeys.length && this.scroller.isAtEnd()
-        if (atEnd) this.onBoundary('next', this.createdRevision, navigation)
-        else this.scroller.scrollBy(0, height * 0.75)
-      }
+      if (action === 'previous' || action === 'left') this.moveViewport('previous')
+      else if (action === 'next' || action === 'right') this.moveViewport('next')
     } catch (_) { /* A missing current viewport is not permission to infer a tap position. */ }
+  }
+
+  /** Explicit taps and hardware keys scroll the same native viewport, not image indices.
+   * Keep the established 25% overlap and native observed-position/progress owner. */
+  private moveViewport(intent: ReaderMoveIntent): boolean {
+    if (!this.active || this.disposed || this.pendingPosition || this.positionInFlight || !this.fullyVisible ||
+      this.moving || this.lockedKey.length > 0 || this.snapshot.phase !== 'ready' ||
+      this.createdRevision !== this.snapshot.topologyRevision || this.entryTransition?.blocksInput() ||
+      this.viewHeight <= 1) return false
+    try {
+      const offset = this.scroller.currentOffset().yOffset
+      const previous = intent === 'previous'
+      this.releasePosition()
+      if ((previous && this.first === 0 && offset <= 0.5) ||
+        (!previous && this.last + 1 >= this.snapshot.displayKeys.length && this.scroller.isAtEnd())) {
+        this.onBoundary(intent, this.createdRevision, this.snapshot.navigationRevision)
+      } else if (this.pageTurnAnimation) {
+        this.scroller.scrollTo({ xOffset: 0,
+          yOffset: Math.max(0, offset + (previous ? -1 : 1) * this.viewHeight * 0.75), animation: true })
+      } else {
+        this.scroller.scrollBy(0, (previous ? -1 : 1) * this.viewHeight * 0.75)
+      }
+      return true
+    } catch (_) { return false }
   }
 
   private imageAspectRatio(index: number): number {

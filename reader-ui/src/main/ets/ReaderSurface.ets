@@ -157,7 +157,8 @@ export struct ReaderSurface {
   private pagerCommandSerial: number = 0
   private zoomResetSerial: number = 0
   private autoReadController: ReaderAutoReadController = new ReaderAutoReadController((): boolean => {
-    return this.externalMove('next')
+    // Automatic reading keeps its existing per-image dwell/readiness contract.
+    return this.externalMove('next', false)
   }, undefined, (): void => { this.session.requestAutoReadTargetSource() })
   private saveController: ReaderImageSaveController = new ReaderImageSaveController()
   private saveFeedback: ResourceStr | null = null
@@ -872,16 +873,19 @@ export struct ReaderSurface {
     return this.session.resolveNoticeItem(topology, navigation, key, slot, request, noticeId)
   }
 
-  private externalMove(intent: ReaderMoveIntent): boolean {
+  private externalMove(intent: ReaderMoveIntent, continuousViewport: boolean = true): boolean {
     if (this.entryTransition?.phase === 'layout' || !this.active || this.state.phase !== 'ready' ||
       this.touching || this.menuVisible || this.shareBusy || this.saveBusy || this.informationBusy ||
       this.tapZonePreviewVisible || this.previewIndex >= 0 ||
       this.inputTopology !== this.state.topologyRevision || this.inputLocked) return false
-    return this.requestMove(intent)
+    return this.requestMove(intent, continuousViewport)
   }
 
-  private requestMove(intent: ReaderMoveIntent): boolean {
+  private continuousInput: ReaderInputPort = new ReaderInputPort()
+
+  private requestMove(intent: ReaderMoveIntent, continuousViewport: boolean = true): boolean {
     const before = this.session.snapshot()
+    if (continuousViewport && before.policy.layout === 'continuous') return this.continuousInput.move(intent)
     if (this.pageTurnAnimation && before.policy.layout !== 'continuous' &&
       before.topologyRevision === this.state.topologyRevision &&
       before.navigationRevision === this.state.navigationRevision &&
@@ -988,7 +992,7 @@ export struct ReaderSurface {
             loadingInk: this.loadingInk ?? this.canvasForeground,
             imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
             doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
-            pageGap: this.pageGap,
+            pageGap: this.pageGap, pageTurnAnimation: this.pageTurnAnimation, input: this.continuousInput,
             snapshot: this.state, active: this.active,
             zoomResetCommand: this.zoomResetCommand,
             entryTransition: this.entryTransition,

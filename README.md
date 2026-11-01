@@ -115,6 +115,10 @@ The following are existing preservation requirements, not new feature work:
   one physical-pixel-aligned size. Independent aspect-ratio/percentage layout
   must not give parent and drawable different rounded edges. Do not inflate or
   overlap images to cover the resulting seam; paged geometry stays separate.
+  Explicit taps and hardware next/previous commands scroll this same native
+  viewport with the same reading overlap. The host animation preference selects
+  native smooth or immediate scrolling. Slider/thumbnail seeks still address
+  pages, and automatic-reading dwell retains its existing per-item contract.
 - Close/background/unit replacement retire stale demand and callbacks. Return
   restores the source window and measures the current target; entry-time
   geometry cannot stand in for the current target after layout changes.
