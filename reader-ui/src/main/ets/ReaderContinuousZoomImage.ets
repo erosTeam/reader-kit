@@ -241,6 +241,7 @@ export struct ReaderContinuousZoomImage {
       ReaderPagedImage({
         imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
         frame: this.presentedFrame(), slotId: this.frame.slotId, assetRequestId: this.presentedFrame().asset.assetRequestId,
+        allocatedWidth: this.componentWidth, allocatedHeight: this.imageHeight,
         alignGeometryBeforeVisible: this.retainedFrameValue === null,
         selectionId: 0, renderedFragment: this.frame.part.fragment, active: false,
         rotateClockwise: this.rotateClockwise,
@@ -264,6 +265,7 @@ export struct ReaderContinuousZoomImage {
         ReaderPagedImage({
           imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
           frame: this.frame, slotId: this.frame.slotId, assetRequestId: this.frame.asset.assetRequestId,
+          allocatedWidth: this.componentWidth, allocatedHeight: this.imageHeight,
           alignGeometryBeforeVisible: true,
           selectionId: 0, renderedFragment: this.frame.part.fragment, active: false,
           rotateClockwise: this.rotateClockwise,

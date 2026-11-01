@@ -111,6 +111,10 @@ The following are existing preservation requirements, not new feature work:
   Webtoon position follows measured page ends (falling back to the tall page
   crossing the viewport top); native decoded-pixel receipts still gate progress.
   An explicit seek retains its selected visible page until user scrolling takes over.
+  Continuous row height, native image allocation and position calculations share
+  one physical-pixel-aligned size. Independent aspect-ratio/percentage layout
+  must not give parent and drawable different rounded edges. Do not inflate or
+  overlap images to cover the resulting seam; paged geometry stays separate.
 - Close/background/unit replacement retire stale demand and callbacks. Return
   restores the source window and measures the current target; entry-time
   geometry cannot stand in for the current target after layout changes.

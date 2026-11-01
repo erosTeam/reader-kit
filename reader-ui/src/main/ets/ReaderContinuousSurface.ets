@@ -376,7 +376,15 @@ struct ReaderContinuousList {
     return readerPolicyRotatesPage(this.snapshot.policy, page ?? null)
   }
 
-  private imageHeight(index: number): number { return this.viewWidth / this.imageAspectRatio(index) }
+  private imageHeight(index: number): number {
+    const context = this.getUIContext()
+    // The List row, native Image and position observer must share one physical
+    // pixel height. Independent aspect-ratio/100% descendants can round to
+    // different edges as the native list moves through fractional offsets.
+    // Allocate the real row once; do not enlarge/overlap drawable pixels.
+    return context.px2vp(Math.max(1, Math.round(context.vp2px(
+      this.viewWidth / this.imageAspectRatio(index)))))
+  }
 
   private rowHeight(index: number): number {
     const frame = this.snapshot.forItem(this.snapshot.displayKeys[index]).frames[0]
@@ -577,7 +585,6 @@ struct ReaderContinuousList {
             onLock: (identity: string, locked: boolean): void => { this.onImageLock(key, identity, locked) },
             onZoomedChange: (identity: string, zoomed: boolean): void => { this.onImageZoomed(key, identity, zoomed) },
             imageHeight: this.imageHeight(this.snapshot.displayKeys.indexOf(key)),
-            imageAspectRatio: this.imageAspectRatio(this.snapshot.displayKeys.indexOf(key)),
             rotateClockwise: this.rotates(this.snapshot.displayKeys.indexOf(key)),
             onRetry: (slot: number, request: number): void => {
               this.onRetry(this.createdRevision, key, slot, request)
@@ -665,7 +672,6 @@ struct ReaderContinuousCell {
   @Param entryPosition: ReaderContinuousEntryPosition | null = null
   @Require @Param snapshot: ReaderContinuousCellSnapshot
   @Require @Param imageHeight: number
-  @Require @Param imageAspectRatio: number
   @Param rotateClockwise: boolean = false
   @Require @Param active: boolean
   @Param zoomResetCommand: ReaderZoomResetCommand | null = null
@@ -817,7 +823,7 @@ struct ReaderContinuousCell {
         ReaderImagePlaceholder({ loadingInk: this.loadingInk, presentation: this.imagePresentation(),
           frame: this.snapshot.frames[0] ?? null,
           entryTransition: this.entryTransition }).zIndex(2)
-      }.width('100%').aspectRatio(this.imageAspectRatio)
+      }.width('100%').height(this.imageHeight)
         .id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
     }
   }
