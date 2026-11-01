@@ -99,10 +99,6 @@ The following are existing preservation requirements, not new feature work:
   still follow their own bounded demand and a cached decode cannot write progress.
   Spread pairing and split-page decisions remain chapter-local. Hosts without
   verified adjacent-unit preparation retain their original optional capability.
-- Continuous image rows own their aspect ratio. Their native drawable fills
-  the rounded row and rounds its vertical edges outward within the existing clip,
-  preventing a second Contain fit from exposing the canvas at a shared edge.
-  Row geometry, source crop, scroll anchors and the paged fit remain unchanged.
 - Continuous reading presents verified adjacent chapters in one stable List.
   Rows retain their real unit/page identity; append/prepend uses incremental data
   notifications and preserves the visible key/offset. Native leases stay bounded

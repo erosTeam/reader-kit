@@ -769,9 +769,6 @@ struct ReaderPagedCell {
 
 @ComponentV2
 export struct ReaderPagedImage {
-  // A continuous row already owns the aspect ratio. Fill its rounded pixel
-  // bounds so Contain cannot introduce a second, subpixel letterbox.
-  @Param fillContinuousCell: boolean = false
   @Param imageEffects: ReaderImageEffects = new ReaderImageEffects()
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param quarantineOriginal: boolean = false
@@ -1275,14 +1272,7 @@ export struct ReaderPagedImage {
               this.entryLeafLaidOut = true
               this.publishEntryTarget()
             })
-            .objectFit(this.fillContinuousCell || this.frame.part.fragment !== 'whole' || this.frame.crop.applied()
-              ? ImageFit.Fill : ImageFit.Contain)
-            // Expand only the drawable within its existing clipped parent;
-            // never overlap rows, crop source pixels or alter scroll geometry.
-            .pixelRound(this.fillContinuousCell ? {
-              start: PixelRoundCalcPolicy.FORCE_FLOOR, top: PixelRoundCalcPolicy.FORCE_FLOOR,
-              end: PixelRoundCalcPolicy.FORCE_CEIL, bottom: PixelRoundCalcPolicy.FORCE_CEIL,
-            } : {})
+            .objectFit(this.frame.part.fragment !== 'whole' || this.frame.crop.applied() ? ImageFit.Fill : ImageFit.Contain)
             .position({
               x: -this.renderWidth() * this.frame.crop.region(this.frame.part).x / this.frame.crop.region(this.frame.part).width,
               y: -this.renderHeight() * this.frame.crop.region(this.frame.part).y / this.frame.crop.region(this.frame.part).height,
