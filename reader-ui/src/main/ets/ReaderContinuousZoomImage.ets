@@ -238,7 +238,7 @@ export struct ReaderContinuousZoomImage {
 
   build() {
     Stack() {
-      ReaderPagedImage({
+      ReaderPagedImage({ fillContinuousCell: true,
         imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
         frame: this.presentedFrame(), slotId: this.frame.slotId, assetRequestId: this.presentedFrame().asset.assetRequestId,
         alignGeometryBeforeVisible: this.retainedFrameValue === null,
@@ -261,7 +261,7 @@ export struct ReaderContinuousZoomImage {
         .animation({ duration: this.animating ? 180 : 0, curve: Curve.FastOutSlowIn })
         .zIndex(this.retainedFrameValue !== null && this.frame.asset.phase === 'decoding' ? 1 : 0)
       if (this.retainedFrameValue !== null) {
-        ReaderPagedImage({
+        ReaderPagedImage({ fillContinuousCell: true,
           imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
           frame: this.frame, slotId: this.frame.slotId, assetRequestId: this.frame.asset.assetRequestId,
           alignGeometryBeforeVisible: true,
