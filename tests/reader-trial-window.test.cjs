@@ -605,3 +605,25 @@ test('source window resize invalidates the empty-area restoration exception', as
   assert.equal(lease.getCloseSystemAvoidAreaResult(), 'ready')
   assert.equal(timers.pending.size, 0)
 })
+
+
+test('covered live lease can yield source chrome without admitting reader updates', async () => {
+  let active = true
+  const main = mainWindow(), { Lease } = fixture(async () => main)
+  const lease = new Lease(null, true, undefined, () => active)
+  lease.open({}); await drain()
+  await lease.presentation.presentChrome(true, true, true, () => active)
+  active = false
+  await lease.presentation.requestVisible(true, false, () => !active, true)
+  assert.equal(main.calls.filter(call => call[0] === 'write').at(-1)[1].statusBarContentColor, '#FF000000')
+  const coveredWrites = main.calls.filter(call => call[0] === 'write').length
+  await lease.presentation.presentChrome(true, true, true, () => true)
+  assert.equal(main.calls.filter(call => call[0] === 'write').length, coveredWrites)
+  active = true
+  await lease.presentation.presentChrome(true, true, true, () => active)
+  assert.equal(main.calls.filter(call => call[0] === 'write').at(-1)[1].statusBarContentColor, '#FFFFFFFF')
+  await lease.close()
+  const closedWrites = main.calls.filter(call => call[0] === 'write').length
+  await lease.presentation.requestVisible(true, false, () => true, true)
+  assert.equal(main.calls.filter(call => call[0] === 'write').length, closedWrites)
+})

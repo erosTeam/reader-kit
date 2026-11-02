@@ -151,7 +151,10 @@ export class ReaderTrialWindow {
     this.entry = entry
     this.rootPresentationSettled = rootPresentationSettled
     this.presentation = new ReaderSystemBarController(async (): Promise<window.Window | null> => this.mainWindow,
-      (): boolean => this.started && this.canPresent(),
+      // A covered live lease may return source chrome while reader presentation
+      // stays blocked. A closed lease never regains window ownership.
+      (_visible: boolean, restoringSource: boolean): boolean => this.started && !this.closed &&
+        (restoringSource || this.canPresent()),
       (win: window.Window, visible: boolean, restoring: boolean, current: () => boolean): Promise<void> =>
         writeReaderSystemBarVisibility(win, visible, !restoring, current), restoreStatusVisible !== null)
   }
