@@ -55,6 +55,10 @@ The following are existing preservation requirements, not new feature work:
   Core may retain a displayed resource across a mode switch; a new native
   viewport still waits for its own matching decode before ending this feedback.
   The retained in-place replacement branch keeps already readable pixels.
+  If a cached derivative supersedes an undecoded replacement, keep the last
+  actually presented lease and request epoch until the final candidate presents;
+  an undecoded candidate must not become the fallback or discard it. This also
+  preserves the separate native candidate site when both files have the same URI.
   Before a newly mounted pager reports its real dimensions, that same feedback
   belongs to the full viewport; measured page cells take it over after layout.
   Plain loading bars, tracks and labels use the host loading ink (defaulting to

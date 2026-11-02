@@ -492,12 +492,17 @@ export class ReaderSession {
     assetPlan: ReaderResolvedAssetPlan | null = null,
   ): Promise<void> {
     const targetVariantPlan = kind === 'original' ? assetPlan : null
+    // A cached derivative may supersede a source reload before native decode.
+    // Keep the last presented lease/epoch through that chain: dropping it can
+    // retarget the stable Image to the same URI without a new native callback.
+    const retainingReplacement = this.state.phase === 'decoding' && this.retiredAsset !== null &&
+      this.state.retainedUri.length > 0 && this.state.retainedAssetRequestId > 0
+    const hasPresentedAsset = (this.state.phase === 'displayed' || retainingReplacement) && this.asset !== null
     const isReplacingVariant = this.originalPlan !== targetVariantPlan &&
       this.state.unit !== null && this.state.unit.key.equals(unit.key) && this.state.sourceIndex === index &&
-      this.state.kind === kind && this.state.phase === 'displayed' && this.asset !== null
-    const retainDisplayed = (forceReload || isReplacingVariant) && this.state.phase === 'displayed' && this.state.unit !== null &&
-      this.state.unit.key.equals(unit.key) && this.state.sourceIndex === index && this.state.kind === kind &&
-      this.asset !== null
+      this.state.kind === kind && hasPresentedAsset
+    const retainDisplayed = (forceReload || isReplacingVariant) && hasPresentedAsset && this.state.unit !== null &&
+      this.state.unit.key.equals(unit.key) && this.state.sourceIndex === index && this.state.kind === kind
     this.originalPlan = kind === 'original' ? assetPlan : null
     const variant: ReaderAssetVariant = this.originalPlan?.variant ?? (this.originalPlan === null ? 'default' : 'original')
     const variantIdentity: string = this.originalPlan?.variant === 'enhanced' || this.originalPlan?.variant === 'translated'
@@ -565,10 +570,15 @@ export class ReaderSession {
         // consecutive replacement must retain the source that actually owned
         // the immediately preceding frame, not an older fallback whose Image
         // node has already left the active presentation chain.
-        this.releaseRetiredAsset()
-        this.retiredAsset = this.asset
-        this.state.retainedUri = this.state.uri
-        this.state.retainedAssetRequestId = this.state.assetRequestId
+        if (retainingReplacement) {
+          // The current asset never presented; it cannot replace the fallback.
+          this.releaseAsset()
+        } else {
+          this.releaseRetiredAsset()
+          this.retiredAsset = this.asset
+          this.state.retainedUri = this.state.uri
+          this.state.retainedAssetRequestId = this.state.assetRequestId
+        }
       }
       this.asset = asset
       this.state.sourceIndex = index

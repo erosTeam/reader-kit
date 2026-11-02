@@ -398,3 +398,38 @@ test('inactive viewport cannot observe and repeated identical observations do no
   assert.equal(session.snapshot().presentedAnchor.y, 0.8)
   session.close()
 })
+
+// 237: a cached enhancement can supersede a manual source reload before its decode.
+test('a superseded undecoded replacement keeps the last presented asset and releases each lease once', async () => {
+  const releases = [], snapshots = []
+  const assets = new Assets()
+  assets.load = async (_page, _kind, _cancel, force) =>
+    new ReaderAsset(force ? 'source' : 'enhanced', () => releases.push(force ? 'source' : 'presented'))
+  const session = new ReaderSession(new Catalog(), assets)
+  session.subscribe(snapshot => snapshots.push(snapshot))
+  await session.open(key())
+  const displayed = session.snapshot()
+  session.reportPresentation(displayed.assetRequestId, true)
+  await session.show(0, 'original', true)
+  const superseded = session.snapshot()
+  const plan = { page: superseded.page.copy(), variant: 'enhanced', identity: 'cached',
+    async load() { return new ReaderAsset('enhanced', () => releases.push('candidate')) } }
+  snapshots.length = 0
+  await session.show(0, 'original', false, plan)
+  const candidate = session.snapshot()
+  assert.equal(candidate.retainedUri, displayed.uri)
+  assert.equal(candidate.retainedAssetRequestId, displayed.assetRequestId)
+  assert.equal(candidate.phase, 'decoding')
+  assert.equal(candidate.needsImagePlaceholder(), false)
+  assert.ok(snapshots.every(s => s.hasDisplayedPixels()), 'no empty handoff during the superseding request')
+  assert.deepEqual(releases, ['source'])
+  session.reportPresentation(superseded.assetRequestId, true)
+  assert.equal(session.snapshot().phase, 'decoding', 'retired decode cannot present the new candidate')
+  assert.deepEqual(releases, ['source'])
+  session.reportPresentation(candidate.assetRequestId, true)
+  assert.equal(session.snapshot().phase, 'displayed')
+  assert.equal(session.snapshot().retainedUri, '')
+  assert.deepEqual(releases, ['source', 'presented'])
+  session.close()
+  assert.deepEqual(releases, ['source', 'presented', 'candidate'])
+})
