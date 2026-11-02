@@ -21,6 +21,16 @@ three different lifecycle implementations for a shared invariant.
 | Host application | Existing menus/settings semantics, preference/progress persistence, chapter preparation, media/processed-image actions, navigation and system-window ownership |
 | Host root transition | Valid source claim, source-to-target thumbnail flight, current return-target measurement and source restoration |
 
+
+File-backed border decoding, packed RGBA export, content fingerprinting and bounded
+crop caching belong to `ReaderFileCropService` in reader-ui; strength-aware pure
+detection and source-size bounds belong to reader-core. Hosts provide retained
+files/asset identities and their existing strength preference. The host crop model
+and service exports are compatibility names only, including retained Legacy paths.
+The original `ReaderFileCropSource` API retains its prior conservative policy;
+explicit host strengths retain their existing thresholds and 1-based Legacy seam
+semantics. Pixel buffer rows use `width * 4`, never native allocation stride.
+
 Before a product edit, recover the existing user behavior independently of the
 patch, then trace the changed owner, callers, writers, async callbacks, parent
 and sibling state, every applicable consumer, and the retained Legacy route.
@@ -654,9 +664,10 @@ No production reader, settings or progress migration is enabled.
 
 ## Optional asset-scoped border crop (D11)
 
-Hosts may attach a `ReaderImageCropSource` to a retained body asset. Detection stays
-in the host: NH and EH do not share their background-detection algorithm. The core
-fences results by asset/request identity and keeps crop metadata for the reading
+Hosts may attach a `ReaderImageCropSource` to a retained body asset. The shared
+`ReaderFileCropService` owns file decoding and border detection; hosts pass retained
+files and their saved strengths through compatibility exports. The core fences
+results by asset/request identity and keeps crop metadata for the reading
 unit even after an image slot is evicted. It never rewrites source dimensions or
 image files. Physical halves retain the original split boundary; continuous pages
 retain side crop while top/bottom crop applies only at the unit's outer edges.

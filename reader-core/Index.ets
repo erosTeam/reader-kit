@@ -30,3 +30,5 @@ export { ReaderTemporaryVariantSource, ReaderTemporaryVariantScope, ReaderTempor
 export { ReaderProcessingPolicy, ReaderProcessingCancellation, ReaderProcessingCoordinator,
   ReaderProcessingState, ReaderProcessingPhase, ReaderProcessingPriority, ReaderProcessingResult }
   from './src/main/ets/ReaderProcessingCoordinator'
+
+export { ReaderPageCropBounds, ReaderPageCropDetector, ReaderPageCropStrength } from './src/main/ets/ReaderPageCropBounds'

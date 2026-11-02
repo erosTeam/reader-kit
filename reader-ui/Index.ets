@@ -54,3 +54,5 @@ export { ReaderAssetNoticePanel } from './src/main/ets/ReaderAssetNoticePanel'
 export { ReaderSystemBarController } from './src/main/ets/ReaderSystemBarController'
 
 export { ReaderRouteTransition } from './src/main/ets/ReaderRouteTransition'
+
+export { ReaderFileCropService } from './src/main/ets/ReaderFileCropService'
