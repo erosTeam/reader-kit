@@ -60,7 +60,7 @@ export class ReaderImageCropRegion {
   localY(source: number): number { return Math.max(0, Math.min(1, (source - this.y) / this.height)) }
 }
 
-/** Host detection/cache owner, bound to one resolved asset version. Failure leaves the body readable. */
+/** Asset-scoped crop port; shared file detection owns its work, while hosts retain source file leases. */
 export interface ReaderImageCropSource {
   read(): Promise<ReaderImageCropBounds>
 }
