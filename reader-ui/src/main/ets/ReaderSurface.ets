@@ -104,6 +104,10 @@ export struct ReaderSurface {
    * may pass `true` explicitly; the product default stays hidden.
    */
   @Param initialChromeVisible: boolean = false
+  /** Temporary host preview hides bars/rail without toggling the saved chrome
+   * state or native window insets. Exiting preview restores that same state,
+   * with no image/session reconstruction or viewport resize during filtering. */
+  @Param chromeSuppressed: boolean = false
   /**
    * Hosts bump this when a presentation setting that affects window chrome
    * flips (fullscreen, background, theme). The surface re-publishes its real
@@ -742,7 +746,7 @@ export struct ReaderSurface {
   }
 
   private thumbnailRailVisible(): boolean {
-    return this.chromeVisible && this.thumbnailsVisible && this.active && this.state.phase === 'ready'
+    return this.chromeVisible && !this.chromeSuppressed && this.thumbnailsVisible && this.active && this.state.phase === 'ready'
   }
 
   private toggleThumbnails(): void {
@@ -1114,7 +1118,7 @@ export struct ReaderSurface {
           .hitTestBehavior(this.thumbnailRailVisible() ? HitTestMode.Default : HitTestMode.None)
           .id('rkit-thumbnail-rail-wrapper')
       }
-      if (this.chromeVisible) {
+      if (this.chromeVisible && !this.chromeSuppressed) {
         ReaderChrome({ appearance: this.chromeAppearance, hostModeControlAvailable: this.modeControl !== undefined,
           modeControl: (params: ReaderModeControlParams): void => { this.HostModeControl(params) },
           hostTitleControlAvailable: this.titleControl !== undefined,
