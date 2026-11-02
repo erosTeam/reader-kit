@@ -1608,6 +1608,11 @@ export class ReaderPagedSession {
     }
   }
 
+  reportDecoded(slotId: number, requestId: number): void {
+    if (this.disposed) return
+    this.slots.find((slot: ReaderPageSlot): boolean => slot.id === slotId)?.session.reportDecoded(requestId)
+  }
+
   reportPresentation(slotId: number, requestId: number, success: boolean, width: number = 0, height: number = 0): void {
     const slot = this.slots.find((candidate: ReaderPageSlot) => candidate.id === slotId)
     if (this.disposed || slot === undefined) return

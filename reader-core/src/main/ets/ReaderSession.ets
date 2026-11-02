@@ -317,6 +317,7 @@ export class ReaderSession {
   private cancellation: ReaderCancellation = new ReaderCancellation()
   private asset: ReaderAsset | null = null
   private retiredAsset: ReaderAsset | null = null
+  private decodedAssetRequestId: number = 0
   private originalPlan: ReaderResolvedAssetPlan | null = null
   private epoch: number = 0
   private disposed: boolean = false
@@ -337,6 +338,14 @@ export class ReaderSession {
   }
 
   snapshot(): ReaderSnapshot { return this.state.copy() }
+
+  /** Native decode can expose pixels before the composed-frame receipt. Keep
+   * that lease across a fast replacement without inventing displayed progress. */
+  reportDecoded(requestId: number): void {
+    if (!this.current(requestId) || requestId !== this.state.assetRequestId || this.asset === null ||
+      (this.state.phase !== 'decoding' && this.state.phase !== 'displayed')) return
+    this.decodedAssetRequestId = requestId
+  }
 
   /** Discard an unpresented enhanced/translated replacement while retaining the displayed fallback. */
   cancelRetainedProcessedReplacement(): boolean {
@@ -497,7 +506,9 @@ export class ReaderSession {
     // retarget the stable Image to the same URI without a new native callback.
     const retainingReplacement = this.state.phase === 'decoding' && this.retiredAsset !== null &&
       this.state.retainedUri.length > 0 && this.state.retainedAssetRequestId > 0
-    const hasPresentedAsset = (this.state.phase === 'displayed' || retainingReplacement) && this.asset !== null
+    const decodedOriginal = this.state.phase === 'decoding' && this.state.assetRequestId > 0 &&
+      this.decodedAssetRequestId === this.state.assetRequestId
+    const hasPresentedAsset = (this.state.phase === 'displayed' || retainingReplacement || decodedOriginal) && this.asset !== null
     const isReplacingVariant = this.originalPlan !== targetVariantPlan &&
       this.state.unit !== null && this.state.unit.key.equals(unit.key) && this.state.sourceIndex === index &&
       this.state.kind === kind && hasPresentedAsset

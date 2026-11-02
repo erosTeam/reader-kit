@@ -73,6 +73,7 @@ export struct ReaderContinuousSurface {
   @Event onZoomedChange: (zoomed: boolean, topology: number, navigation: number) => void = () => {}
   @Event onTap: (xFraction: number, yFraction: number) => ReaderTapAction = () => 'none'
   @Event onRange: (start: number, end: number, topology: number, navigation: number, position?: number) => void = () => {}
+  @Event onDecodedOriginal: (slot: number, request: number) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (topology: number, navigation: number, key: string, slot: number, request: number, x: number, y: number) => void = () => {}
   @Event onFailed: (topology: number, key: string, slot: number, request: number, fragment: ReaderFragment) => void = () => {}
@@ -101,7 +102,8 @@ export struct ReaderContinuousSurface {
             onInputLockChange: this.onInputLockChange,
             onZoomedChange: this.onZoomedChange,
             onBoundary: this.onBoundary,
-            onRange: this.onRange, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
+            onRange: this.onRange, onDecodedOriginal: this.onDecodedOriginal,
+            onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onRetry: this.onRetry, onNoticeAction: this.onNoticeAction,
             onTap: this.onTap,
           })
@@ -133,6 +135,7 @@ struct ReaderContinuousList {
   @Event onTap: (xFraction: number, yFraction: number) => ReaderTapAction = () => 'none'
   @Require @Param createdRevision: number
   @Event onRange: (start: number, end: number, topology: number, navigation: number, position?: number) => void = () => {}
+  @Event onDecodedOriginal: (slot: number, request: number) => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (topology: number, navigation: number, key: string, slot: number, request: number, x: number, y: number) => void = () => {}
   @Event onFailed: (topology: number, key: string, slot: number, request: number, fragment: ReaderFragment) => void = () => {}
@@ -623,6 +626,7 @@ struct ReaderContinuousList {
             onDecodedOriginal: (slot: number, request: number): void => {
               const current = this.snapshot.forItem(key).frames[0]
               if (current === undefined || current.slotId !== slot || current.asset.assetRequestId !== request) return
+              this.onDecodedOriginal(slot, request)
               this.nativeReady.set(key, `${slot}:${request}`)
               this.scheduleMeasure()
             },
@@ -753,9 +757,9 @@ struct ReaderContinuousCell {
 
   private originalDecoded(identity: string): void {
     if (this.snapshot.frames[0]?.asset.kind === 'original' && identity === this.originalDrawableIdentity()) {
-      this.decodedOriginalIdentity = identity
       const frame = this.snapshot.frames[0]
       this.onDecodedOriginal(frame.slotId, frame.asset.assetRequestId)
+      this.decodedOriginalIdentity = identity
     }
   }
 

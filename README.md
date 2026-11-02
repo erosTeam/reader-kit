@@ -55,6 +55,9 @@ The following are existing preservation requirements, not new feature work:
   Core may retain a displayed resource across a mode switch; a new native
   viewport still waits for its own matching decode before ending this feedback.
   The retained in-place replacement branch keeps already readable pixels.
+  A matching native decode may expose the original before the composed-frame
+  receipt. Forward that exact slot/request to core before revealing pixels;
+  retain its lease across a fast enhancement handoff without advancing read progress.
   If a cached derivative supersedes an undecoded replacement, keep the last
   actually presented lease and request epoch until the final candidate presents;
   an undecoded candidate must not become the fallback or discard it. This also
@@ -111,6 +114,9 @@ The following are existing preservation requirements, not new feature work:
   decoded slots. Native chapter insertion publishes its full count in one
   dataset operation and preserves visible keys; processing/transport
   still follow their own bounded demand and a cached decode cannot write progress.
+  A native selection consumes its motion permission before publication; late
+  resource/layout callbacks cannot select an old page. A newer touch already
+  started during deferred publication keeps its own permission.
   Spread pairing and split-page decisions remain chapter-local. Hosts without
   verified adjacent-unit preparation retain their original optional capability.
 - Continuous reading presents verified adjacent chapters in one stable List.

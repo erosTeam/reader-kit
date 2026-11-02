@@ -1007,6 +1007,7 @@ export struct ReaderSurface {
             onRange: (start: number, end: number, topology: number, navigation: number, position?: number): void => {
               this.session.setContinuousRange(start, end, topology, navigation, position)
             },
+            onDecodedOriginal: (slot: number, request: number): void => { this.session.reportDecoded(slot, request) },
             onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
               this.reportAssetPresented(slot, request, success, width, height)
             },
@@ -1048,6 +1049,7 @@ export struct ReaderSurface {
             onSelect: (index: number, topology: number, navigation: number): void => {
               this.session.selectPagerIndex(index, topology, navigation)
             },
+            onDecodedOriginal: (slot: number, request: number): void => { this.session.reportDecoded(slot, request) },
             onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
               this.reportAssetPresented(slot, request, success, width, height)
             },

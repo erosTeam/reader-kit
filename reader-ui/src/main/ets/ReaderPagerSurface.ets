@@ -107,6 +107,7 @@ export struct ReaderPagerSurface {
     navigationRevision: number) => void = () => {}
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
   @Event onPrepareTarget: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
+  @Event onDecodedOriginal: (slotId: number, requestId: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -131,7 +132,8 @@ export struct ReaderPagerSurface {
           onZoomedChange: this.onZoomedChange,
           onBoundary: this.onBoundary,
           onPrepareTarget: this.onPrepareTarget,
-          onSelect: this.onSelect, onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
+          onSelect: this.onSelect, onDecodedOriginal: this.onDecodedOriginal,
+          onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
           onRetry: this.onRetry, onNoticeAction: this.onNoticeAction,
           onTap: this.onTap,
         })
@@ -163,6 +165,7 @@ struct ReaderNativePager {
     navigationRevision: number) => void = () => {}
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
   @Event onPrepareTarget: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
+  @Event onDecodedOriginal: (slotId: number, requestId: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (topologyRevision: number, itemKey: string, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -187,6 +190,7 @@ struct ReaderNativePager {
   @Local private moving: boolean = false
   private gestureTopology: number = -1
   private gestureNavigation: number = -1
+  private gestureSerial: number = 0
   private lastTopology: number = -1
   private lastNavigation: number = -1
   private lastCommandSerial: number = 0
@@ -207,6 +211,7 @@ struct ReaderNativePager {
         this.boundarySwipe.cancel()
         return
       }
+      this.gestureSerial += 1
       // Param propagation can trail our just-published native selection.
       this.gestureNavigation = this.gestureTopology === this.snapshot.topologyRevision ?
         Math.max(this.gestureNavigation, this.snapshot.navigationRevision) : this.snapshot.navigationRevision
@@ -303,6 +308,7 @@ struct ReaderNativePager {
     if (!this.active || this.inputLocked || this.moving || command.topologyRevision !== this.snapshot.topologyRevision ||
       command.navigationRevision !== this.snapshot.navigationRevision ||
       target < 0 || target >= this.snapshot.pagerKeys.length) return
+    this.gestureSerial += 1
     this.gestureTopology = command.topologyRevision
     this.gestureNavigation = command.navigationRevision
     this.beginMotion()
@@ -333,6 +339,7 @@ struct ReaderNativePager {
     const topology = this.gestureTopology
     const navigation = this.gestureNavigation
     const itemKey = this.snapshot.pagerKeys[index]
+    const gesture = this.gestureSerial
     if (topology !== this.snapshot.topologyRevision ||
       navigation !== this.snapshot.navigationRevision) return
     if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
@@ -341,13 +348,16 @@ struct ReaderNativePager {
       this.pendingChange = 0
       if (!this.active || topology !== this.snapshot.topologyRevision ||
         navigation !== this.snapshot.navigationRevision) return
-      // A new Down can arrive between onChange and this deferred publication.
-      // Carry that interaction through our own commit, not through an external seek.
-      if (this.gestureTopology === topology && this.gestureNavigation === navigation) {
-        this.gestureNavigation = navigation + 1
-      }
       const target = this.snapshot.pagerKeys.indexOf(itemKey)
       if (target < 0) return
+      // Consume this motion before publishing: later layout/resource echoes must
+      // not become another selection. Only a newer Down owns the next navigation.
+      if (this.gestureSerial === gesture) {
+        this.gestureTopology = -1
+        this.gestureNavigation = -1
+      } else if (this.gestureTopology === topology && this.gestureNavigation === navigation) {
+        this.gestureNavigation = navigation + 1
+      }
       this.onSelect(target, topology, navigation)
       console.info(`[ReaderPager] selected=${index} topology=${topology} navigation=${navigation}`)
     }, 0)
@@ -379,7 +389,7 @@ struct ReaderNativePager {
               this.onZoomedChange(zoomed, this.snapshot.topologyRevision, this.snapshot.navigationRevision)
             }
           },
-          onPresented: this.onPresented,
+          onDecodedOriginal: this.onDecodedOriginal, onPresented: this.onPresented,
           onTap: this.onTap,
           onVisible: this.onVisible,
           onRetry: (slotId: number, requestId: number): void => {

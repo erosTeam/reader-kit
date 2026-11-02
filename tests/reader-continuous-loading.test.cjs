@@ -15,7 +15,7 @@ const presentationExports = {}
 vm.runInNewContext(ts.transpileModule(presentationSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText, { exports: presentationExports })
 const text = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderContinuousSurface.ets'), 'utf8')
 const methods = text.slice(text.indexOf('  private originalDrawableIdentity()'), text.indexOf('  private async resolveNoticeAction(frame:'))
-const source = `export class Feedback { decodedOriginalIdentity = ''; snapshot; ${methods} }`
+const source = `export class Feedback { decodedOriginalIdentity = ''; snapshot; onDecodedOriginal = () => {}; ${methods} }`
 const exportsObject = {}
 vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText, { exports: exportsObject, ReaderImagePresentation: presentationExports.ReaderImagePresentation })
 function fixture() {

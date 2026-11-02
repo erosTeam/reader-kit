@@ -83,3 +83,30 @@ test('adjacent chapter insertion preserves keyed native pages within the same wo
  assert.equal(map.update(['P0','A0','A1','B0'],3,7,'work'),next)
  unique(next)
 })
+
+
+test('native selection consumes its gesture and carries only a newer Down through deferred publication', () => {
+ const text=fs.readFileSync(path.join(__dirname,'../reader-ui/src/main/ets/ReaderPagerSurface.ets'),'utf8')
+ const touch=text.slice(text.indexOf('  private handleBoundaryTouch('),text.indexOf('  aboutToAppear()',text.indexOf('struct ReaderNativePager')))
+ const selection=text.slice(text.indexOf('  private queueSelection('),text.indexOf('  build() {',text.indexOf('  private queueSelection(')))
+ const tasks=new Map();let serial=0
+ const out={}
+ const compiled=ts.transpileModule(`export class Pager { ${touch} ${selection} }`, {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText
+ vm.runInNewContext(compiled,{exports:out,TouchType:{Down:0,Up:1,Cancel:2},console:{info(){}},setTimeout:fn=>{tasks.set(++serial,fn);return serial},clearTimeout:id=>tasks.delete(id)})
+ const down=p=>p.handleBoundaryTouch({type:0,touches:[{}],changedTouches:[{windowX:40,windowY:100}]})
+ const flush=()=>{const pending=[...tasks.values()];tasks.clear();pending.forEach(fn=>fn())}
+ for(const newerDown of [false,true]) {
+  const p=new out.Pager();const selected=[]
+  Object.assign(p,{active:true,inputLocked:false,moving:false,gestureTopology:-1,gestureNavigation:-1,gestureSerial:0,pendingChange:0,
+   snapshot:{phase:'ready',pagerIndex:1,pagerKeys:['a','b','c','d'],topologyRevision:7,navigationRevision:10},
+   boundarySwipe:{begin(){},cancel(){}},onSelect(index,topology,navigation){selected.push(index);p.snapshot={...p.snapshot,pagerIndex:index,navigationRevision:navigation+1}}})
+  down(p);p.queueSelection(2)
+  if(newerDown)down(p)
+  flush();assert.deepEqual(selected,[2])
+  // Resource/layout notifications can echo the old native index after the commit.
+  p.queueSelection(newerDown?3:1);flush()
+  assert.deepEqual(selected,newerDown?[2,3]:[2], 'an idle native echo must not roll back the page')
+  p.queueSelection(1);flush()
+  assert.deepEqual(selected,newerDown?[2,3]:[2], 'a committed interaction is single-use')
+ }
+})

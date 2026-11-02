@@ -433,3 +433,36 @@ test('a superseded undecoded replacement keeps the last presented asset and rele
   session.close()
   assert.deepEqual(releases, ['source', 'presented', 'candidate'])
 })
+
+
+test('native decode receipt retains the first original across a fast enhancement handoff without reporting progress', async () => {
+  for (const receipt of ['missing', 'stale', 'current']) {
+    const assets = new Assets()
+    const session = new ReaderSession(new Catalog(), assets)
+    await session.open(key())
+    const original = session.snapshot()
+    if (receipt !== 'missing') session.reportDecoded(receipt === 'current' ? original.assetRequestId : original.assetRequestId - 1)
+    assert.equal(session.snapshot().phase, 'decoding')
+    assert.equal(session.snapshot().presentedAnchor, null)
+    const frames = []
+    session.subscribe(frame => frames.push(frame))
+    const plan = { page: original.page.copy(), variant: 'enhanced', identity: 'fast',
+      async load() { return new ReaderAsset('enhanced') } }
+    await session.show(0, 'original', false, plan)
+    const next = session.snapshot()
+    if (receipt === 'current') {
+      assert.equal(frames.some(frame => frame.uri.length === 0), false, 'already exposed original pixels stay mounted')
+      assert.equal(next.retainedUri, original.uri)
+      assert.equal(next.needsImagePlaceholder(), false)
+      assert.equal(assets.released.includes(original.uri), false)
+      session.reportPresentation(original.assetRequestId, true)
+      assert.equal(session.snapshot().phase, 'decoding', 'late receipt cannot present the replacement')
+      session.reportPresentation(next.assetRequestId, true)
+      assert.equal(assets.released.includes(original.uri), true)
+    } else {
+      assert.equal(next.retainedUri, '', 'a URI without native decode is not visible pixels')
+      assert.equal(next.needsImagePlaceholder(), true)
+    }
+    session.close()
+  }
+})

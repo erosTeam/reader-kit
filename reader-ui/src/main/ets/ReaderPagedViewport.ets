@@ -119,6 +119,7 @@ export struct ReaderPagedViewport {
   @Event onTap: (xFraction: number, yFraction: number) => void = () => {}
   @Event onInputLockChange: (locked: boolean) => void = () => {}
   @Event onZoomedChange: (zoomed: boolean) => void = () => {}
+  @Event onDecodedOriginal: (slotId: number, requestId: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -484,6 +485,7 @@ export struct ReaderPagedViewport {
             fitViewport: this.fitWholePageInViewport() || (this.equalSlots() &&
               readerPagedFrameAspectRatio(frame, this.snapshot.policy) <= 0),
             active: this.selected && this.active && !this.zoomAnimating && this.zoomState.scale === 1,
+            onDecodedOriginal: this.onDecodedOriginal,
             onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onInvalidDecodedMetrics: (slotId: number, requestId: number, assetRequestId: number): void => {
               if (this.selected && this.active && this.entryTransition !== null) {
@@ -568,6 +570,7 @@ struct ReaderPagedCell {
   @Require @Param active: boolean
   @Local private retainedFrameValue: ReaderPagedFrame | null = null
   @Local private decodedOriginalIdentity: string = ''
+  @Event onDecodedOriginal: (slotId: number, requestId: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
   @Event onFailed: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -585,6 +588,7 @@ struct ReaderPagedCell {
 
   private originalDecoded(identity: string): void {
     if (this.frame().asset.kind === 'original' && identity === this.originalDrawableIdentity()) {
+      this.onDecodedOriginal(this.slotId, this.frame().asset.assetRequestId)
       this.decodedOriginalIdentity = identity
     }
   }
