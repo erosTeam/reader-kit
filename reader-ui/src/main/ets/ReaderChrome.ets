@@ -403,75 +403,106 @@ export struct ReaderChrome {
   }
 
   @Builder
+  private MoreImageActions() {
+    if (this.reloadAvailable && this.snapshot.frames.length > 1) {
+      MenuItem({ content: $r('app.string.rkit_reload_source'), builder: this.ReloadChoice })
+        .id('rkit-reload-source-spread')
+        .enabled(this.snapshot.frames.some(frame => this.currentReloadFrame(frame.slotId) !== undefined))
+    } else if (this.reloadAvailable) {
+      MenuItem({ content: $r('app.string.rkit_reload_source') }).id('rkit-reload-source')
+        .enabled(this.snapshot.frames.some(frame => this.currentReloadFrame(frame.slotId) !== undefined))
+        .onClick((): void => {
+          const frame = this.snapshot.frames[0]
+          if (frame !== undefined) this.selectReload(frame)
+        })
+    }
+    if (this.informationAvailable && this.snapshot.frames.length > 1) {
+      MenuItem({ content: $r('app.string.rkit_image_info'), builder: this.InformationChoice })
+        .id('rkit-image-info-spread')
+        .enabled(this.informationFrames().length > 0)
+    } else if (this.informationAvailable) {
+      MenuItem({ content: $r('app.string.rkit_image_info') }).id('rkit-image-info')
+        .enabled(this.informationFrames().length > 0)
+        .onClick((): void => {
+          const frame = this.informationFrames()[0]
+          if (frame !== undefined) this.selectInformation(frame)
+        })
+    }
+    if (this.appearance.mediaActionsInMenu && this.saveAvailable) {
+      if (this.snapshot.policy.layout === 'spread' && this.snapshot.frames.length === 2) {
+        MenuItem({ content: $r('app.string.rkit_save_image'), builder: this.MoreSaveChoice })
+          .enabled(this.active && !this.saveBusy && !this.shareBusy && !this.snapshot.originalPreparing)
+      } else {
+        MenuItem({ content: $r('app.string.rkit_save_image') })
+          .enabled(this.active && !this.saveBusy && !this.shareBusy && !this.snapshot.originalPreparing &&
+            this.saveTarget('current') !== null)
+          .onClick((): void => { this.selectMoreSave('current') })
+      }
+    }
+    if (this.appearance.mediaActionsInMenu && this.shareAvailable) {
+      MenuItem({ content: $r('app.string.rkit_share_image') })
+        .enabled(this.active && !this.shareBusy && !this.saveBusy && !this.snapshot.originalPreparing)
+        .onClick((): void => {
+          this.moreSharePending = true
+          this.moreShown = false
+        })
+    }
+    if (this.externalOpenAvailable) {
+      MenuItem({ content: $r('app.string.rkit_open_external') }).id('rkit-open-external')
+        .enabled(this.active && this.snapshot.phase === 'ready' && this.moreUnit !== null)
+        .onClick((): void => { this.selectExternalOpen() })
+    }
+    MenuItem({ content: $r('app.string.rkit_reset_zoom') }).id('rkit-reset-zoom')
+      .enabled(this.active && this.zoomResetAvailable && this.snapshot.phase === 'ready' && this.moreUnit !== null &&
+        this.snapshot.navigationRevision === this.moreNavigation)
+      .onClick((): void => { this.selectResetZoom() })
+  }
+
+  @Builder
+  private MoreHostActions() {
+    ForEach(this.hostActions, (action: ReaderHostAction) => {
+      MenuItem({ content: action.label,
+        symbolEndIcon: action.checked ? new SymbolGlyphModifier($r('sys.symbol.checkmark')) : undefined })
+        .id(`rkit-host-action-${action.id}`)
+        .enabled(this.active && action.enabled && !action.busy && this.snapshot.phase === 'ready' &&
+          this.moreUnit !== null && this.snapshot.navigationRevision === this.moreNavigation)
+        .onClick((): void => { this.selectHostAction(action) })
+    }, (action: ReaderHostAction): string => readerElementKey(action.id))
+  }
+
+  @Builder
+  private MoreChapterActions() {
+    if (this.chapterNavigationAvailable) {
+      MenuItem({ content: $r('app.string.rkit_previous_unit') }).id('rkit-previous-chapter')
+        .enabled(this.active && this.snapshot.phase === 'ready' && !this.chapterNavigationBusy && this.snapshot.canPreviousUnit)
+        .onClick((): void => { this.selectChapter('previous') })
+      MenuItem({ content: $r('app.string.rkit_next_unit') }).id('rkit-next-chapter')
+        .enabled(this.active && this.snapshot.phase === 'ready' && !this.chapterNavigationBusy && this.snapshot.canNextUnit)
+        .onClick((): void => { this.selectChapter('next') })
+    }
+  }
+
+  @Builder
   private MoreMenu() {
     Menu() {
-      if (this.reloadAvailable && this.snapshot.frames.length > 1) {
-        MenuItem({ content: $r('app.string.rkit_reload_source'), builder: this.ReloadChoice })
-          .id('rkit-reload-source-spread')
-          .enabled(this.snapshot.frames.some(frame => this.currentReloadFrame(frame.slotId) !== undefined))
-      } else if (this.reloadAvailable) {
-        MenuItem({ content: $r('app.string.rkit_reload_source') }).id('rkit-reload-source')
-          .enabled(this.snapshot.frames.some(frame => this.currentReloadFrame(frame.slotId) !== undefined))
-          .onClick((): void => {
-            const frame = this.snapshot.frames[0]
-            if (frame !== undefined) this.selectReload(frame)
-          })
-      }
-      if (this.informationAvailable && this.snapshot.frames.length > 1) {
-        MenuItem({ content: $r('app.string.rkit_image_info'), builder: this.InformationChoice })
-          .id('rkit-image-info-spread')
-          .enabled(this.informationFrames().length > 0)
-      } else if (this.informationAvailable) {
-        MenuItem({ content: $r('app.string.rkit_image_info') }).id('rkit-image-info')
-          .enabled(this.informationFrames().length > 0)
-          .onClick((): void => {
-            const frame = this.informationFrames()[0]
-            if (frame !== undefined) this.selectInformation(frame)
-          })
-      }
-      if (this.appearance.mediaActionsInMenu && this.saveAvailable) {
-        if (this.snapshot.policy.layout === 'spread' && this.snapshot.frames.length === 2) {
-          MenuItem({ content: $r('app.string.rkit_save_image'), builder: this.MoreSaveChoice })
-            .enabled(this.active && !this.saveBusy && !this.shareBusy && !this.snapshot.originalPreparing)
-        } else {
-          MenuItem({ content: $r('app.string.rkit_save_image') })
-            .enabled(this.active && !this.saveBusy && !this.shareBusy && !this.snapshot.originalPreparing &&
-              this.saveTarget('current') !== null)
-            .onClick((): void => { this.selectMoreSave('current') })
+      if (this.appearance.groupMoreActions === true) {
+        MenuItemGroup() {
+          this.MoreImageActions()
         }
-      }
-      if (this.appearance.mediaActionsInMenu && this.shareAvailable) {
-        MenuItem({ content: $r('app.string.rkit_share_image') })
-          .enabled(this.active && !this.shareBusy && !this.saveBusy && !this.snapshot.originalPreparing)
-          .onClick((): void => {
-            this.moreSharePending = true
-            this.moreShown = false
-          })
-      }
-      if (this.externalOpenAvailable) {
-        MenuItem({ content: $r('app.string.rkit_open_external') }).id('rkit-open-external')
-          .enabled(this.active && this.snapshot.phase === 'ready' && this.moreUnit !== null)
-          .onClick((): void => { this.selectExternalOpen() })
-      }
-      MenuItem({ content: $r('app.string.rkit_reset_zoom') }).id('rkit-reset-zoom')
-        .enabled(this.active && this.zoomResetAvailable && this.snapshot.phase === 'ready' && this.moreUnit !== null &&
-          this.snapshot.navigationRevision === this.moreNavigation)
-        .onClick((): void => { this.selectResetZoom() })
-      ForEach(this.hostActions, (action: ReaderHostAction) => {
-        MenuItem({ content: action.label,
-          symbolEndIcon: action.checked ? new SymbolGlyphModifier($r('sys.symbol.checkmark')) : undefined })
-          .id(`rkit-host-action-${action.id}`)
-          .enabled(this.active && action.enabled && !action.busy && this.snapshot.phase === 'ready' &&
-            this.moreUnit !== null && this.snapshot.navigationRevision === this.moreNavigation)
-          .onClick((): void => { this.selectHostAction(action) })
-      }, (action: ReaderHostAction): string => readerElementKey(action.id))
-      if (this.chapterNavigationAvailable) {
-        MenuItem({ content: $r('app.string.rkit_previous_unit') }).id('rkit-previous-chapter')
-          .enabled(this.active && this.snapshot.phase === 'ready' && !this.chapterNavigationBusy && this.snapshot.canPreviousUnit)
-          .onClick((): void => { this.selectChapter('previous') })
-        MenuItem({ content: $r('app.string.rkit_next_unit') }).id('rkit-next-chapter')
-          .enabled(this.active && this.snapshot.phase === 'ready' && !this.chapterNavigationBusy && this.snapshot.canNextUnit)
-          .onClick((): void => { this.selectChapter('next') })
+        if (this.hostActions.length > 0) {
+          MenuItemGroup() {
+            this.MoreHostActions()
+          }
+        }
+        if (this.chapterNavigationAvailable) {
+          MenuItemGroup() {
+            this.MoreChapterActions()
+          }
+        }
+      } else {
+        this.MoreImageActions()
+        this.MoreHostActions()
+        this.MoreChapterActions()
       }
     }
   }

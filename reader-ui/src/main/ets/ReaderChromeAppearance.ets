@@ -11,6 +11,7 @@ export interface ReaderChromeAppearance {
   topActionSpacing: number
   fixedCounterSides: boolean
   mediaActionsInMenu: boolean
+  groupMoreActions?: boolean
   spreadControlsLeading: boolean
 }
 
