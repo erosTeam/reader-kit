@@ -508,7 +508,7 @@ export struct ReaderChrome {
         this.MoreHostActions(this.hostActions)
         this.MoreChapterActions()
       }
-    }
+    }.fontColor(this.appearance.moreMenuTextColor ?? $r('sys.color.font_primary'))
   }
 
   private menuMaterial(): SystemUiMaterial | undefined {
