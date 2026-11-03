@@ -330,12 +330,9 @@ struct ReaderNativePager {
   }
 
   private queueSelection(index: number): void {
-    // Declarative echoes do not consume a gesture that has already started.
-    if (index === this.snapshot.pagerIndex) {
-      if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
-      this.pendingChange = 0
-      return
-    }
+    // The current index can be echoed while a new native selection is queued.
+    // Leave that selection pending. Navigation changes invalidate its stamps.
+    if (index === this.snapshot.pagerIndex) return
     const topology = this.gestureTopology
     const navigation = this.gestureNavigation
     const itemKey = this.snapshot.pagerKeys[index]

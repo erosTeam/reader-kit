@@ -102,6 +102,8 @@ test('native selection consumes its gesture and carries only a newer Down throug
    boundarySwipe:{begin(){},cancel(){}},onSelect(index,topology,navigation){selected.push(index);p.snapshot={...p.snapshot,pagerIndex:index,navigationRevision:navigation+1}}})
   down(p);p.queueSelection(2)
   if(newerDown)down(p)
+  // A current-index layout echo can arrive before the queued selection is published.
+  p.queueSelection(1)
   flush();assert.deepEqual(selected,[2])
   // Resource/layout notifications can echo the old native index after the commit.
   p.queueSelection(newerDown?3:1);flush()
