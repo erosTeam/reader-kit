@@ -368,16 +368,16 @@ struct ReaderContinuousList {
   private imageAspectRatio(index: number): number {
     const page = this.snapshot.continuousPage(index)
     const frame = this.snapshot.window.find((item) => item.index === index)?.frames[0]
+    const crop = this.snapshot.continuousCrop(index)
     if (this.snapshot.kind === 'original' && frame !== undefined && frame.asset.page !== null &&
       frame.part.fragment === 'whole' &&
-      !frame.crop.applied() && !this.snapshot.continuousCrop(index).applied() &&
+      !frame.crop.applied() && !crop.applied() &&
       !readerPolicyRotatesPage(this.snapshot.policy, page ?? null)) {
       const ratio = readerPagedFrameAspectRatio(frame, this.snapshot.policy)
       // The continuous list needs space for each loading row; this estimate is
       // local to that placeholder and is never a source-image measurement.
       return ratio > 0 ? ratio : 0.75
     }
-    const crop = this.snapshot.continuousCrop(index)
     const usePreview = this.snapshot.kind === 'original' && page?.hasWholePagePreviewGeometry() === true &&
       ((page?.width ?? 0) <= 0 || (page?.height ?? 0) <= 0) &&
       crop.left === 0 && crop.top === 0 && crop.right === 0 && crop.bottom === 0
@@ -573,7 +573,9 @@ struct ReaderContinuousList {
       }
       this.onRange(this.first, last, this.createdRevision, navigation, first)
       const key = this.snapshot.displayKeys[first]
-      const frame = this.snapshot.forItem(key).frames[0]
+      // Visibility reads one frame from the current window. A full render
+      // projection copies policy, request arrays and frames on every scroll sample.
+      const frame = this.snapshot.window.find((item) => item.key === key)?.frames[0]
       if (frame === undefined || frame.cropPending || frame.asset.kind !== 'original' || frame.asset.phase !== 'displayed' ||
         this.nativeReady.get(key) !== `${frame.slotId}:${frame.asset.assetRequestId}`) return
       const rect = this.scroller.getItemRect(first)
