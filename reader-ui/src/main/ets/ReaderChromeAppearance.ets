@@ -12,7 +12,7 @@ export interface ReaderChromeAppearance {
   fixedCounterSides: boolean
   mediaActionsInMenu: boolean
   groupMoreActions?: boolean
-  moreMenuTextColor?: ResourceColor
+  resolveMoreMenuTextColor?: () => ResourceColor
   spreadControlsLeading: boolean
 }
 

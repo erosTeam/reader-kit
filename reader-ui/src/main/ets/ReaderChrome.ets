@@ -77,6 +77,7 @@ export struct ReaderChrome {
   @Event onPreview: (index: number, unit: ReaderUnitKey | null, navigation: number) => void = () => {}
   @Local private preview: number = -1
   @Local private moreShown: boolean = false
+  @Local private moreMenuTextColor: ResourceColor = $r('sys.color.font_primary')
   @Local private saveMenuShown: boolean = false
   @Local private originalMenuShown: boolean = false
   private originalFrames: ReaderPagedFrame[] = []
@@ -508,7 +509,7 @@ export struct ReaderChrome {
         this.MoreHostActions(this.hostActions)
         this.MoreChapterActions()
       }
-    }.fontColor(this.appearance.moreMenuTextColor ?? $r('sys.color.font_primary'))
+    }.fontColor(this.moreMenuTextColor)
   }
 
   private menuMaterial(): SystemUiMaterial | undefined {
@@ -707,6 +708,8 @@ export struct ReaderChrome {
                 this.moreUnit = this.snapshot.unit?.key.copy() ?? null
                 this.moreTopology = this.snapshot.topologyRevision
                 this.moreNavigation = this.snapshot.navigationRevision
+                // Resolve host colors before the native popup enters its own theme context.
+                this.moreMenuTextColor = this.appearance.resolveMoreMenuTextColor?.() ?? $r('sys.color.font_primary')
                 this.moreShown = true
               })
               .bindMenu(this.moreShown, this.MoreMenu, {
