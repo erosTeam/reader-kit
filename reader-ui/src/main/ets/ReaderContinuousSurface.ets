@@ -619,14 +619,14 @@ struct ReaderContinuousList {
                 key, slot, request, noticeId)
             },
             onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
-              const current = this.snapshot.forItem(key).frames[0]
+              const current = this.snapshot.window.find((item) => item.key === key)?.frames[0]
               if (current === undefined || current.slotId !== slot || current.asset.assetRequestId !== request) return
               if (!success) this.nativeReady.delete(key)
               this.onPresented(slot, request, success, width, height)
               this.scheduleMeasure()
             },
             onDecodedOriginal: (slot: number, request: number): void => {
-              const current = this.snapshot.forItem(key).frames[0]
+              const current = this.snapshot.window.find((item) => item.key === key)?.frames[0]
               if (current === undefined || current.slotId !== slot || current.asset.assetRequestId !== request) return
               this.onDecodedOriginal(slot, request)
               this.nativeReady.set(key, `${slot}:${request}`)
