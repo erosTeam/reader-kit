@@ -459,8 +459,8 @@ export struct ReaderChrome {
   }
 
   @Builder
-  private MoreHostActions() {
-    ForEach(this.hostActions, (action: ReaderHostAction) => {
+  private MoreHostActions(actions: ReaderHostAction[]) {
+    ForEach(actions, (action: ReaderHostAction) => {
       MenuItem({ content: action.label,
         symbolEndIcon: action.checked ? new SymbolGlyphModifier($r('sys.symbol.checkmark')) : undefined })
         .id(`rkit-host-action-${action.id}`)
@@ -482,6 +482,10 @@ export struct ReaderChrome {
     }
   }
 
+  private moreHostMenuGroups(): string[] {
+    return Array.from(new Set(this.hostActions.map((action: ReaderHostAction) => action.menuGroup)))
+  }
+
   @Builder
   private MoreMenu() {
     Menu() {
@@ -489,11 +493,11 @@ export struct ReaderChrome {
         MenuItemGroup() {
           this.MoreImageActions()
         }
-        if (this.hostActions.length > 0) {
+        ForEach(this.moreHostMenuGroups(), (group: string) => {
           MenuItemGroup() {
-            this.MoreHostActions()
+            this.MoreHostActions(this.hostActions.filter((action: ReaderHostAction) => action.menuGroup === group))
           }
-        }
+        }, (group: string): string => group)
         if (this.chapterNavigationAvailable) {
           MenuItemGroup() {
             this.MoreChapterActions()
@@ -501,7 +505,7 @@ export struct ReaderChrome {
         }
       } else {
         this.MoreImageActions()
-        this.MoreHostActions()
+        this.MoreHostActions(this.hostActions)
         this.MoreChapterActions()
       }
     }

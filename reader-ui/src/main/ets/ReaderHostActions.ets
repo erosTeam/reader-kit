@@ -9,13 +9,13 @@ export class ReaderHostActions {
   constructor(values: ReaderHostAction[],
     onRequest: (id: string, source: ReaderUnitKey, navigation: number, sourceIndex: number) => void) {
     this.values = values.map((value: ReaderHostAction): ReaderHostAction =>
-      new ReaderHostAction(value.id, value.label, value.enabled, value.checked, value.busy))
+      new ReaderHostAction(value.id, value.label, value.enabled, value.checked, value.busy, value.menuGroup))
     this.onRequest = onRequest
   }
 
   items(): ReaderHostAction[] {
     return this.values.map((value: ReaderHostAction): ReaderHostAction =>
-      new ReaderHostAction(value.id, value.label, value.enabled, value.checked, value.busy))
+      new ReaderHostAction(value.id, value.label, value.enabled, value.checked, value.busy, value.menuGroup))
   }
 
   request(id: string, source: ReaderUnitKey, navigation: number, sourceIndex: number): void {
