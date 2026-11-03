@@ -35,14 +35,12 @@ struct ReaderLoadingBar {
   @Param barTrackColor: ResourceColor = LOADING_BAR_BG
   @Local trackWidth: number = 0
   @Local indeterminatePosition: number = 0
+  private inViewport: boolean = false
   private indeterminateStartTimer: number = -1
   private indeterminateTimer: number = -1
 
-  aboutToAppear(): void {
-    this.syncIndeterminateAnimation()
-  }
-
   aboutToDisappear(): void {
+    this.inViewport = false
     this.stopIndeterminateAnimation()
   }
 
@@ -52,7 +50,7 @@ struct ReaderLoadingBar {
   }
 
   private syncIndeterminateAnimation(): void {
-    if (this.determinate) {
+    if (this.determinate || !this.inViewport) {
       this.stopIndeterminateAnimation()
       this.indeterminatePosition = 0
       return
@@ -67,7 +65,7 @@ struct ReaderLoadingBar {
     this.indeterminatePosition = 0
     this.indeterminateStartTimer = setTimeout((): void => {
       this.indeterminateStartTimer = -1
-      if (this.determinate) {
+      if (this.determinate || !this.inViewport) {
         return
       }
       this.moveIndeterminateSlider()
@@ -145,6 +143,11 @@ struct ReaderLoadingBar {
     .backgroundColor(this.barTrackColor)
     .borderRadius(LOADING_BAR_RADIUS)
     .clip(true)
+    // Native lists can build and lay out a cached page before it enters the viewport.
+    .onVisibleAreaChange([0], (_expanding: boolean, ratio: number): void => {
+      this.inViewport = ratio > 0
+      this.syncIndeterminateAnimation()
+    })
     .onAreaChange((_oldArea: Area, area: Area): void => {
       this.trackWidth = area.width as number
       this.syncIndeterminateAnimation()
