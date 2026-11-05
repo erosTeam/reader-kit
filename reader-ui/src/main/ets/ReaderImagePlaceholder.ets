@@ -10,7 +10,7 @@ export class ReaderImagePresentation {
   get pixels(): boolean { return this.phase === 'image' }
 
   constructor(frame: ReaderPagedFrame | null, decodedOriginalIdentity: string,
-    entry: ReaderEntryTransition | null = null) {
+    entry: ReaderEntryTransition | null = null, waitingForEntryAnchor: boolean = false) {
     const asset = frame?.asset
     const decoded = frame !== null && asset?.kind === 'original' &&
       (asset.phase === 'decoding' || asset.phase === 'displayed') &&
@@ -22,7 +22,7 @@ export class ReaderImagePresentation {
     // ends feedback; a resource's old displayed phase cannot do so. Retained
     // in-place replacements and the entry reveal gate keep their prior rules.
     const awaitingNative = asset?.kind === 'original' && asset.phase === 'displayed' && !decoded
-    const awaitingPixels = frame === null || awaitingNative ||
+    const awaitingPixels = frame === null || awaitingNative || waitingForEntryAnchor ||
       (asset !== undefined && asset.needsImagePlaceholder() && !decoded) ||
       (frame !== null && entry?.hidesOriginal(frame) === true)
     this.phase = awaitingPixels ? 'loading'

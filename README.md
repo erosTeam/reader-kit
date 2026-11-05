@@ -134,6 +134,10 @@ The following are existing preservation requirements, not new feature work:
   Measure the continuous viewport before creating the first List, so its
   initial index and cell heights use real geometry rather than an arithmetic
   sentinel. Later sizes retain the native List/scroller and position correction.
+  On ordinary entry, a guessed anchor height cannot reveal neighboring pixels.
+  Neighbors still decode and report dimensions; the existing loading feedback
+  remains until the original anchor row has its real allocated height, reaches
+  a terminal state, or gives up the anchor to user scrolling or navigation.
   Continuous row height, native image allocation and position calculations share
   one physical-pixel-aligned size. Independent aspect-ratio/percentage layout
   must not give parent and drawable different rounded edges. Do not inflate or

@@ -161,6 +161,7 @@ struct ReaderContinuousList {
   private scroller: ListScroller = new ListScroller()
   private nativeReady: Map<string, string> = new Map()
   @Local private viewWidth: number = 1
+  @Local private entryAnchorKey: string = ''
   private viewHeight: number = 1
   @Local private fullyVisible: boolean = false
   private lastNavigation: number = -1
@@ -236,6 +237,8 @@ struct ReaderContinuousList {
     this.lastNavigation = this.snapshot.navigationRevision
     this.first = this.snapshot.continuousIndex
     this.last = this.first
+    this.entryAnchorKey = this.entryTransition === null && this.snapshot.kind === 'original'
+      ? this.snapshot.displayKeys[this.first] ?? '' : ''
     this.reportExternalLock()
   }
 
@@ -301,11 +304,13 @@ struct ReaderContinuousList {
     }
     if (this.lastNavigation !== this.snapshot.navigationRevision) {
       this.lastNavigation = this.snapshot.navigationRevision
+      this.entryAnchorKey = ''
       this.positionTarget = -1
       this.rowGeometry.clear()
       this.boundarySwipe.cancel()
       this.invalidatePosition()
     }
+    this.refreshEntryAnchorGeometry()
     if (this.pendingPosition) this.schedulePosition()
     else { this.refreshEntryPosition(); this.scheduleMeasure() }
   }
@@ -479,6 +484,7 @@ struct ReaderContinuousList {
     if (!Number.isFinite(height) || height <= 0) return
     const previous = this.rowGeometry.get(key)
     this.rowGeometry.set(key, height)
+    if (key === this.entryAnchorKey) this.refreshEntryAnchorGeometry()
     if (previous === height || this.positionTarget < 0 || this.disposed || !this.active) return
     const index = this.snapshot.displayKeys.indexOf(key)
     if (index < 0 || index > this.positionTarget) return
@@ -488,7 +494,36 @@ struct ReaderContinuousList {
     this.schedulePosition()
   }
 
+  private refreshEntryAnchorGeometry(): void {
+    const key = this.entryAnchorKey
+    if (!key || this.disposed) return
+    const index = this.snapshot.displayKeys.indexOf(key)
+    const frame = this.snapshot.window.find((item) => item.key === key)?.frames[0]
+    if (index < 0 || this.snapshot.kind !== 'original' ||
+      frame?.asset.phase === 'failed' || frame?.asset.phase === 'suppressed') {
+      this.entryAnchorKey = ''
+      return
+    }
+    const page = frame?.asset.page
+    if (frame === undefined || frame.cropPending || page === undefined || page === null ||
+      !Number.isFinite(page.width) || !Number.isFinite(page.height) || page.width <= 0 || page.height <= 0) return
+    const measured = this.rowGeometry.get(key)
+    if (measured === undefined) return
+    const context = this.getUIContext()
+    // A guessed height may put a decoded neighbor on screen that the real anchor
+    // will push away. Decode still runs in that row; pixels wait for actual layout.
+    // Release on the first measured anchor only, including genuinely short pages.
+    if (Math.round(context.vp2px(measured)) === Math.round(context.vp2px(this.imageHeight(index)))) {
+      this.entryAnchorKey = ''
+    }
+  }
+
+  private waitingForEntryAnchor(key: string): boolean {
+    return this.entryAnchorKey !== '' && this.entryAnchorKey !== key
+  }
+
   private releasePosition(): void {
+    this.entryAnchorKey = ''
     this.positionTarget = -1
     this.positionEpoch += 1
     if (this.positionTimer !== 0) clearTimeout(this.positionTimer)
@@ -589,7 +624,8 @@ struct ReaderContinuousList {
       // Visibility reads one frame from the current window. A full render
       // projection copies policy, request arrays and frames on every scroll sample.
       const frame = this.snapshot.window.find((item) => item.key === key)?.frames[0]
-      if (frame === undefined || frame.cropPending || frame.asset.kind !== 'original' || frame.asset.phase !== 'displayed' ||
+      if (this.waitingForEntryAnchor(key) ||
+        frame === undefined || frame.cropPending || frame.asset.kind !== 'original' || frame.asset.phase !== 'displayed' ||
         this.nativeReady.get(key) !== `${frame.slotId}:${frame.asset.assetRequestId}`) return
       const rect = this.scroller.getItemRect(first)
       const imageHeight = this.imageHeight(first)
@@ -615,6 +651,7 @@ struct ReaderContinuousList {
             snapshot: this.cellSnapshots.forItem(this.snapshot, key, this.entryTransition?.pending() !== true),
             entryTransition: this.entryTransition,
             entryPosition: this.entryPosition?.key === key ? this.entryPosition : null,
+            waitingForEntryAnchor: this.waitingForEntryAnchor(key),
             active: this.active,
             zoomResetCommand: this.zoomResetCommand?.topologyRevision === this.createdRevision ? this.zoomResetCommand : null,
             onTap: (x: number, y: number): void => this.imageTap(key, x, y),
@@ -709,6 +746,7 @@ struct ReaderContinuousCell {
   @Param doubleTapIntervalMs: number = 300
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryPosition: ReaderContinuousEntryPosition | null = null
+  @Param waitingForEntryAnchor: boolean = false
   @Require @Param snapshot: ReaderContinuousCellSnapshot
   @Require @Param imageHeight: number
   @Param rotateClockwise: boolean = false
@@ -780,7 +818,7 @@ struct ReaderContinuousCell {
 
   private imagePresentation(): ReaderImagePresentation {
     return new ReaderImagePresentation(this.snapshot.frames[0] ?? null, this.decodedOriginalIdentity,
-      this.entryTransition)
+      this.entryTransition, this.waitingForEntryAnchor)
   }
 
   private loadingVisible(): boolean { return this.imagePresentation().loading }

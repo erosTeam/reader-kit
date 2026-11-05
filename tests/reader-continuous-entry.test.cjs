@@ -36,7 +36,7 @@ function fixture(width = 400, height = 2400) {
   return { frame, state, transition }
 }
 const List = evaluate(`export class List { ${methods('ReaderContinuousSurface', 'ReaderContinuousList',
-  ['imageTap', 'imageAspectRatio', 'refreshEntryPosition', 'rotates', 'imageIdentity', 'invalidatePosition', 'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'onImageLock', 'onRowGeometry', 'releasePosition'])} }`, {}, {
+  ['imageTap', 'imageAspectRatio', 'refreshEntryPosition', 'rotates', 'imageIdentity', 'invalidatePosition', 'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'onImageLock', 'onRowGeometry', 'refreshEntryAnchorGeometry', 'waitingForEntryAnchor', 'releasePosition'])} }`, {}, {
   ReaderContinuousEntryPosition: Position, clearTimeout() {}, setTimeout: callback => { callback(); return 1 },
   ReaderContinuousAfterLayout: class { constructor(action) { this.action = action } },
   readerPolicyRotatesPage: core.readerPolicyRotatesPage,
@@ -44,7 +44,7 @@ const List = evaluate(`export class List { ${methods('ReaderContinuousSurface', 
 }).List
 function listFixture(ListType = List) {
   const f = fixture(), list = new ListType(), frames = []
-  Object.assign(list, { snapshot: f.state, entryTransition: f.transition, entryPosition: null,
+  Object.assign(list, { snapshot: f.state, entryTransition: f.transition, entryPosition: null, entryAnchorKey: '',
     // This harness extracts methods rather than constructing the ArkUI struct.
     // The single-chapter source still needs its List data interface.
     source: { getData: index => f.state.displayKeys[index], update() {} },
@@ -328,6 +328,34 @@ test('ordinary chapter entry keeps its requested row when preceding geometry arr
   assert.deepEqual(positions, [1, 1], 'late preceding layout must refine the original navigation target')
 })
 
+test('initial neighbor waits for the real measured anchor, and a failed anchor releases it', () => {
+  const { ReaderImagePresentation } = evaluate(read('ReaderImagePlaceholder').split('/** Metadata selects')[0],
+    { './ReaderEntryTransition': entry })
+  const f = listFixture()
+  f.list.entryAnchorKey = 'selected'
+  f.list.getUIContext = () => ({ vp2px: value => value * 3.25 })
+  f.state.window = [{ key: 'selected', frames: [f.frame] }]
+  const original = f.frame.asset.page
+  const neighbor = fixture().frame
+  const decoded = `${neighbor.slotId}:${neighbor.asset.assetRequestId}:` +
+    `${neighbor.part.sourceIndex}:${neighbor.part.fragment}:${neighbor.asset.visualRevision}`
+  const presentNeighbor = () => new ReaderImagePresentation(neighbor, decoded, null, f.list.waitingForEntryAnchor('other'))
+  original.width = 0
+  original.height = 0
+  f.list.onRowGeometry('selected', 516.9230769)
+  assert.equal(presentNeighbor().loading, true)
+  original.width = 400
+  original.height = 2400
+  f.list.refreshEntryAnchorGeometry()
+  assert.equal(presentNeighbor().pixels, false, 'real dimensions alone do not make the old row correct')
+  f.list.onRowGeometry('selected', 2400)
+  assert.equal(presentNeighbor().pixels, true)
+  f.list.entryAnchorKey = 'selected'
+  f.frame.asset.phase = 'failed'
+  f.list.refreshEntryAnchorGeometry()
+  assert.equal(presentNeighbor().pixels, true)
+})
+
 test('real user takeover prevents late row geometry from pulling navigation back', () => {
   const f = listFixture(), positions = []
   f.list.entryTransition = null
@@ -355,7 +383,7 @@ function queuedListFixture() {
   const timers = [], cancelled = new Set()
   const QueuedList = evaluate(`export class List { ${methods('ReaderContinuousSurface', 'ReaderContinuousList',
     ['imageTap', 'imageAspectRatio', 'refreshEntryPosition', 'rotates', 'imageIdentity', 'invalidatePosition',
-      'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'onImageLock', 'onRowGeometry', 'releasePosition'])} }`, {}, {
+      'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'onImageLock', 'onRowGeometry', 'refreshEntryAnchorGeometry', 'waitingForEntryAnchor', 'releasePosition'])} }`, {}, {
     ReaderContinuousEntryPosition: Position,
     clearTimeout: id => cancelled.add(id),
     setTimeout: callback => { timers.push(callback); return timers.length },
