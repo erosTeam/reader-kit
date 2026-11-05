@@ -100,7 +100,7 @@ test('an old native echo cannot take a newer press or cancel its real reverse tu
  const fixture=()=>{
   const p=new out.Pager(), selected=[]
   Object.assign(p,{active:true,inputLocked:false,moving:false,gestureTopology:-1,gestureNavigation:-1,gestureSerial:0,pendingChange:0,
-   swipeSerial:-1,swipeSourceKey:'',claimedTurn:null,lastCommandSerial:0,
+   swipeSerial:-1,swipeSourceKey:'',carriedSwipeSourceKey:'',claimedTurn:null,lastCommandSerial:0,
    snapshot:{phase:'ready',pagerIndex:1,pagerKeys:['a','b','c','d'],topologyRevision:7,navigationRevision:10},
    boundarySwipe:{begin(){},cancel(){}},onSelect(index,topology,navigation){selected.push(index);p.snapshot={...p.snapshot,pagerIndex:index,navigationRevision:navigation+1}}})
   return {p,selected}
@@ -141,4 +141,19 @@ test('an old native echo cannot take a newer press or cancel its real reverse tu
  down(rapid.p);claim(rapid.p,2,1);rapid.p.queueSelection(1)
  flush()
  assert.deepEqual(rapid.selected, [], 'a real return to the current page beats the queued forward turn')
+ const overlapping=fixture()
+ down(overlapping.p);claim(overlapping.p,1,2);overlapping.p.queueSelection(2)
+ down(overlapping.p);claim(overlapping.p,2,3);overlapping.p.finishNativeAnimation(2)
+ flush();overlapping.p.queueSelection(3);flush()
+ assert.deepEqual(overlapping.selected,[2,3], 'the previous animation can end at the new turn’s source')
+ const delayed=fixture()
+ const commit=delayed.p.onSelect
+ let publish
+ delayed.p.onSelect=(...args)=>{publish=()=>commit(...args)}
+ down(delayed.p);claim(delayed.p,1,2);delayed.p.queueSelection(2)
+ down(delayed.p);flush()
+ claim(delayed.p,2,3)
+ publish();delayed.p.onSelect=commit
+ delayed.p.queueSelection(3);flush()
+ assert.deepEqual(delayed.selected,[2,3], 'the next gesture can claim from the selected native page before snapshot propagation')
 })

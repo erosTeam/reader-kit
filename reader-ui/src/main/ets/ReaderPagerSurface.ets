@@ -209,6 +209,7 @@ struct ReaderNativePager {
   private gestureSerial: number = 0
   private swipeSerial: number = -1
   private swipeSourceKey: string = ''
+  private carriedSwipeSourceKey: string = ''
   private claimedTurn: ReaderNativeTurn | null = null
   private lastTopology: number = -1
   private lastNavigation: number = -1
@@ -249,6 +250,7 @@ struct ReaderNativePager {
     if (event.type === TouchType.Cancel) {
       if (this.claimedTurn?.serial === this.gestureSerial) this.claimedTurn = null
       this.swipeSerial = -1
+      this.carriedSwipeSourceKey = ''
       this.gestureTopology = -1
       this.gestureNavigation = -1
       this.boundarySwipe.cancel()
@@ -294,6 +296,7 @@ struct ReaderNativePager {
       this.gestureTopology = -1
       this.gestureNavigation = -1
       this.swipeSerial = -1
+      this.carriedSwipeSourceKey = ''
       this.claimedTurn = null
       this.boundarySwipe.cancel()
     }
@@ -308,6 +311,7 @@ struct ReaderNativePager {
         this.claimedTurn = null
       }
       this.lastNavigation = this.snapshot.navigationRevision
+      this.carriedSwipeSourceKey = ''
       this.inputLocked = false
       this.boundarySwipe.cancel()
     }
@@ -321,6 +325,7 @@ struct ReaderNativePager {
       this.gestureTopology = -1
       this.gestureNavigation = -1
       this.swipeSerial = -1
+      this.carriedSwipeSourceKey = ''
       this.claimedTurn = null
       if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
       this.pendingChange = 0
@@ -361,19 +366,22 @@ struct ReaderNativePager {
     this.moving = true
   }
 
+  private acceptsNativeSwipeSource(key: string): boolean {
+    return this.active && this.gestureTopology === this.snapshot.topologyRevision &&
+      (this.gestureNavigation === this.snapshot.navigationRevision ||
+        (this.gestureNavigation === this.snapshot.navigationRevision + 1 && key === this.carriedSwipeSourceKey))
+  }
+
   private noteNativeSwipe(index: number): void {
-    if (!this.active || this.gestureTopology !== this.snapshot.topologyRevision ||
-      this.gestureNavigation !== this.snapshot.navigationRevision) return
     const key = this.snapshot.pagerKeys[index]
-    if (key === undefined) return
+    if (key === undefined || !this.acceptsNativeSwipeSource(key)) return
     this.swipeSerial = this.gestureSerial
     this.swipeSourceKey = key
   }
 
   private claimNativeSwipe(index: number, targetIndex: number): void {
-    if (!this.active || this.swipeSerial !== this.gestureSerial ||
-      this.gestureTopology !== this.snapshot.topologyRevision || this.gestureNavigation !== this.snapshot.navigationRevision ||
-      this.snapshot.pagerKeys[index] !== this.swipeSourceKey) return
+    if (this.swipeSerial !== this.gestureSerial || this.snapshot.pagerKeys[index] !== this.swipeSourceKey ||
+      !this.acceptsNativeSwipeSource(this.swipeSourceKey)) return
     this.swipeSerial = -1
     const source = this.swipeSourceKey
     const target = this.snapshot.pagerKeys[targetIndex]
@@ -387,9 +395,13 @@ struct ReaderNativePager {
 
   private finishNativeAnimation(index: number): void {
     this.moving = false
-    // An interrupted animation can finish on its source without a change.
-    // Retire its unconsumed target, while leaving a queued change untouched.
-    if (this.claimedTurn?.sourceKey === this.snapshot.pagerKeys[index]) this.claimedTurn = null
+    // An interrupted older animation can finish on its source without a change.
+    // End has no turn identity; a previous End at a new turn's source must not
+    // revoke the latest turn. Same-turn rebound and Cancel retire their own claim.
+    const turn = this.claimedTurn
+    if (turn !== null && turn.serial < this.gestureSerial && turn.sourceKey === this.snapshot.pagerKeys[index]) {
+      this.claimedTurn = null
+    }
   }
 
   private queueSelection(index: number): void {
@@ -412,6 +424,7 @@ struct ReaderNativePager {
       if (this.gestureSerial === gesture) {
         this.gestureTopology = -1
         this.gestureNavigation = -1
+        this.carriedSwipeSourceKey = ''
       }
       return
     }
@@ -427,8 +440,13 @@ struct ReaderNativePager {
       if (this.gestureSerial === gesture) {
         this.gestureTopology = -1
         this.gestureNavigation = -1
+        this.carriedSwipeSourceKey = ''
       } else if (this.gestureTopology === topology && this.gestureNavigation === navigation) {
         this.gestureNavigation = navigation + 1
+        // The next gesture may already be following the just-selected native
+        // page while ArkUI still holds the old snapshot. Only that source can
+        // claim the next turn early; onChange still needs the live revision.
+        this.carriedSwipeSourceKey = itemKey
         if (this.claimedTurn?.serial === this.gestureSerial &&
           this.claimedTurn.topology === topology && this.claimedTurn.navigation === navigation) {
           this.claimedTurn.navigation = navigation + 1
