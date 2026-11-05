@@ -68,6 +68,9 @@ export struct ReaderSurface {
   @Param closing: boolean = false
   /** Optional host-owned catalog copy; omitted hosts retain the stock failure text. */
   @Param catalogFailureText: (() => string) | null = null
+  /** Optional Host login/recovery action. Omitted consumers retain the existing catalog retry. */
+  @Param catalogFailureActionLabel: (() => string) | null = null
+  @Param catalogFailureAction: (() => Promise<void>) | null = null
   @Param showPageNumber: boolean = true
   /** Preferred grouped capability. Legacy scalar inputs remain temporarily source-compatible. */
   @Param tapPolicy: ReaderTapPolicy | null = null
@@ -1077,9 +1080,12 @@ export struct ReaderSurface {
       if (this.state.error.length > 0) {
         Column({ space: 16 }) {
           Text(this.catalogFailureText?.() || $r('app.string.rkit_catalog_failed')).fontColor(this.canvasForeground).fontSize(16)
-          Button($r('app.string.rkit_retry')).height(40).constraintSize({ minWidth: 120 })
+          Button(this.catalogFailureActionLabel?.() || $r('app.string.rkit_retry')).height(40).constraintSize({ minWidth: 120 })
             .backgroundColor(this.accent).fontColor(Color.White)
-            .onClick((): void => { void this.session.retry() })
+            .onClick((): void => {
+              if (this.catalogFailureAction !== null) void this.catalogFailureAction()
+              else void this.session.retry()
+            })
         }.width('100%').height('100%').justifyContent(FlexAlign.Center).padding(24)
       }
       if (this.hostStatus !== null && this.hostStatus.text.length > 0) {
