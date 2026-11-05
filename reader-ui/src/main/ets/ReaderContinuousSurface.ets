@@ -594,58 +594,63 @@ struct ReaderContinuousList {
   build() {
     List({ initialIndex: this.snapshot.continuousIndex, scroller: this.scroller,
       space: normalizedReaderPageGap(this.pageGap) }) {
-      LazyForEach(this.source, (key: string) => {
-        ListItem() {
-          ReaderContinuousCell({
-            imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects, loadingInk: this.loadingInk,
-            doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
-            snapshot: this.cellSnapshots.forItem(this.snapshot, key, this.entryTransition?.pending() !== true),
-            entryTransition: this.entryTransition,
-            entryPosition: this.entryPosition?.key === key ? this.entryPosition : null,
-            active: this.active,
-            zoomResetCommand: this.zoomResetCommand?.topologyRevision === this.createdRevision ? this.zoomResetCommand : null,
-            onTap: (x: number, y: number): void => this.imageTap(key, x, y),
-            interactionAllowed: !this.pendingPosition && this.fullyVisible &&
-              (this.lockedKey.length === 0 || this.lockedKey === key),
-            onLock: (identity: string, locked: boolean): void => { this.onImageLock(key, identity, locked) },
-            onZoomedChange: (identity: string, zoomed: boolean): void => { this.onImageZoomed(key, identity, zoomed) },
-            imageHeight: this.imageHeight(this.snapshot.displayKeys.indexOf(key)),
-            rotateClockwise: this.rotates(this.snapshot.displayKeys.indexOf(key)),
-            onRetry: (slot: number, request: number): void => {
-              this.onRetry(this.createdRevision, key, slot, request)
-            },
-            onNoticeAction: (slot: number, request: number, noticeId: string): Promise<boolean> => {
-              return this.onNoticeAction(this.createdRevision, this.snapshot.navigationRevision,
-                key, slot, request, noticeId)
-            },
-            onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
-              const current = this.snapshot.window.find((item) => item.key === key)?.frames[0]
-              if (current === undefined || current.slotId !== slot || current.asset.assetRequestId !== request) return
-              if (!success) this.nativeReady.delete(key)
-              this.onPresented(slot, request, success, width, height)
-              this.scheduleMeasure()
-            },
-            onDecodedOriginal: (slot: number, request: number): void => {
-              const current = this.snapshot.window.find((item) => item.key === key)?.frames[0]
-              if (current === undefined || current.slotId !== slot || current.asset.assetRequestId !== request) return
-              this.onDecodedOriginal(slot, request)
-              this.nativeReady.set(key, `${slot}:${request}`)
-              this.scheduleMeasure()
-            },
-            onRetired: (slot: number, request: number): void => {
-              if (this.nativeReady.get(key) === `${slot}:${request}`) this.nativeReady.delete(key)
-            },
-            onFailed: (slot: number, request: number, fragment: ReaderFragment): void => {
-              if (this.nativeReady.get(key) === `${slot}:${request}`) this.nativeReady.delete(key)
-              this.onFailed(this.createdRevision, key, slot, request, fragment)
-            },
-          })
-        }
-          .zIndex(this.lockedKey === key ? 1 : 0)
-          .onAreaChange((_old: Area, area: Area): void => {
-            this.onRowGeometry(key, Number(area.height))
-          })
-      }, (key: string): string => readerElementKey(key))
+      // The 1vp initial width is only an arithmetic sentinel. Realizing cells
+      // before the List measures itself stacks their tiny loading rows at the
+      // top. Keep the native List/scroller mounted; admit cells at real width.
+      if (this.viewWidth > 1) {
+        LazyForEach(this.source, (key: string) => {
+          ListItem() {
+            ReaderContinuousCell({
+              imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects, loadingInk: this.loadingInk,
+              doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
+              snapshot: this.cellSnapshots.forItem(this.snapshot, key, this.entryTransition?.pending() !== true),
+              entryTransition: this.entryTransition,
+              entryPosition: this.entryPosition?.key === key ? this.entryPosition : null,
+              active: this.active,
+              zoomResetCommand: this.zoomResetCommand?.topologyRevision === this.createdRevision ? this.zoomResetCommand : null,
+              onTap: (x: number, y: number): void => this.imageTap(key, x, y),
+              interactionAllowed: !this.pendingPosition && this.fullyVisible &&
+                (this.lockedKey.length === 0 || this.lockedKey === key),
+              onLock: (identity: string, locked: boolean): void => { this.onImageLock(key, identity, locked) },
+              onZoomedChange: (identity: string, zoomed: boolean): void => { this.onImageZoomed(key, identity, zoomed) },
+              imageHeight: this.imageHeight(this.snapshot.displayKeys.indexOf(key)),
+              rotateClockwise: this.rotates(this.snapshot.displayKeys.indexOf(key)),
+              onRetry: (slot: number, request: number): void => {
+                this.onRetry(this.createdRevision, key, slot, request)
+              },
+              onNoticeAction: (slot: number, request: number, noticeId: string): Promise<boolean> => {
+                return this.onNoticeAction(this.createdRevision, this.snapshot.navigationRevision,
+                  key, slot, request, noticeId)
+              },
+              onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
+                const current = this.snapshot.window.find((item) => item.key === key)?.frames[0]
+                if (current === undefined || current.slotId !== slot || current.asset.assetRequestId !== request) return
+                if (!success) this.nativeReady.delete(key)
+                this.onPresented(slot, request, success, width, height)
+                this.scheduleMeasure()
+              },
+              onDecodedOriginal: (slot: number, request: number): void => {
+                const current = this.snapshot.window.find((item) => item.key === key)?.frames[0]
+                if (current === undefined || current.slotId !== slot || current.asset.assetRequestId !== request) return
+                this.onDecodedOriginal(slot, request)
+                this.nativeReady.set(key, `${slot}:${request}`)
+                this.scheduleMeasure()
+              },
+              onRetired: (slot: number, request: number): void => {
+                if (this.nativeReady.get(key) === `${slot}:${request}`) this.nativeReady.delete(key)
+              },
+              onFailed: (slot: number, request: number, fragment: ReaderFragment): void => {
+                if (this.nativeReady.get(key) === `${slot}:${request}`) this.nativeReady.delete(key)
+                this.onFailed(this.createdRevision, key, slot, request, fragment)
+              },
+            })
+          }
+            .zIndex(this.lockedKey === key ? 1 : 0)
+            .onAreaChange((_old: Area, area: Area): void => {
+              this.onRowGeometry(key, Number(area.height))
+            })
+        }, (key: string): string => readerElementKey(key))
+      }
     }
     .width('100%').height('100%').cachedCount(this.snapshot.nativeCacheDepth)
     .scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
