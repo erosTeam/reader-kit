@@ -448,7 +448,8 @@ struct ReaderNativePager {
         // claim the next turn early; onChange still needs the live revision.
         this.carriedSwipeSourceKey = itemKey
         if (this.claimedTurn?.serial === this.gestureSerial &&
-          this.claimedTurn.topology === topology && this.claimedTurn.navigation === navigation) {
+          this.claimedTurn.topology === topology && this.claimedTurn.navigation === navigation &&
+          this.claimedTurn.sourceKey === itemKey) {
           this.claimedTurn.navigation = navigation + 1
         }
       }
