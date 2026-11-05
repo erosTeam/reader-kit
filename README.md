@@ -114,9 +114,10 @@ The following are existing preservation requirements, not new feature work:
   decoded slots. Native chapter insertion publishes its full count in one
   dataset operation and preserves visible keys; processing/transport
   still follow their own bounded demand and a cached decode cannot write progress.
-  A native selection consumes its motion permission before publication; late
-  resource/layout callbacks cannot select an old page. A newer touch already
-  started during deferred publication keeps its own permission.
+  A press alone cannot select a page. Native swipes accept only the stable
+  target of their Swiper animation; controller commands name their own target.
+  A matching change consumes that turn once. An already claimed turn can
+  finish across a newer press, and the new swipe must claim its own target.
   Spread pairing and split-page decisions remain chapter-local. Hosts without
   verified adjacent-unit preparation retain their original optional capability.
 - Continuous reading presents verified adjacent chapters in one stable List.

@@ -145,6 +145,22 @@ export struct ReaderPagerSurface {
   }
 }
 
+class ReaderNativeTurn {
+  readonly sourceKey: string
+  readonly targetKey: string
+  readonly topology: number
+  navigation: number
+  readonly serial: number
+
+  constructor(sourceKey: string, targetKey: string, topology: number, navigation: number, serial: number) {
+    this.sourceKey = sourceKey
+    this.targetKey = targetKey
+    this.topology = topology
+    this.navigation = navigation
+    this.serial = serial
+  }
+}
+
 @ComponentV2
 struct ReaderNativePager {
   @Param loadingInk: ResourceColor = Color.White
@@ -191,6 +207,9 @@ struct ReaderNativePager {
   private gestureTopology: number = -1
   private gestureNavigation: number = -1
   private gestureSerial: number = 0
+  private swipeSerial: number = -1
+  private swipeSourceKey: string = ''
+  private claimedTurn: ReaderNativeTurn | null = null
   private lastTopology: number = -1
   private lastNavigation: number = -1
   private lastCommandSerial: number = 0
@@ -228,6 +247,8 @@ struct ReaderNativePager {
       return
     }
     if (event.type === TouchType.Cancel) {
+      if (this.claimedTurn?.serial === this.gestureSerial) this.claimedTurn = null
+      this.swipeSerial = -1
       this.gestureTopology = -1
       this.gestureNavigation = -1
       this.boundarySwipe.cancel()
@@ -253,6 +274,7 @@ struct ReaderNativePager {
   aboutToDisappear(): void {
     if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
     this.pendingChange = 0
+    this.claimedTurn = null
   }
 
   @Monitor('inputLocked', 'moving', 'active', 'snapshot')
@@ -271,6 +293,8 @@ struct ReaderNativePager {
       this.moving = false
       this.gestureTopology = -1
       this.gestureNavigation = -1
+      this.swipeSerial = -1
+      this.claimedTurn = null
       this.boundarySwipe.cancel()
     }
     if (this.lastNavigation !== this.snapshot.navigationRevision) {
@@ -279,6 +303,9 @@ struct ReaderNativePager {
       if (this.gestureNavigation !== this.snapshot.navigationRevision) {
         this.gestureTopology = -1
         this.gestureNavigation = -1
+      }
+      if (this.claimedTurn !== null && this.claimedTurn.navigation !== this.snapshot.navigationRevision) {
+        this.claimedTurn = null
       }
       this.lastNavigation = this.snapshot.navigationRevision
       this.inputLocked = false
@@ -293,6 +320,8 @@ struct ReaderNativePager {
       this.moving = false
       this.gestureTopology = -1
       this.gestureNavigation = -1
+      this.swipeSerial = -1
+      this.claimedTurn = null
       if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
       this.pendingChange = 0
     }
@@ -307,10 +336,12 @@ struct ReaderNativePager {
     const target = command.targetKey.length > 0 ? this.snapshot.pagerKeys.indexOf(command.targetKey) : command.targetIndex
     if (!this.active || this.inputLocked || this.moving || command.topologyRevision !== this.snapshot.topologyRevision ||
       command.navigationRevision !== this.snapshot.navigationRevision ||
-      target < 0 || target >= this.snapshot.pagerKeys.length) return
+      target < 0 || target >= this.snapshot.pagerKeys.length || target === this.snapshot.pagerIndex) return
     this.gestureSerial += 1
     this.gestureTopology = command.topologyRevision
     this.gestureNavigation = command.navigationRevision
+    this.claimedTurn = new ReaderNativeTurn(this.snapshot.pagerKeys[this.snapshot.pagerIndex], this.snapshot.pagerKeys[target], this.gestureTopology,
+      this.gestureNavigation, this.gestureSerial)
     this.beginMotion()
     try {
       this.controller.changeIndex(target, true)
@@ -320,6 +351,7 @@ struct ReaderNativePager {
       this.moving = false
       this.gestureTopology = -1
       this.gestureNavigation = -1
+      this.claimedTurn = null
       console.warn(`[ReaderPager] command_failed=${command.serial} ${(error as Error).message}`)
     }
   }
@@ -329,17 +361,60 @@ struct ReaderNativePager {
     this.moving = true
   }
 
+  private noteNativeSwipe(index: number): void {
+    if (!this.active || this.gestureTopology !== this.snapshot.topologyRevision ||
+      this.gestureNavigation !== this.snapshot.navigationRevision) return
+    const key = this.snapshot.pagerKeys[index]
+    if (key === undefined) return
+    this.swipeSerial = this.gestureSerial
+    this.swipeSourceKey = key
+  }
+
+  private claimNativeSwipe(index: number, targetIndex: number): void {
+    if (!this.active || this.swipeSerial !== this.gestureSerial ||
+      this.gestureTopology !== this.snapshot.topologyRevision || this.gestureNavigation !== this.snapshot.navigationRevision ||
+      this.snapshot.pagerKeys[index] !== this.swipeSourceKey) return
+    this.swipeSerial = -1
+    const source = this.swipeSourceKey
+    const target = this.snapshot.pagerKeys[targetIndex]
+    if (target === undefined) return
+    if (source === target) {
+      if (this.claimedTurn?.sourceKey === source) this.claimedTurn = null
+      return
+    }
+    this.claimedTurn = new ReaderNativeTurn(source, target, this.gestureTopology, this.gestureNavigation, this.gestureSerial)
+  }
+
+  private finishNativeAnimation(index: number): void {
+    this.moving = false
+    // An interrupted animation can finish on its source without a change.
+    // Retire its unconsumed target, while leaving a queued change untouched.
+    if (this.claimedTurn?.sourceKey === this.snapshot.pagerKeys[index]) this.claimedTurn = null
+  }
+
   private queueSelection(index: number): void {
-    // The current index can be echoed while a new native selection is queued.
-    // Leave that selection pending. Navigation changes invalidate its stamps.
-    if (index === this.snapshot.pagerIndex) return
-    const topology = this.gestureTopology
-    const navigation = this.gestureNavigation
+    // A Down only opens an interaction. Only a real Swiper animation target,
+    // or an explicit controller command, can own a subsequent index change.
+    // A newer Down cannot make an old resource/layout echo its own selection.
+    const turn = this.claimedTurn
     const itemKey = this.snapshot.pagerKeys[index]
-    const gesture = this.gestureSerial
-    if (topology !== this.snapshot.topologyRevision ||
-      navigation !== this.snapshot.navigationRevision) return
+    if (turn === null || itemKey !== turn.targetKey || turn.topology !== this.snapshot.topologyRevision ||
+      turn.navigation !== this.snapshot.navigationRevision) return
+    const topology = turn.topology
+    const navigation = turn.navigation
+    const gesture = turn.serial
+    this.claimedTurn = null
     if (this.pendingChange !== 0) clearTimeout(this.pendingChange)
+    if (index === this.snapshot.pagerIndex) {
+      // A real reverse turn can return to the already published page before
+      // the preceding turn's deferred callback. An unclaimed echo cannot.
+      this.pendingChange = 0
+      if (this.gestureSerial === gesture) {
+        this.gestureTopology = -1
+        this.gestureNavigation = -1
+      }
+      return
+    }
     // LazyForEach cannot refresh its children recursively from native onChange.
     this.pendingChange = setTimeout((): void => {
       this.pendingChange = 0
@@ -354,6 +429,10 @@ struct ReaderNativePager {
         this.gestureNavigation = -1
       } else if (this.gestureTopology === topology && this.gestureNavigation === navigation) {
         this.gestureNavigation = navigation + 1
+        if (this.claimedTurn?.serial === this.gestureSerial &&
+          this.claimedTurn.topology === topology && this.claimedTurn.navigation === navigation) {
+          this.claimedTurn.navigation = navigation + 1
+        }
       }
       this.onSelect(target, topology, navigation)
       console.info(`[ReaderPager] selected=${index} topology=${topology} navigation=${navigation}`)
@@ -419,13 +498,15 @@ struct ReaderNativePager {
     })
     .onTouch((event: TouchEvent): void => { this.handleBoundaryTouch(event) })
     .onGestureSwipe((index: number, info: SwiperAnimationEvent): void => {
+      this.noteNativeSwipe(index)
       if (index === this.snapshot.pagerIndex && this.boundaryTopology === this.snapshot.topologyRevision &&
         this.boundaryNavigation === this.snapshot.navigationRevision) {
         this.boundarySwipe.observeNative(info.currentOffset)
       }
       this.beginMotion()
     })
-    .onAnimationStart((_index: number, targetIndex: number): void => {
+    .onAnimationStart((index: number, targetIndex: number): void => {
+      this.claimNativeSwipe(index, targetIndex)
       this.beginMotion()
       if (this.active && this.gestureTopology === this.snapshot.topologyRevision &&
         this.gestureNavigation === this.snapshot.navigationRevision) {
@@ -436,7 +517,7 @@ struct ReaderNativePager {
       if (state !== ScrollState.Idle) this.entryTransition?.cancel()
       this.moving = state !== ScrollState.Idle
     })
-    .onAnimationEnd((): void => { this.moving = false })
+    .onAnimationEnd((index: number): void => { this.finishNativeAnimation(index) })
     .onChange((index: number): void => { this.queueSelection(index) })
     // 9791242 keeps child geometry tied to the measured Swiper. Before that
     // first area callback, its 1x1 children cannot display their own feedback

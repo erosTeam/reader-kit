@@ -85,30 +85,60 @@ test('adjacent chapter insertion preserves keyed native pages within the same wo
 })
 
 
-test('native selection consumes its gesture and carries only a newer Down through deferred publication', () => {
+test('an old native echo cannot take a newer press or cancel its real reverse turn', () => {
  const text=fs.readFileSync(path.join(__dirname,'../reader-ui/src/main/ets/ReaderPagerSurface.ets'),'utf8')
  const touch=text.slice(text.indexOf('  private handleBoundaryTouch('),text.indexOf('  aboutToAppear()',text.indexOf('struct ReaderNativePager')))
- const selection=text.slice(text.indexOf('  private queueSelection('),text.indexOf('  build() {',text.indexOf('  private queueSelection(')))
+ const turn=text.slice(text.indexOf('class ReaderNativeTurn'),text.indexOf('@ComponentV2\nstruct ReaderNativePager'))
+ const selection=text.slice(text.indexOf('  onCommandChanged()'),text.indexOf('  build() {',text.indexOf('  private queueSelection(')))
  const tasks=new Map();let serial=0
  const out={}
- const compiled=ts.transpileModule(`export class Pager { ${touch} ${selection} }`, {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText
+ const compiled=ts.transpileModule(`${turn} export class Pager { ${touch} ${selection} }`, {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText
  vm.runInNewContext(compiled,{exports:out,TouchType:{Down:0,Up:1,Cancel:2},console:{info(){}},setTimeout:fn=>{tasks.set(++serial,fn);return serial},clearTimeout:id=>tasks.delete(id)})
  const down=p=>p.handleBoundaryTouch({type:0,touches:[{}],changedTouches:[{windowX:40,windowY:100}]})
+ const claim=(p,from,to)=>{p.noteNativeSwipe(from);p.claimNativeSwipe(from,to)}
  const flush=()=>{const pending=[...tasks.values()];tasks.clear();pending.forEach(fn=>fn())}
- for(const newerDown of [false,true]) {
-  const p=new out.Pager();const selected=[]
+ const fixture=()=>{
+  const p=new out.Pager(), selected=[]
   Object.assign(p,{active:true,inputLocked:false,moving:false,gestureTopology:-1,gestureNavigation:-1,gestureSerial:0,pendingChange:0,
+   swipeSerial:-1,swipeSourceKey:'',claimedTurn:null,lastCommandSerial:0,
    snapshot:{phase:'ready',pagerIndex:1,pagerKeys:['a','b','c','d'],topologyRevision:7,navigationRevision:10},
    boundarySwipe:{begin(){},cancel(){}},onSelect(index,topology,navigation){selected.push(index);p.snapshot={...p.snapshot,pagerIndex:index,navigationRevision:navigation+1}}})
-  down(p);p.queueSelection(2)
-  if(newerDown)down(p)
+  return {p,selected}
+ }
+ for(const newerDown of ['before-change','after-change','after-commit']) {
+  const {p,selected}=fixture()
+  down(p);claim(p,1,2)
+  if(newerDown==='before-change')down(p)
+  p.queueSelection(2)
+  if(newerDown==='after-change')down(p)
   // A current-index layout echo can arrive before the queued selection is published.
   p.queueSelection(1)
   flush();assert.deepEqual(selected,[2])
-  // Resource/layout notifications can echo the old native index after the commit.
-  p.queueSelection(newerDown?3:1);flush()
-  assert.deepEqual(selected,newerDown?[2,3]:[2], 'an idle native echo must not roll back the page')
+  if(newerDown==='after-commit')down(p)
   p.queueSelection(1);flush()
-  assert.deepEqual(selected,newerDown?[2,3]:[2], 'a committed interaction is single-use')
+  assert.deepEqual(selected,[2], 'a stale callback during the next press cannot consume it')
+  claim(p,2,1)
+  p.queueSelection(1)
+  p.queueSelection(3);flush()
+  assert.deepEqual(selected,[2,1], 'only the real reverse target can commit')
+  p.queueSelection(2);flush()
+  assert.deepEqual(selected,[2,1], 'a committed turn is single-use')
  }
+ const {p,selected}=fixture()
+ p.command={serial:1,targetKey:'c',targetIndex:2,topologyRevision:7,navigationRevision:10}
+ p.controller={changeIndex(index,animated){assert.equal(index,2);assert.equal(animated,true)}}
+ p.onCommandChanged()
+ p.snapshot={...p.snapshot,pagerIndex:2,pagerKeys:['before','a','b','c','d']}
+ p.queueSelection(1);p.queueSelection(3);flush()
+ assert.deepEqual(selected,[3], 'command acceptance follows the stable key after preceding rows are inserted')
+ const interrupted=fixture()
+ down(interrupted.p);claim(interrupted.p,1,2)
+ down(interrupted.p);interrupted.p.finishNativeAnimation(1)
+ interrupted.p.queueSelection(2);flush()
+ assert.deepEqual(interrupted.selected, [], 'a turn that ended back at its source cannot be replayed')
+ const rapid=fixture()
+ down(rapid.p);claim(rapid.p,1,2);rapid.p.queueSelection(2)
+ down(rapid.p);claim(rapid.p,2,1);rapid.p.queueSelection(1)
+ flush()
+ assert.deepEqual(rapid.selected, [], 'a real return to the current page beats the queued forward turn')
 })
