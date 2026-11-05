@@ -49,7 +49,7 @@ function listFixture(ListType = List) {
     // The single-chapter source still needs its List data interface.
     source: { getData: index => f.state.displayKeys[index], update() {} },
     active: true, disposed: false, pendingPosition: false, positionInFlight: false, moving: false,
-    positionTarget: -1, positionX: 0.5, positionY: 0, rowGeometry: new Map(), geometryRevision: 0, positionEpoch: 1, viewWidth: 400, positionTimer: 0, measureTimer: 0,
+    positionTarget: -1, positionX: 0.5, positionY: 0, rowGeometry: new Map(), geometryRevision: 0, positionEpoch: 1, viewWidth: 400, viewHeight: 800, positionTimer: 0, measureTimer: 0,
     lockedKey: '', lockedIdentity: '', zoomedKey: '', zoomedIdentity: '', cropRegions: new Map(), lastNavigation: f.state.navigationRevision,
     imageHeight: () => 2400, rowHeight: () => 2400, scheduleMeasure() {},
     scroller: { scrollToIndex() {} }, getUIContext: () => ({ postFrameCallback: value => frames.push(value.action) }),
@@ -365,6 +365,25 @@ function queuedListFixture() {
   }).List
   return { ...listFixture(QueuedList), timers, cancelled }
 }
+test('a seeded row width cannot scroll before the native List measures and binds its controller', () => {
+  const f = queuedListFixture(), positions = []
+  let bound = false
+  f.list.entryTransition = null
+  f.list.pendingPosition = true
+  f.list.viewHeight = 1
+  f.list.scroller.scrollToIndex = index => {
+    assert(bound, 'An unbound native controller rejects scrollToIndex')
+    positions.push(index)
+  }
+  f.list.onSnapshotChanged()
+  for (const timer of f.timers) timer()
+  assert.deepEqual(positions, [])
+  bound = true
+  f.list.viewHeight = 800
+  f.list.schedulePosition()
+  f.timers[0]()
+  assert.deepEqual(positions, [f.state.continuousIndex])
+})
 for (const stage of ['timer', 'postFrame']) for (const cause of ['user takeover', 'target failure']) {
   test(`queued ${stage} cannot restore chapter positioning after ${cause}`, () => {
     const f = queuedListFixture(), positions = []

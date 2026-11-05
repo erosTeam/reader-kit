@@ -131,9 +131,9 @@ The following are existing preservation requirements, not new feature work:
   Webtoon position follows measured page ends (falling back to the tall page
   crossing the viewport top); native decoded-pixel receipts still gate progress.
   An explicit seek retains its selected visible page until user scrolling takes over.
-  Realize the first cells only after this List measures its own viewport: the
-  initial arithmetic width sentinel is not drawable geometry. Keep the same
-  native List/scroller and the existing measured-position correction.
+  Measure the continuous viewport before creating the first List, so its
+  initial index and cell heights use real geometry rather than an arithmetic
+  sentinel. Later sizes retain the native List/scroller and position correction.
   Continuous row height, native image allocation and position calculations share
   one physical-pixel-aligned size. Independent aspect-ratio/percentage layout
   must not give parent and drawable different rounded edges. Do not inflate or
