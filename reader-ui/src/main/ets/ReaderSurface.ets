@@ -153,6 +153,7 @@ export struct ReaderSurface {
   private entryCropDeferred: boolean = false
   @Local private chromeVisible: boolean = false
   @Local private thumbnailsVisible: boolean = false
+  @Local private retainedThumbnailUnit: string = ''
   @Local private previewIndex: number = -1
   @Local private tapZonePreviewVisible: boolean = false
   @Local private shareBusy: boolean = false
@@ -337,6 +338,9 @@ export struct ReaderSurface {
     this.shareController.subscribe((busy: boolean): void => { this.shareBusy = busy; this.syncAutoRead() })
     this.saveController.subscribe((busy: boolean): void => { this.saveBusy = busy; this.syncAutoRead() })
     this.session.subscribe((state: ReaderPagedSnapshot): void => {
+      if (this.retainedThumbnailUnit.length > 0 && (state.unit === null ||
+        !state.unit.key.equals(this.state.unit?.key ?? this.initialUnit) ||
+        state.unit.pageCount !== this.state.unit?.pageCount)) this.retainedThumbnailUnit = ''
       if (state.topologyRevision !== this.state.topologyRevision || state.navigationRevision !== this.state.navigationRevision ||
         state.displayIndex !== this.state.displayIndex) this.zoomed = false
       if (state.navigationRevision !== this.state.navigationRevision || state.displayIndex !== this.state.displayIndex ||
@@ -492,11 +496,14 @@ export struct ReaderSurface {
   @Monitor('autoReadEntryBlocked')
   onAutoReadEntryChanged(): void { this.syncAutoRead() }
 
-  private syncAutoRead(): void {
+  private syncAutoRead(prepareForEnable: boolean = false): void {
     if (this.autoReadPolicy?.available !== true || this.closing || this.chromeCloseRequested || this.chromeDisposed) {
       this.autoReadController.stop()
       return
     }
+    // update() builds a full chapter display map. Manual scrolling has no
+    // auto-read timer; prepare from the current snapshot only when enabling it.
+    if (!prepareForEnable && !this.autoReadController.isEnabled()) return
     this.autoReadController.update(this.state, this.active,
       this.touching || this.menuVisible || this.tapZonePreviewVisible || this.shareBusy || this.saveBusy ||
       this.informationBusy || this.state.originalPreparing ||
@@ -506,7 +513,7 @@ export struct ReaderSurface {
 
   private toggleAutoRead(): void {
     if (this.autoReadPolicy?.available !== true || !this.active || this.closing || this.chromeCloseRequested) return
-    this.syncAutoRead()
+    this.syncAutoRead(!this.autoReadController.isEnabled())
     this.autoReadController.setEnabled(!this.autoReadController.isEnabled())
   }
 
@@ -1087,6 +1094,11 @@ export struct ReaderSurface {
               else void this.session.retry()
             })
         }.width('100%').height('100%').justifyContent(FlexAlign.Center).padding(24)
+          // A failed catalog has no page to own taps. The retry button still
+          // handles its own tap and the surrounding surface owns the chrome.
+          .onClick((): void => {
+            if (!this.menuVisible && !this.tapZonePreviewVisible) this.toggleChrome()
+          })
       }
       if (this.hostStatus !== null && this.hostStatus.text.length > 0) {
         Row({ space: 8 }) {
@@ -1104,12 +1116,12 @@ export struct ReaderSurface {
       if (this.tapZonePreviewVisible) {
         this.TapZonePreview()
       }
-      // Keep the current unit's thumbnail window mounted while the strip or chrome is hidden.
-      // Height clipping matches the production readers and preserves already decoded previews
-      // without moving cache ownership into reader-kit.
-      if (this.state.unit !== null) {
+      // Retain decoded previews when hiding a strip the user already opened.
+      // A new chapter should not build an invisible List and its placeholder tiles.
+      if (this.state.unit !== null && (this.thumbnailRailVisible() ||
+        this.retainedThumbnailUnit === this.thumbnailUnitIdentity())) {
         Column() {
-          ForEach([this.thumbnailUnitIdentity()], (_identity: string) => {
+          ForEach([this.thumbnailUnitIdentity()], (identity: string) => {
             ReaderThumbnailRail({ session: this.session, snapshot: this.state, accent: this.accent,
               visible: this.thumbnailRailVisible(),
               previewIndex: this.previewIndex,
@@ -1117,6 +1129,9 @@ export struct ReaderSurface {
                 this.session.seekSource(index, unit, navigation)
               },
             })
+              .onAppear((): void => {
+                if (identity === this.thumbnailUnitIdentity()) this.retainedThumbnailUnit = identity
+              })
           }, (identity: string): string => readerElementKey(identity))
         }.width('100%').height(this.thumbnailRailVisible() ? 156 : 0)
           .padding({ top: this.thumbnailRailVisible() ? 8 : 0, bottom: this.thumbnailRailVisible() ? 8 : 0 })

@@ -55,6 +55,32 @@ function decode(session, frame, width = 0, height = 0) {
   session.reportPresentation(frame.slotId, frame.asset.assetRequestId, true, width, height)
 }
 
+test('continuous original presentation publishes measured geometry with the displayed asset', async () => {
+  const { session, key } = setup({ count: 102 })
+  session.setPolicy(policy({ layout: 'continuous' }))
+  await session.open(key); await tick()
+  const pending = session.snapshot().frames[0]
+  assert.equal(pending.asset.phase, 'decoding')
+  const published = []
+  session.subscribe(snapshot => published.push(snapshot))
+  published.length = 0
+
+  decode(session, pending, 1000, 6000)
+  assert.equal(published.length, 1)
+  const displayed = published[0]
+  assert.equal(displayed.frames[0].asset.phase, 'displayed')
+  assert.equal(displayed.frames[0].asset.assetRequestId, pending.asset.assetRequestId)
+  assert.equal(displayed.continuousPage(0).height, 6000)
+  assert.equal(displayed.continuousPage(0).bodySourceReady, true)
+  assert.equal(displayed.observedAnchor, null)
+  decode(session, pending, 1000, 6000)
+  assert.equal(published.length, 1)
+  decode(session, pending, 1000, 6100)
+  assert.equal(published.length, 2)
+  assert.equal(published[1].continuousPage(0).height, 6100)
+  session.close()
+})
+
 test('spread presentation preserves source anchor, fragment, axis and topology but retires old navigation', async () => {
   for (const layout of ['single', 'spread']) for (const direction of ['ltr', 'rtl']) {
     const { session, key } = setup({ count: 5, wide: [0] })

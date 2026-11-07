@@ -626,6 +626,12 @@ export class ReaderPagedSession {
     this.emit()
   }
 
+  /** Reading observers can validate the live chapter without projecting the List. */
+  displayPolicyForUnit(unit: ReaderUnitKey): ReaderDisplayPolicy | null {
+    return this.state.phase === 'ready' && this.state.unit?.key.equals(unit) === true
+      ? this.state.policy.copy() : null
+  }
+
   snapshot(): ReaderPagedSnapshot {
     const value = new ReaderPagedSnapshot()
     value.unit = this.state.unit?.copy() ?? null
@@ -674,8 +680,12 @@ export class ReaderPagedSession {
     value.continuousIndex = this.continuousSelectedIndex()
     value.continuousPages = this.continuousRows.map((row: ReaderContinuousRow): ReaderPage | null =>
       row.context.pages.get(row.index)?.copy() ?? null)
-    value.continuousCrops = this.continuousRows.map((row: ReaderContinuousRow): ReaderImageCropBounds =>
-      this.continuousRowCrop(row))
+    // New image assets emit snapshots while the List is moving. Uncropped
+    // rows already have zero insets, so the default path needs no crop array.
+    if (this.cropEnabled && !this.cropPresentationDeferred && this.state.kind === 'original') {
+      value.continuousCrops = this.continuousRows.map((row: ReaderContinuousRow): ReaderImageCropBounds =>
+        this.continuousRowCrop(row))
+    }
     value.frames = this.framesAt(this.state.policy.layout === 'continuous'
       ? value.continuousIndex : this.state.displayIndex)
     if (this.state.policy.layout === 'continuous') {
@@ -1618,13 +1628,30 @@ export class ReaderPagedSession {
     if (this.disposed || slot === undefined) return
     const before = slot.session.snapshot()
     if (before.assetRequestId !== requestId || requestId === 0) return
-    slot.session.reportPresentation(requestId, success)
+    // The slot listener runs synchronously. Publish a newly displayed continuous
+    // original with its measured size in one snapshot so the native List
+    // doesn't reproject the chapter once for each half of the same receipt.
+    const batchContinuousOriginal = success && this.state.policy.layout === 'continuous' &&
+      this.state.phase === 'ready' && before.kind === 'original' && before.phase === 'decoding' &&
+      before.requestId === requestId
+    if (batchContinuousOriginal) this.reconcileDepth += 1
+    try {
+      slot.session.reportPresentation(requestId, success)
+      if (success && before.kind === 'original') this.recordPresentedPage(slot, width, height)
+    } finally {
+      if (batchContinuousOriginal) {
+        this.reconcileDepth -= 1
+        this.emit()
+      }
+    }
+  }
+
+  private recordPresentedPage(slot: ReaderPageSlot, width: number, height: number): void {
     const rendered = slot.session.snapshot()
     // A successfully presented ORIGINAL proves a current body source. It
     // clears an earlier target-preheat failure and may refine native geometry;
     // thumbnail presentation never changes either source fact.
-    if (!success || rendered.phase !== 'displayed' || before.kind !== 'original' || rendered.page === null ||
-      this.state.phase !== 'ready') return
+    if (rendered.phase !== 'displayed' || rendered.page === null || this.state.phase !== 'ready') return
     const page = rendered.page.copy()
     page.bodySourceReady = true
     page.bodySourceFailed = false
@@ -1633,7 +1660,8 @@ export class ReaderPagedSession {
       page.height = height
     }
     if (this.state.policy.layout === 'continuous' || slot.unit?.key.equals(this.state.unit!.key) !== true) {
-      this.installWindowPage(slot, page); this.emit(); return
+      if (this.installWindowPage(slot, page)) this.emit()
+      return
     }
     const previous = this.pages.get(page.sourceIndex)?.copy()
     if (!this.installSlotPage(page)) return
@@ -1916,9 +1944,9 @@ export class ReaderPagedSession {
         .forContinuousPage(row.index, row.context.unit.pageCount) : new ReaderImageCropBounds()
   }
 
-  private installWindowPage(slot: ReaderPageSlot, page: ReaderPage): void {
+  private installWindowPage(slot: ReaderPageSlot, page: ReaderPage): boolean {
     const context = this.windowUnits.find((value: ReaderWindowUnit): boolean => value.unit.key.equals(page.unit))
-    if (context === undefined || slot.unit?.key.equals(page.unit) !== true || page.sourceIndex !== slot.index) return
+    if (context === undefined || slot.unit?.key.equals(page.unit) !== true || page.sourceIndex !== slot.index) return false
     const previous = context.pages.get(page.sourceIndex)
     const value = page.copy()
     if (previous !== undefined) {
@@ -1926,17 +1954,28 @@ export class ReaderPagedSession {
       if (value.height <= 0) value.height = previous.height
       value.bodySourceReady = value.bodySourceReady || previous.bodySourceReady
     }
+    const selectedUnit = this.state.unit?.key.equals(page.unit) === true
+    const resolvesAnchor = selectedUnit && this.state.anchor?.sourceIndexHint === page.sourceIndex &&
+      this.state.anchor.pageKey === null
+    // A remounted native Image can report the same decode for an already
+    // displayed page. Publish only new metadata or a newly resolved anchor.
+    if (this.state.policy.layout === 'continuous' && previous !== undefined && !resolvesAnchor &&
+      this.samePageMetadata(previous, value) && previous.previewWidth === value.previewWidth &&
+      previous.previewHeight === value.previewHeight && previous.previewCoversWholePage === value.previewCoversWholePage) {
+      return false
+    }
     context.pages.set(page.sourceIndex, value)
     if (this.state.policy.layout !== 'continuous') {
       if (context.map?.updatePage(value) !== true) { context.map = null; this.rebuildPagerRows() }
     }
-    if (this.state.unit?.key.equals(page.unit) === true) {
+    if (selectedUnit) {
       this.map?.updatePage(value)
       if (this.state.anchor?.sourceIndexHint === page.sourceIndex && this.state.anchor.pageKey === null) {
         this.state.anchor = new ReaderReadingAnchor(page.unit, value.key, page.sourceIndex,
           this.state.anchor.x, this.state.anchor.y)
       }
     }
+    return true
   }
 
   private syncContinuousProcessing(): void {

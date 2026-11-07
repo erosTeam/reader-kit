@@ -673,7 +673,7 @@ export struct ReaderChrome {
               SymbolGlyph($r('sys.symbol.gearshape')).fontSize(22).fontColor([Color.White])
             }.width(44).height(44).backgroundColor(Color.Transparent)
               .id('rkit-host-settings').accessibilityText($r('app.string.rkit_host_settings'))
-              .enabled(this.active && this.snapshot.phase === 'ready')
+              .enabled(this.active && (this.snapshot.phase === 'ready' || this.snapshot.phase === 'failed'))
               .onClick(this.onHostSettings)
           } else {
             Button({ type: ButtonType.Circle }) {

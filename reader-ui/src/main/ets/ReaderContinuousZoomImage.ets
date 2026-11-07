@@ -171,8 +171,12 @@ export struct ReaderContinuousZoomImage {
     const target = this.imageTransform.doubleTapScale(geometry, this.pinchAdjusted)
     this.pinchAdjusted = false
     this.animating = true
-    this.imageTransform = target === 1 ? new ReaderViewportTransform() : this.imageTransform.zoom(geometry, target,
-      x, y)
+    // A zero-duration animation still flushes pending layout on ArkUI. Start
+    // this transaction only for a real double tap, never for a new List row.
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.FastOutSlowIn }, (): void => {
+      this.imageTransform = target === 1 ? new ReaderViewportTransform() : this.imageTransform.zoom(geometry, target,
+        x, y)
+    })
     this.publishLock()
     this.publishZoomed()
     this.animationTimer = setTimeout((): void => {
@@ -259,7 +263,6 @@ export struct ReaderContinuousZoomImage {
         .width('100%').height('100%')
         .scale({ x: this.imageTransform.scale, y: this.imageTransform.scale })
         .translate({ x: this.imageTransform.x, y: this.imageTransform.y })
-        .animation({ duration: this.animating ? 180 : 0, curve: Curve.FastOutSlowIn })
         .zIndex(this.retainedFrameValue !== null && this.frame.asset.phase === 'decoding' ? 1 : 0)
       if (this.retainedFrameValue !== null) {
         ReaderPagedImage({
@@ -279,7 +282,6 @@ export struct ReaderContinuousZoomImage {
           .width('100%').height('100%')
           .scale({ x: this.imageTransform.scale, y: this.imageTransform.scale })
           .translate({ x: this.imageTransform.x, y: this.imageTransform.y })
-          .animation({ duration: this.animating ? 180 : 0, curve: Curve.FastOutSlowIn })
           .zIndex(this.frame.asset.phase === 'displayed' ? 1 : 0)
       }
     }

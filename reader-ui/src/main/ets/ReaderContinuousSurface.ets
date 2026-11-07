@@ -184,6 +184,7 @@ struct ReaderContinuousList {
   private zoomedKey: string = ''
   private zoomedIdentity: string = ''
   private cropRegions: Map<string, string> = new Map()
+  private cropModeEnabled: boolean = false
   private boundarySwipe: ReaderBoundarySwipe = new ReaderBoundarySwipe()
   private boundaryTopology: number = -1
   private boundaryNavigation: number = -1
@@ -273,15 +274,27 @@ struct ReaderContinuousList {
       const targetFrame = this.snapshot.forItem(this.snapshot.displayKeys[this.positionTarget]).frames[0]
       if (targetFrame?.asset.phase === 'failed' || targetFrame?.asset.phase === 'suppressed') this.releasePosition()
     }
-    let cropChanged = false
-    this.snapshot.displayKeys.forEach((key: string, index: number): void => {
-      const crop = this.snapshot.continuousCrop(index)
-      const value = `${crop.left}:${crop.top}:${crop.right}:${crop.bottom}`
-      const previous = this.cropRegions.get(key)
-      if (previous !== undefined && previous !== value) cropChanged = true
-      this.cropRegions.set(key, value)
-    })
-    if (cropChanged) this.invalidatePosition()
+    const crops = this.snapshot.continuousCrops
+    const cropModeChanged = this.cropModeEnabled !== this.snapshot.cropEnabled
+    this.cropModeEnabled = this.snapshot.cropEnabled
+    if (crops.length > 0 || this.cropRegions.size > 0) {
+      let cropChanged = false
+      const regions = new Map<string, string>()
+      crops.forEach((crop, index: number): void => {
+        if (!crop.applied()) return
+        const key = this.snapshot.displayKeys[index]
+        if (key === undefined) return
+        const value = `${crop.left}:${crop.top}:${crop.right}:${crop.bottom}`
+        if (this.cropRegions.get(key) !== value) cropChanged = true
+        regions.set(key, value)
+      })
+      if (cropChanged || Array.from(this.cropRegions.keys()).some((key: string): boolean => !regions.has(key))) {
+        // An arriving neighbor's crop changes its own row. Only an explicit
+        // anchor in flight needs to reposition; normal scrolling owns itself.
+        if (cropModeChanged || this.positionTarget >= 0 || this.pendingPosition) this.invalidatePosition()
+      }
+      this.cropRegions = regions
+    }
     // A host sheet/background suspends input, not the current explicit page.
     // User movement, a new navigation, failure or disposal still retires it.
     if (!this.active) this.moving = false

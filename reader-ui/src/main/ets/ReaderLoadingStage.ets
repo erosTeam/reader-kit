@@ -1,8 +1,8 @@
-import { ColorMetrics } from '@kit.ArkUI'
+import { ColorMetrics, FrameCallback } from '@kit.ArkUI'
 
 /**
  * Faithful kit port of the legacy host ReaderLoadingBar + ReaderLoadingStage
- * presentation. Constants and timer mechanics are copied verbatim from the
+ * presentation. Visual constants are kept from the
  * NN/NE ReaderPage implementations (height 4, width 80%, maxWidth 180,
  * radius 2, track alpha 0.2, slider ratio 0.3, progress anim
  * 220ms EaseOut, indeterminate step 900ms, stage spacing 8, label font 14,
@@ -27,6 +27,17 @@ const LOADING_TRANSITION_PANEL_COLOR: ResourceColor = '#665F6368'
 const LOADING_TRANSITION_PANEL_RADIUS: number = 24
 const LOADING_TRANSITION_PANEL_BOTTOM: number = 16
 
+class ReaderLoadingAfterLayout extends FrameCallback {
+  private readonly start: () => void
+
+  constructor(start: () => void) {
+    super()
+    this.start = start
+  }
+
+  onIdle(_timeLeftInNano: number): void { this.start() }
+}
+
 @ComponentV2
 struct ReaderLoadingBar {
   @Param determinate: boolean = false
@@ -34,14 +45,14 @@ struct ReaderLoadingBar {
   @Param barFillColor: ResourceColor = LOADING_BAR_FG
   @Param barTrackColor: ResourceColor = LOADING_BAR_BG
   @Local trackWidth: number = 0
-  @Local indeterminatePosition: number = 0
+  @Local private indeterminateVisible: boolean = false
+  @Local private indeterminateRunning: boolean = false
   private inViewport: boolean = false
-  private indeterminateStartTimer: number = -1
-  private indeterminateTimer: number = -1
+  private animationEpoch: number = 0
 
   aboutToDisappear(): void {
     this.inViewport = false
-    this.stopIndeterminateAnimation()
+    this.syncIndeterminateAnimation()
   }
 
   @Monitor('determinate')
@@ -50,44 +61,22 @@ struct ReaderLoadingBar {
   }
 
   private syncIndeterminateAnimation(): void {
-    if (this.determinate || !this.inViewport) {
-      this.stopIndeterminateAnimation()
-      this.indeterminatePosition = 0
-      return
-    }
-    this.startIndeterminateAnimation()
+    const visible = !this.determinate && this.inViewport && this.trackWidth > 0
+    if (visible === this.indeterminateVisible) return
+    this.animationEpoch += 1
+    this.indeterminateRunning = false
+    this.indeterminateVisible = visible
   }
 
   private startIndeterminateAnimation(): void {
-    if (this.trackWidth <= 0 || this.indeterminateStartTimer >= 0 || this.indeterminateTimer >= 0) {
-      return
-    }
-    this.indeterminatePosition = 0
-    this.indeterminateStartTimer = setTimeout((): void => {
-      this.indeterminateStartTimer = -1
-      if (this.determinate || !this.inViewport) {
-        return
+    const epoch = this.animationEpoch
+    // Start after the new List row has been laid out. ArkUI owns subsequent
+    // turns of the same animation, so each leg needs no JS layout transaction.
+    this.getUIContext().postFrameCallback(new ReaderLoadingAfterLayout((): void => {
+      if (epoch === this.animationEpoch && this.indeterminateVisible && !this.determinate) {
+        this.indeterminateRunning = true
       }
-      this.moveIndeterminateSlider()
-      this.indeterminateTimer = setInterval((): void => {
-        this.moveIndeterminateSlider()
-      }, LOADING_INDETERMINATE_ANIM_DURATION)
-    }, 0)
-  }
-
-  private stopIndeterminateAnimation(): void {
-    if (this.indeterminateStartTimer >= 0) {
-      clearTimeout(this.indeterminateStartTimer)
-      this.indeterminateStartTimer = -1
-    }
-    if (this.indeterminateTimer >= 0) {
-      clearInterval(this.indeterminateTimer)
-      this.indeterminateTimer = -1
-    }
-  }
-
-  private moveIndeterminateSlider(): void {
-    this.indeterminatePosition = this.indeterminatePosition > 0 ? 0 : 1
+    }))
   }
 
   private barWidth(): number {
@@ -109,11 +98,7 @@ struct ReaderLoadingBar {
   }
 
   private fillWidth(): number {
-    return this.determinate ? this.barWidth() * this.clampedRatio() : this.sliderWidth()
-  }
-
-  private sliderX(): number {
-    return this.determinate ? 0 : (this.barWidth() - this.sliderWidth()) * this.indeterminatePosition
+    return this.barWidth() * this.clampedRatio()
   }
 
   build() {
@@ -126,14 +111,23 @@ struct ReaderLoadingBar {
           .borderRadius(LOADING_BAR_RADIUS)
           .animation({ duration: LOADING_PROGRESS_ANIM_DURATION, curve: Curve.EaseOut })
           .transition(TransitionEffect.IDENTITY)
+      } else if (this.indeterminateVisible) {
+        Row()
+          .width(this.sliderWidth())
+          .height(LOADING_BAR_HEIGHT)
+          .backgroundColor(this.barFillColor)
+          .borderRadius(LOADING_BAR_RADIUS)
+          .translate({ x: this.indeterminateRunning ? this.barWidth() - this.sliderWidth() : 0 })
+          .animation({ duration: LOADING_INDETERMINATE_ANIM_DURATION, curve: Curve.EaseInOut,
+            iterations: -1, playMode: PlayMode.Alternate })
+          .transition(TransitionEffect.IDENTITY)
+          .onAppear((): void => { this.startIndeterminateAnimation() })
       } else {
         Row()
           .width(this.sliderWidth())
           .height(LOADING_BAR_HEIGHT)
           .backgroundColor(this.barFillColor)
           .borderRadius(LOADING_BAR_RADIUS)
-          .translate({ x: this.sliderX() })
-          .animation({ duration: LOADING_INDETERMINATE_ANIM_DURATION, curve: Curve.EaseInOut })
           .transition(TransitionEffect.IDENTITY)
       }
     }

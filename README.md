@@ -38,6 +38,15 @@ Record direct/indirect exposure or a concrete reason for being unaffected.
 Source-mapped cause and impact precede implementation. Build/runtime evidence
 follows the coherent change; do not adjust behavior through repeated test runs.
 
+In continuous mode a new original's successful presentation and measured
+dimensions belong to the same snapshot. The native List consumes them together.
+Only visible-position observation advances reading progress. Its chapter/policy
+check can use `displayPolicyForUnit` without rebuilding the render window.
+Continuous zoom starts an animation transaction only on double tap. Loading
+and direct gesture transforms apply without opening a layout transaction.
+A catalog failure still exposes reader chrome from its own surface. Retry
+stays a separate action, and host settings remain accessible without pages.
+
 The following are existing preservation requirements, not new feature work:
 
 - With a valid thumbnail claim, retain the host root flight. Without it, retain
@@ -95,9 +104,10 @@ The following are existing preservation requirements, not new feature work:
   must preserve existing button/menu semantics, options and live updates.
 - Page selection updates local observed state. Retain the reading session,
   thumbnail rail, scroller and unrelated image nodes; do not key/remount an
-  entire page or list by page number to obtain an update. A retained hidden
-  rail keeps its decoded leases without following pages or demanding new
-  ranges; showing it adopts the current position before visible following. Declarative updates
+  entire page or list by page number to obtain an update. Build the rail for a
+  chapter when it is shown. Hiding it within that chapter keeps its decoded
+  leases without following pages or demanding new ranges; showing it adopts
+  the current position before visible following. Declarative updates
   are required; minimizing their scope does not mean prohibiting all rebuilds.
 - Preload demand rolls with navigation, range, policy and unit changes; an
   initial warm window is not continuous preload. Transport warming is not
