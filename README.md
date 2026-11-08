@@ -157,6 +157,12 @@ The following are existing preservation requirements, not new feature work:
   viewport with the same reading overlap. The host animation preference selects
   native smooth or immediate scrolling. Slider/thumbnail seeks still address
   pages, and automatic-reading dwell retains its existing per-item contract.
+- The thumbnail rail requests the visible range and one neighbor on each side.
+  A short return gesture reuses ready thumbnail leases in a bounded surrounding
+  range. Retention does not request unseen thumbnails. Closing the rail owner
+  or replacing its chapter releases those leases independently of body images.
+  Thumbnail results update only their own tiles. Standalone thumbnails present
+  as cover-fitted images without the geometry and visibility callbacks of a body page.
 - Close/background/unit replacement retire stale demand and callbacks. Return
   restores the source window and measures the current target; entry-time
   geometry cannot stand in for the current target after layout changes.

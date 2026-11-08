@@ -21,10 +21,12 @@ export class ReaderThumbnailFrame {
   index: number
   slotId: number
   asset: ReaderSnapshot
-  constructor(index: number, slotId: number, asset: ReaderSnapshot) {
+  revision: number
+  constructor(index: number, slotId: number, asset: ReaderSnapshot, revision: number = 0) {
     this.index = index
     this.slotId = slotId
     this.asset = asset.copy()
+    this.revision = revision
   }
 }
 
@@ -32,6 +34,8 @@ class ThumbnailSlot {
   index: number
   id: number
   session: ReaderSession
+  revision: number = 0
+  ready: boolean = false
   width: number = 0
   height: number = 0
   constructor(index: number, id: number, session: ReaderSession) {
@@ -40,7 +44,9 @@ class ThumbnailSlot {
 }
 
 /**
- * Auxiliary visible-range leases over an already prepared unit. No catalog.open,
+ * Auxiliary visible-range leases over an already prepared unit. A short
+ * backtrack reuses ready leases without starting extra offscreen requests.
+ * No catalog.open,
  * display-map, page selection, original observation or host chapter ownership.
  */
 export class ReaderThumbnailWindow {
@@ -67,7 +73,7 @@ export class ReaderThumbnailWindow {
       if (asset.page !== null && asset.page.thumbnail.kind !== 'sprite' && slot.width > 0 && slot.height > 0) {
         asset.page.thumbnail.width = slot.width; asset.page.thumbnail.height = slot.height
       }
-      return new ReaderThumbnailFrame(slot.index, slot.id, asset)
+      return new ReaderThumbnailFrame(slot.index, slot.id, asset, slot.revision)
     })
   }
   private emit(): void { if (this.listener !== null) this.listener(this.snapshot()) }
@@ -80,8 +86,18 @@ export class ReaderThumbnailWindow {
     }
     const first = Math.max(0, start - 1)
     const last = Math.min(unit.pageCount - 1, end + 1)
-    const retired = this.slots.filter((slot: ThumbnailSlot) => slot.index < first || slot.index > last)
-    this.slots = this.slots.filter((slot: ThumbnailSlot) => slot.index >= first && slot.index <= last)
+    const backtrack = Math.min(8, Math.max(3, end - start + 1))
+    const retained: ThumbnailSlot[] = []
+    const retired: ThumbnailSlot[] = []
+    this.slots.forEach((slot: ThumbnailSlot): void => {
+      if ((slot.index >= first && slot.index <= last) ||
+        (slot.ready && slot.index >= first - backtrack && slot.index <= last + backtrack)) {
+        retained.push(slot)
+      } else {
+        retired.push(slot)
+      }
+    })
+    this.slots = retained
     retired.forEach((slot: ThumbnailSlot): void => { slot.session.close() })
     const added: ThumbnailSlot[] = []
     for (let index = first; index <= last; index++) {
@@ -89,9 +105,12 @@ export class ReaderThumbnailWindow {
       const slot = new ThumbnailSlot(index, ++this.serial, new ReaderSession(this.catalog, this.assets, this.failures))
       this.slots.push(slot); added.push(slot)
     }
+    if (retired.length === 0 && added.length === 0) return
     this.slots.sort((a: ThumbnailSlot, b: ThumbnailSlot) => a.index - b.index)
     added.forEach((slot: ThumbnailSlot): void => {
-      slot.session.subscribe((): void => {
+      slot.session.subscribe((asset: ReaderSnapshot): void => {
+        slot.ready = asset.uri.length > 0 && (asset.phase === 'decoding' || asset.phase === 'displayed')
+        slot.revision++
         if (!this.closed && this.slots.includes(slot)) this.emit()
       })
       void slot.session.openPrepared(unit, slot.index, 'thumbnail')
@@ -105,11 +124,18 @@ export class ReaderThumbnailWindow {
     const asset = slot.session.snapshot()
     if (asset.assetRequestId !== request || (asset.phase !== 'decoding' && asset.phase !== 'displayed')) return
     if (success) {
-      if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+      const sizeChanged = Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0 &&
+        (slot.width !== width || slot.height !== height)
+      if (sizeChanged) {
         slot.width = width; slot.height = height
       }
-      slot.session.reportPresentation(request, true)
-      this.emit()
+      // The session already publishes the first presentation. Later callbacks
+      // only affect the rail if they supplied new dimensions.
+      if (asset.phase === 'decoding') slot.session.reportPresentation(request, true)
+      else if (sizeChanged && asset.page?.thumbnail.kind !== 'sprite') {
+        slot.revision++
+        this.emit()
+      }
     } else slot.session.reportRenderFailure(request)
   }
 

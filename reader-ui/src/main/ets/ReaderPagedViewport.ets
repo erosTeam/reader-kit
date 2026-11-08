@@ -217,13 +217,13 @@ export struct ReaderPagedViewport {
     if (identity !== this.transformIdentity || !this.selected || failed) {
       this.cancelGesture()
       this.transformIdentity = identity
-      this.zoomState = new ReaderViewportTransform()
+      this.setZoomState(new ReaderViewportTransform())
       this.pinchAdjusted = false
     } else if (!this.gesturesEnabled()) {
       this.cancelGesture()
-      this.zoomState = this.zoomState.settled(this.geometry())
+      this.setZoomState(this.zoomState.settled(this.geometry()))
     } else {
-      this.zoomState = this.zoomState.constrained(this.geometry())
+      this.setZoomState(this.zoomState.constrained(this.geometry()))
     }
     this.scheduleSelectedVisible()
   }
@@ -289,6 +289,8 @@ export struct ReaderPagedViewport {
 
   private scheduleSelectedVisible(): void {
     if (this.visibilityTimer !== 0) clearTimeout(this.visibilityTimer)
+    this.visibilityTimer = 0
+    if (!this.active || !this.selected) return
     const selection = this.snapshot.selectionId
     const navigation = this.snapshot.navigationRevision
     this.visibilityTimer = setTimeout((): void => {
@@ -349,6 +351,11 @@ export struct ReaderPagedViewport {
     console.info(`[ReaderViewport] action=${action} selection=${this.snapshot.selectionId} scale=${this.zoomState.scale.toFixed(3)} x=${this.zoomState.x.toFixed(2)} y=${this.zoomState.y.toFixed(2)}`)
   }
 
+  private setZoomState(next: ReaderViewportTransform): void {
+    const current = this.zoomState
+    if (current.scale !== next.scale || current.x !== next.x || current.y !== next.y) this.zoomState = next
+  }
+
   private doubleTapAt(x: number, y: number): void {
     if (!this.doubleTapEnabled || !this.gesturesEnabled() || this.pinching) return
     this.cancelGesture()
@@ -356,9 +363,11 @@ export struct ReaderPagedViewport {
     const target = this.zoomState.doubleTapScale(geometry, this.pinchAdjusted)
     this.pinchAdjusted = false
     this.zoomAnimating = true
-    this.zoomState = target === 1 ? new ReaderViewportTransform() :
-      this.zoomState.zoom(geometry, target,
-        x, y)
+    // Even duration 0 flushes ArkUI layout. Like continuous reading, start
+    // an animation only for a real double tap, outside normal page updates.
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.FastOutSlowIn }, (): void => {
+      this.setZoomState(target === 1 ? new ReaderViewportTransform() : this.zoomState.zoom(geometry, target, x, y))
+    })
     this.animationTimer = setTimeout((): void => {
       this.animationTimer = 0
       this.zoomAnimating = false
@@ -501,7 +510,6 @@ export struct ReaderPagedViewport {
       .height(this.fitWholePageInViewport() || this.equalSlots() ? this.viewportHeight : this.frameHeight())
       .scale({ x: this.zoomState.scale, y: this.zoomState.scale })
       .translate({ x: this.zoomState.x, y: this.zoomState.y })
-      .animation({ duration: this.zoomAnimating ? 180 : 0, curve: Curve.FastOutSlowIn })
       .id(this.selected ? 'rkit-paged-content' : `rkit-cached-content-${this.snapshot.displayIndex}`)
       if (this.snapshot.phase === 'catalog' && this.snapshot.frames.length === 0) {
         ReaderLoadingStage({ label: $r('app.string.rkit_loading_resolving'), loadingInk: this.loadingInk })
@@ -526,7 +534,7 @@ export struct ReaderPagedViewport {
       this.measuredViewportWidth = Math.max(1, Number(area.width))
       this.measuredViewportHeight = Math.max(1, Number(area.height))
       this.entryViewportLaidOut = true
-      this.zoomState = this.zoomState.settled(this.geometry())
+      this.setZoomState(this.zoomState.settled(this.geometry()))
     })
     .gesture(GestureGroup(GestureMode.Parallel,
       TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => {

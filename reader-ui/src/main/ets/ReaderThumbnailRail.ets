@@ -3,11 +3,39 @@ import { ReaderPagedSession, ReaderPagedSnapshot, ReaderThumbnailWindow, ReaderT
 import { ReaderPagedImage } from './ReaderPagedViewport'
 import { readerElementKey } from './ReaderElementKey'
 
+@ObservedV2
+class ThumbnailCell {
+  readonly index: number
+  @Trace frame: ReaderThumbnailFrame | null = null
+  constructor(index: number) { this.index = index }
+}
+
 class ThumbnailIndexSource implements IDataSource {
   private count: number
+  private cells: Map<number, ThumbnailCell> = new Map<number, ThumbnailCell>()
+  private framed: Set<number> = new Set<number>()
   constructor(count: number) { this.count = count }
   totalCount(): number { return this.count }
-  getData(index: number): number { return index }
+  getData(index: number): ThumbnailCell {
+    let cell = this.cells.get(index)
+    if (cell === undefined) {
+      cell = new ThumbnailCell(index)
+      this.cells.set(index, cell)
+    }
+    return cell
+  }
+  update(frames: ReaderThumbnailFrame[]): void {
+    const next = new Set<number>()
+    for (const frame of frames) {
+      const cell = this.getData(frame.index)
+      if (cell.frame?.slotId !== frame.slotId || cell.frame.revision !== frame.revision) cell.frame = frame
+      next.add(frame.index)
+    }
+    for (const index of this.framed) {
+      if (!next.has(index)) this.getData(index).frame = null
+    }
+    this.framed = next
+  }
   registerDataChangeListener(_listener: DataChangeListener): void {}
   unregisterDataChangeListener(_listener: DataChangeListener): void {}
 }
@@ -22,7 +50,6 @@ export struct ReaderThumbnailRail {
   @Param accent: ResourceColor = '#D93646'
   @Param previewIndex: number = -1
   @Event onSeek: (index: number, unit: ReaderUnitKey, navigation: number) => void = () => {}
-  @Local private frames: ReaderThumbnailFrame[] = []
   private source: ThumbnailIndexSource = new ThumbnailIndexSource(0)
   private resources: ReaderThumbnailWindow | null = null
   private scroller: ListScroller = new ListScroller()
@@ -39,7 +66,7 @@ export struct ReaderThumbnailRail {
     this.initialIndex = this.current()
     this.scrollTarget = this.initialIndex
     this.resources = this.session.createThumbnailWindow()
-    this.resources.subscribe((frames: ReaderThumbnailFrame[]): void => { this.frames = frames })
+    this.resources.subscribe((frames: ReaderThumbnailFrame[]): void => { this.source.update(frames) })
     this.range(this.current(), this.current())
   }
   aboutToDisappear(): void { this.alive = false; this.resources?.close(); this.resources = null }
@@ -63,9 +90,6 @@ export struct ReaderThumbnailRail {
   }
 
   private current(): number { return this.snapshot.anchor?.sourceIndexHint ?? 0 }
-  private frame(index: number): ReaderThumbnailFrame | null {
-    return this.frames.find((frame: ReaderThumbnailFrame) => frame.index === index) ?? null
-  }
   private selected(index: number): boolean {
     return this.renderedSnapshot.frames.some((frame: ReaderPagedFrame) => frame.part.sourceIndex === index)
   }
@@ -77,13 +101,13 @@ export struct ReaderThumbnailRail {
 
   build() {
     List({ space: 8, initialIndex: this.initialIndex, scroller: this.scroller }) {
-      LazyForEach(this.source, (index: number) => {
+      LazyForEach(this.source, (cell: ThumbnailCell) => {
         ListItem() {
           ReaderThumbnailRailTile({
-            index: index, frame: this.frame(index), selected: this.selected(index), accent: this.accent,
+            cell: cell, selected: this.selected(cell.index), accent: this.accent,
             onSelect: (): void => {
               if (this.alive && this.snapshot.unit !== null) {
-                this.onSeek(index, this.snapshot.unit.key.copy(), this.snapshot.navigationRevision)
+                this.onSeek(cell.index, this.snapshot.unit.key.copy(), this.snapshot.navigationRevision)
               }
             },
             onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
@@ -92,13 +116,13 @@ export struct ReaderThumbnailRail {
             onRetry: (slot: number, request: number): void => { void this.resources?.retry(slot, request) },
           })
         }.margin({
-          left: (this.renderedSnapshot.policy.direction === 'rtl' ? index === this.source.totalCount() - 1 : index === 0) ? 16 : 0,
-          right: (this.renderedSnapshot.policy.direction === 'rtl' ? index === 0 : index === this.source.totalCount() - 1) ? 16 : 0,
+          left: (this.renderedSnapshot.policy.direction === 'rtl' ? cell.index === this.source.totalCount() - 1 : cell.index === 0) ? 16 : 0,
+          right: (this.renderedSnapshot.policy.direction === 'rtl' ? cell.index === 0 : cell.index === this.source.totalCount() - 1) ? 16 : 0,
         })
-      }, (index: number): string => `${index}`)
+      }, (cell: ThumbnailCell): string => `${cell.index}`)
     }.listDirection(Axis.Horizontal)
       .direction(this.renderedSnapshot.policy.direction === 'rtl' ? Direction.Rtl : Direction.Ltr)
-      .cachedCount(1).scrollBar(BarState.Off).width('100%').height(140)
+      .cachedCount(3).scrollBar(BarState.Off).width('100%').height(140)
       .onScrollIndex((start: number, end: number): void => { this.range(start, end) })
       .id('rkit-thumbnail-rail')
   }
@@ -106,13 +130,15 @@ export struct ReaderThumbnailRail {
 
 @ComponentV2
 struct ReaderThumbnailRailTile {
-  @Require @Param index: number
-  @Param frame: ReaderThumbnailFrame | null = null
+  @Require @Param cell: ThumbnailCell
   @Param selected: boolean = false
   @Param accent: ResourceColor = '#D93646'
   @Event onSelect: () => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onRetry: (slot: number, request: number) => void = () => {}
+
+  private get index(): number { return this.cell.index }
+  private get frame(): ReaderThumbnailFrame | null { return this.cell.frame }
 
   private widthValue(): number {
     const thumb = this.frame?.asset.page?.thumbnail
@@ -142,14 +168,18 @@ struct ReaderThumbnailRailTile {
             })
         } else if (this.frame !== null && this.frame.asset.page !== null && this.frame.asset.uri.length > 0) {
           ForEach([this.imageIdentity()], (_identity: string) => {
-            ReaderPagedImage({ frame: this.imageFrame(), slotId: this.frame!.slotId,
-              assetRequestId: this.frame!.asset.assetRequestId, selectionId: 0, renderedFragment: 'whole', active: false,
-              thumbnailCover: true,
-              onPresented: this.onPresented,
-              onFailed: (_selection: number, slot: number, request: number, _fragment: ReaderFragment): void => {
-                this.onPresented(slot, request, false, 0, 0)
-              },
-            })
+            if (this.frame?.asset.page?.thumbnail.kind === 'sprite') {
+              ReaderPagedImage({ frame: this.imageFrame(), slotId: this.frame!.slotId,
+                assetRequestId: this.frame!.asset.assetRequestId, selectionId: 0, renderedFragment: 'whole', active: false,
+                thumbnailCover: true,
+                onPresented: this.onPresented,
+                onFailed: (_selection: number, slot: number, request: number, _fragment: ReaderFragment): void => {
+                  this.onPresented(slot, request, false, 0, 0)
+                },
+              })
+            } else {
+              ReaderThumbnailBitmap({ frame: this.frame!, onPresented: this.onPresented })
+            }
           }, (identity: string): string => readerElementKey(identity))
         } else {
           LoadingProgress().width(22).height(22).color(Color.White)
@@ -162,5 +192,25 @@ struct ReaderThumbnailRailTile {
         .id(`rkit-thumb-state-${this.index}-${this.frame?.asset.phase ?? 'pending'}`)
     }.width(this.widthValue()).height(140).alignItems(HorizontalAlign.Center)
       .id(`rkit-thumbnail-${this.index}`).onClick(this.onSelect)
+  }
+}
+
+/** An independent thumbnail has no page viewport, visibility or entry transition to observe. */
+@ComponentV2
+struct ReaderThumbnailBitmap {
+  @Require @Param frame: ReaderThumbnailFrame
+  @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
+
+  build() {
+    Image(this.frame.asset.uri).width('100%').height('100%')
+      .objectFit(ImageFit.Cover).interpolation(ImageInterpolation.Low)
+      .onComplete((event): void => {
+        if (event?.loadingStatus === 1) {
+          this.onPresented(this.frame.slotId, this.frame.asset.assetRequestId, true, event.width, event.height)
+        }
+      })
+      .onError((): void => {
+        this.onPresented(this.frame.slotId, this.frame.asset.assetRequestId, false, 0, 0)
+      })
   }
 }

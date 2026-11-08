@@ -42,12 +42,18 @@ test('rail requests only visible plus neighboring thumbnails without reopening c
   assert.equal(calls.open, 0)
   assert.ok(calls.load.every(c => c[1] === 'thumbnail'))
   const retained = window.snapshot().find(f => f.index === 12)
+  const backtrack = window.snapshot().find(f => f.index === 9)
   window.setRange(unit, 12, 15); await tick()
   assert.equal(window.snapshot().find(f => f.index === 12).slotId, retained.slotId)
-  assert.deepEqual(calls.release, ['thumbnail:A-9', 'thumbnail:A-10'])
+  assert.deepEqual(calls.release, [])
   assert.equal(calls.load.length, 8)
-  window.close()
+  window.setRange(unit, 10, 13); await tick()
+  assert.equal(window.snapshot().find(f => f.index === 9).slotId, backtrack.slotId)
+  assert.equal(calls.load.length, 8)
+  window.setRange(unit, 30, 30); await tick()
   assert.equal(calls.release.length, 8)
+  window.close()
+  assert.equal(calls.release.length, 11)
 })
 
 test('retired asynchronous thumbnails release late leases and reject old native callbacks', async () => {
@@ -68,8 +74,13 @@ test('independent preview decode dimensions never overwrite original or sprite c
   for (const sprite of [false, true]) {
     const { window, unit } = setup({ sprite })
     window.setRange(unit, 0, 0); await tick()
-    const f = window.snapshot()[0]
+    const [f, neighbor] = window.snapshot()
+    let updates = 0
+    window.subscribe(() => updates++)
     window.reportPresentation(f.slotId, f.asset.assetRequestId, true, 4000, 350)
+    window.reportPresentation(f.slotId, f.asset.assetRequestId, true, 4000, 350)
+    assert.equal(updates, 2) // initial snapshot and one presentation
+    assert.equal(window.snapshot()[1].revision, neighbor.revision)
     const page = window.snapshot()[0].asset.page
     assert.equal(page.width, 720); assert.equal(page.height, 9200)
     assert.equal(page.thumbnail.width, sprite ? 200 : 4000)
