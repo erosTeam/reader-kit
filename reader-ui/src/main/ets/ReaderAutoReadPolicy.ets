@@ -12,3 +12,13 @@ export class ReaderAutoReadPolicy {
     this.targetReadiness = targetReadiness
   }
 }
+
+/** Optional host control at the existing clock position; the Kit still owns the timer. */
+export class ReaderAutoReadControlParams {
+  active: boolean = false
+  ready: boolean = false
+  available: boolean = false
+  enabled: boolean = false
+  onSetEnabled: (enabled: boolean) => void = () => {}
+  onMenuVisible: (visible: boolean) => void = () => {}
+}

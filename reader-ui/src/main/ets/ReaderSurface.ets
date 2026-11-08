@@ -35,7 +35,7 @@ import { ReaderHostActions } from './ReaderHostActions'
 import { ReaderCenterAction } from './ReaderCenterAction'
 import { ReaderVariantPolicy } from './ReaderVariantPolicy'
 import { ReaderCropPolicy } from './ReaderCropPolicy'
-import { ReaderAutoReadPolicy } from './ReaderAutoReadPolicy'
+import { ReaderAutoReadControlParams, ReaderAutoReadPolicy } from './ReaderAutoReadPolicy'
 import { ReaderTapPolicy } from './ReaderTapPolicy'
 import { ReaderTemporaryVariantControl } from './ReaderTemporaryVariantControl'
 import { ReaderTitleParams } from './ReaderTitleParams'
@@ -89,6 +89,8 @@ export struct ReaderSurface {
   /** Optional host media operations stay in one narrow capability bundle. */
   @Param mediaActions: ReaderMediaActions | null = null
   @Param autoReadPolicy: ReaderAutoReadPolicy | null = null
+  /** A host mode change can stop the current timer without changing its policy. */
+  @Param autoReadStopRevision: number = 0
   @Param pageTurnAnimation: boolean = false
   /** Disabled double tap routes a single immediately; hosts own the persisted choice. */
   @Param doubleTapEnabled: boolean = true
@@ -129,6 +131,9 @@ export struct ReaderSurface {
   @Param centerAction: ReaderCenterAction | null = null
   /** Passive host feedback; null means absent and it never changes layout or handles input. */
   @Param hostStatus: ReaderHostStatus | null = null
+  /** Optional passive status arranged with the page footer, never over its controls. */
+  @Param bottomStatusVisible: boolean = false
+  @BuilderParam bottomStatus?: () => void
   /** Optional host continuation; chapter catalog, loading and persistence remain outside reader-kit. */
   @Param chapterNavigation: ReaderChapterNavigation | null = null
   /** Native-visible progress only; persistence and business reactions remain host-owned. */
@@ -140,6 +145,7 @@ export struct ReaderSurface {
   @Param contentOpacity: number = 1
   @Param chromeAppearance: ReaderChromeAppearance = DEFAULT_READER_CHROME_APPEARANCE
   @BuilderParam modeControl?: (params: ReaderModeControlParams) => void
+  @BuilderParam autoReadControl?: (params: ReaderAutoReadControlParams) => void
   /** Optional host-owned title leaf; omitted hosts keep the stock centered page indicator. */
   @BuilderParam titleControl?: (params: Binding<ReaderTitleParams>) => void
   @Param openingPreview: ReaderOpeningPreview | null = null
@@ -478,6 +484,9 @@ export struct ReaderSurface {
   @Monitor('autoReadPolicy', 'shareBusy', 'saveBusy', 'informationBusy', 'previewIndex')
   onAutoReadInputsChanged(): void { this.syncAutoRead() }
 
+  @Monitor('autoReadStopRevision')
+  onHostAutoReadStopRequested(): void { this.autoReadController.stop() }
+
   @Monitor('tapPolicy', 'tapZonePreviewRevision', 'tapZonePreviewRegions')
   onTapZonePreviewChanged(): void {
     const revision = this.tapPolicy?.previewRevision ?? this.tapZonePreviewRevision
@@ -515,6 +524,11 @@ export struct ReaderSurface {
     if (this.autoReadPolicy?.available !== true || !this.active || this.closing || this.chromeCloseRequested) return
     this.syncAutoRead(!this.autoReadController.isEnabled())
     this.autoReadController.setEnabled(!this.autoReadController.isEnabled())
+  }
+
+  private setAutoRead(enabled: boolean): void {
+    if (!enabled) this.autoReadController.stop()
+    else if (!this.autoReadController.isEnabled()) this.toggleAutoRead()
   }
 
   private applyPolicy(policy: ReaderDisplayPolicy, intent: ReaderRuntimePolicyIntent): void {
@@ -755,6 +769,8 @@ export struct ReaderSurface {
     return JSON.stringify([unit?.key.scope, unit?.key.work, unit?.key.unit, unit?.pageCount])
   }
 
+  private thumbnailRailHeight(): number { return this.thumbnailRailVisible() ? 156 : 0 }
+
   private thumbnailRailVisible(): boolean {
     return this.chromeVisible && !this.chromeSuppressed && this.thumbnailsVisible && this.active && this.state.phase === 'ready'
   }
@@ -974,6 +990,33 @@ export struct ReaderSurface {
   }
 
   @Builder
+  private HostAutoReadControl(params: ReaderAutoReadControlParams) {
+    if (this.autoReadControl !== undefined) this.autoReadControl(params)
+  }
+
+  private hasPageStatus(): boolean {
+    return (this.showPageNumber || this.enhancementVisible()) && this.state.unit !== null &&
+      this.state.unit.pageCount > 0
+  }
+
+  @Builder
+  private HostBottomStatus() {
+    Row() {
+      if (this.bottomStatus !== undefined) this.bottomStatus()
+    }.hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
+  private PersistentPageStatus(bottomMargin: number) {
+    ReaderPageStatus({ value: `${(this.state.anchor?.sourceIndexHint ?? 0) + 1} / ${this.state.unit?.pageCount ?? 0}`,
+      bottomMargin, showPageNumber: this.showPageNumber,
+      showEnhancement: this.enhancementVisible(), enhancementProcessing: this.enhancementProcessing(),
+      enhancementApplied: this.enhancementApplied(), enhancementEnabled: this.enhancementEnabledForCurrentUnit(),
+      enhancementToggleAvailable: this.temporaryVariantToggleAvailable(), accent: this.accent,
+      onToggleEnhancement: (): void => { this.toggleTemporaryVariant() } })
+  }
+
+  @Builder
   private HostTitleControl(params: Binding<ReaderTitleParams>) {
     if (this.titleControl !== undefined) {
       this.titleControl(params)
@@ -1133,7 +1176,7 @@ export struct ReaderSurface {
                 if (identity === this.thumbnailUnitIdentity()) this.retainedThumbnailUnit = identity
               })
           }, (identity: string): string => readerElementKey(identity))
-        }.width('100%').height(this.thumbnailRailVisible() ? 156 : 0)
+        }.width('100%').height(this.thumbnailRailHeight())
           .padding({ top: this.thumbnailRailVisible() ? 8 : 0, bottom: this.thumbnailRailVisible() ? 8 : 0 })
           .margin({ bottom: this.bottomInset + this.chromeAppearance.bottomHeight }).backgroundColor('#CC000000').clip(true)
           .hitTestBehavior(this.thumbnailRailVisible() ? HitTestMode.Default : HitTestMode.None)
@@ -1158,6 +1201,8 @@ export struct ReaderSurface {
           shareBusy: this.shareBusy,
           saveAvailable: this.mediaActions !== null && this.mediaActions.imageSave !== null,
           saveBusy: this.saveBusy,
+          hostAutoReadControlAvailable: this.autoReadControl !== undefined,
+          autoReadControl: (params: ReaderAutoReadControlParams): void => { this.HostAutoReadControl(params) },
           autoReadAvailable: this.autoReadPolicy?.available === true, autoReadEnabled: this.autoReadEnabled,
           cropAvailable: this.cropPolicy?.available === true,
           enhancementVisible: this.enhancementVisible(),
@@ -1185,6 +1230,7 @@ export struct ReaderSurface {
             void this.selectOriginal(frames, unit, navigation, enabled)
           },
           onAutoRead: (): void => { this.toggleAutoRead() },
+          onSetAutoRead: (enabled: boolean): void => { this.setAutoRead(enabled) },
           onSave: (choice: ReaderImageSaveChoice): void => { void this.saveImage(choice) },
           informationBusy: this.informationBusy,
           informationPreparing: this.informationBusy && !this.informationPresented,
@@ -1218,14 +1264,20 @@ export struct ReaderSurface {
             console.info(`[ReaderSurface] seek_source=${index}`)
           },
         })
-      } else if ((this.showPageNumber || this.enhancementVisible()) &&
-        this.state.unit !== null && this.state.unit.pageCount > 0) {
-        ReaderPageStatus({ value: `${(this.state.anchor?.sourceIndexHint ?? 0) + 1} / ${this.state.unit.pageCount}`,
-          bottomMargin: this.bottomInset + 8, showPageNumber: this.showPageNumber,
-          showEnhancement: this.enhancementVisible(), enhancementProcessing: this.enhancementProcessing(),
-          enhancementApplied: this.enhancementApplied(), enhancementEnabled: this.enhancementEnabledForCurrentUnit(),
-          enhancementToggleAvailable: this.temporaryVariantToggleAvailable(), accent: this.accent,
-          onToggleEnhancement: (): void => { this.toggleTemporaryVariant() } })
+        if (this.bottomStatusVisible && this.bottomStatus !== undefined) {
+          Row() { this.HostBottomStatus() }
+            .margin({ bottom: this.bottomInset + this.chromeAppearance.bottomHeight + this.thumbnailRailHeight() + 4 })
+            .hitTestBehavior(HitTestMode.None)
+        }
+      } else if (this.bottomStatusVisible && this.bottomStatus !== undefined) {
+        // One bottom anchor for both rows. The passive status cannot cover
+        // the counter or take the taps intended for the reading surface.
+        Column({ space: 4 }) {
+          this.HostBottomStatus()
+          if (this.hasPageStatus()) this.PersistentPageStatus(0)
+        }.width('100%').margin({ bottom: this.bottomInset + 8 }).hitTestBehavior(HitTestMode.Transparent)
+      } else if (this.hasPageStatus()) {
+        this.PersistentPageStatus(this.bottomInset + 8)
       }
       }.width('100%').height('100%').opacity(this.bodyOpacity)
     }.width('100%').height('100%').backgroundColor(Color.Transparent).id('rkit-reading-surface')

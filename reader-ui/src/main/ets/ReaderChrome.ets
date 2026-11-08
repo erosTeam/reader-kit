@@ -1,5 +1,6 @@
 import { ReaderChromeAppearance, DEFAULT_READER_CHROME_APPEARANCE } from './ReaderChromeAppearance'
 import { ReaderModeControlParams } from './ReaderModeControl'
+import { ReaderAutoReadControlParams } from './ReaderAutoReadPolicy'
 import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPolicy, ReaderUnitKey,
   ReaderImageSaveChoice, ReaderImageSaveTarget } from '@reader-kit/core'
 import { Binding, UIUtils, uiMaterial } from '@kit.ArkUI'
@@ -31,6 +32,8 @@ export struct ReaderChrome {
   @Param shareBusy: boolean = false
   @Param saveAvailable: boolean = false
   @Param saveBusy: boolean = false
+  @Param hostAutoReadControlAvailable: boolean = false
+  @BuilderParam autoReadControl: (params: ReaderAutoReadControlParams) => void = this.EmptyAutoReadControl
   @Param autoReadAvailable: boolean = false
   @Param cropAvailable: boolean = false
   @Param enhancementVisible: boolean = false
@@ -44,6 +47,7 @@ export struct ReaderChrome {
   @Event onOriginal: (frames: ReaderPagedFrame[], unit: ReaderUnitKey, navigation: number, enabled: boolean) => void = () => {}
   @Param autoReadEnabled: boolean = false
   @Event onAutoRead: () => void = () => {}
+  @Event onSetAutoRead: (enabled: boolean) => void = () => {}
   @Event onSave: (choice: ReaderImageSaveChoice) => void = () => {}
   @Param informationBusy: boolean = false
   @Param informationPreparing: boolean = false
@@ -156,6 +160,9 @@ export struct ReaderChrome {
 
   @Builder
   private EmptyModeControl(_params: ReaderModeControlParams) {}
+
+  @Builder
+  private EmptyAutoReadControl(_params: ReaderAutoReadControlParams) {}
 
   @Builder
   private EmptyTitleControl(_params: Binding<ReaderTitleParams>) {}
@@ -562,7 +569,14 @@ export struct ReaderChrome {
 
   @Builder
   private AutoReadControl() {
-    if (this.autoReadAvailable) {
+    if (this.hostAutoReadControlAvailable) {
+      this.autoReadControl({
+        active: this.active, ready: this.snapshot.phase === 'ready',
+        available: this.autoReadAvailable && (this.autoReadEnabled ||
+          this.snapshot.phase === 'ready' && this.snapshot.displayCount > 1),
+        enabled: this.autoReadEnabled, onSetEnabled: this.onSetAutoRead, onMenuVisible: this.onMenuVisible,
+      })
+    } else if (this.autoReadAvailable) {
       Button({ type: ButtonType.Circle }) {
         SymbolGlyph($r('sys.symbol.clock')).fontSize(22)
           .fontColor([this.autoReadEnabled ? this.accent : Color.White])
