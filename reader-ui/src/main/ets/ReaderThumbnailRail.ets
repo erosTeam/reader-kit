@@ -104,7 +104,7 @@ export struct ReaderThumbnailRail {
       LazyForEach(this.source, (cell: ThumbnailCell) => {
         ListItem() {
           ReaderThumbnailRailTile({
-            cell: cell, selected: this.selected(cell.index), accent: this.accent,
+            cell: cell, selected: this.selected(cell.index), accent: this.accent, railVisible: this.visible,
             onSelect: (): void => {
               if (this.alive && this.snapshot.unit !== null) {
                 this.onSeek(cell.index, this.snapshot.unit.key.copy(), this.snapshot.navigationRevision)
@@ -133,6 +133,7 @@ struct ReaderThumbnailRailTile {
   @Require @Param cell: ThumbnailCell
   @Param selected: boolean = false
   @Param accent: ResourceColor = '#D93646'
+  @Param railVisible: boolean = true
   @Event onSelect: () => void = () => {}
   @Event onPresented: (slot: number, request: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onRetry: (slot: number, request: number) => void = () => {}
@@ -184,13 +185,17 @@ struct ReaderThumbnailRailTile {
         } else {
           LoadingProgress().width(22).height(22).color(Color.White)
         }
-      }.width(this.widthValue()).height(118).backgroundColor('#26FFFFFF')
+      }.width('100%').height(118).backgroundColor('#26FFFFFF')
         .border({ width: this.selected ? 2 : 0, color: this.selected ? this.accent : Color.Transparent })
         .borderRadius(8).clip(true).id(`rkit-thumb-image-${this.index}`)
       Text(`${this.index + 1}`).fontSize(12).fontColor(this.selected ? this.accent : Color.White)
-        .fontWeight(FontWeight.Medium).maxLines(1).height(18).width(this.widthValue()).textAlign(TextAlign.Center)
+        .fontWeight(FontWeight.Medium).maxLines(1).height(18).width('100%').textAlign(TextAlign.Center)
         .id(`rkit-thumb-state-${this.index}-${this.frame?.asset.phase ?? 'pending'}`)
-    }.width(this.widthValue()).height(140).alignItems(HorizontalAlign.Center)
+    }.width(this.widthValue())
+      // Animate the slot's layout width once. Image and label share that width,
+      // and dropping an offscreen lease must not animate back to the placeholder.
+      .animation({ duration: this.railVisible && this.frame !== null ? 180 : 0, curve: Curve.FastOutSlowIn })
+      .height(140).alignItems(HorizontalAlign.Center)
       .id(`rkit-thumbnail-${this.index}`).onClick(this.onSelect)
   }
 }

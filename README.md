@@ -107,7 +107,10 @@ The following are existing preservation requirements, not new feature work:
   entire page or list by page number to obtain an update. Build the rail for a
   chapter when it is shown. Hiding it within that chapter keeps its decoded
   leases without following pages or demanding new ranges; showing it adopts
-  the current position before visible following. Declarative updates
+  the current position before visible following. A visible tile eases its
+  layout width from the placeholder to the bounded thumbnail ratio. The image
+  and page label share that width; hidden or retired tiles do not animate.
+  Declarative updates
   are required; minimizing their scope does not mean prohibiting all rebuilds.
 - Preload demand rolls with navigation, range, policy and unit changes; an
   initial warm window is not continuous preload. Transport warming is not
