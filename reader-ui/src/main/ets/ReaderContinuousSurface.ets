@@ -617,6 +617,8 @@ struct ReaderContinuousList {
   private scheduleMeasure(): void {
     if (this.measureTimer !== 0 || !this.active || this.pendingPosition || !this.fullyVisible || this.lockedKey.length > 0) return
     const navigation = this.snapshot.navigationRevision
+    const movingStart = this.first
+    const movingEnd = this.last
     this.measureTimer = setTimeout((): void => {
       this.measureTimer = 0
       if (!this.active || this.pendingPosition || !this.fullyVisible || this.lockedKey.length > 0 || navigation !== this.snapshot.navigationRevision ||
@@ -632,7 +634,14 @@ struct ReaderContinuousList {
         const targetRect = this.scroller.getItemRect(target)
         if (targetRect.height > 0 && targetRect.y < this.viewHeight && targetRect.y + targetRect.height > 0) first = target
       }
-      this.onRange(this.first, last, this.createdRevision, navigation, first)
+      // Native List scrolling paints the same rows on every VSync. Only a
+      // changed visible range needs Core's full resource reconciliation;
+      // a stable range can still publish its fractional visible position.
+      if (this.moving && movingStart === this.first && movingEnd === last) {
+        // Skip the redundant range reconciliation for this frame.
+      } else {
+        this.onRange(this.first, last, this.createdRevision, navigation, first)
+      }
       const key = this.snapshot.displayKeys[first]
       // Visibility reads one frame from the current window. A full render
       // projection copies policy, request arrays and frames on every scroll sample.
