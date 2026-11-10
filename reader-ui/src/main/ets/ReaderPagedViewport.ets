@@ -1,6 +1,6 @@
 import { ReaderImageEffects, ReaderImageEffectsLayer } from './ReaderImageEffects'
 import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPart, ReaderDisplayPolicy, ReaderSnapshot, ReaderAssetNotice,
-  ReaderUnitKey, ReaderFragment, readerPolicyRotatesPage, readerPagedFrameAspectRatio } from '@reader-kit/core'
+  ReaderUnitKey, ReaderFragment, readerPolicyRotatesPage, readerPagedFrameAspectRatio, readerPageIsWide } from '@reader-kit/core'
 import { ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/core'
 import { ReaderFailurePanel } from './ReaderFailurePanel'
 import { ReaderAssetNoticePanel } from './ReaderAssetNoticePanel'
@@ -602,7 +602,18 @@ struct ReaderPagedCell {
   }
 
   private imagePresentation(): ReaderImagePresentation {
-    return new ReaderImagePresentation(this.frame(), this.decodedOriginalIdentity, this.entryTransition)
+    return new ReaderImagePresentation(this.frame(), this.decodedOriginalIdentity, this.entryTransition,
+      this.splitTopologyPending())
+  }
+
+  /** Unknown or wide whole frames are still the pre-split projection. */
+  private splitTopologyPending(): boolean {
+    const frame = this.frame()
+    if (this.snapshot.policy.layout !== 'single' || !this.snapshot.policy.splitWidePages ||
+      frame.part.fragment !== 'whole') return false
+    const page = frame.asset.page
+    return page === null || page.width <= 0 || page.height <= 0 ||
+      readerPageIsWide(page, this.snapshot.policy.widePageRatio)
   }
 
   private frame(): ReaderPagedFrame {

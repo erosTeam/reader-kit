@@ -161,12 +161,13 @@ test('ordinary single pages retain viewport constraints before and after source 
     return methods.map(method => cls.members.find(value => value.name?.getText(tree) === method).getText(tree)).join('\n')
   }
   const source = `export class Viewport { ${extract('ReaderPagedViewport', ['fitWholePageInViewport', 'equalSlots', 'splitLayout'])} }\n` +
-    `export class Cell { ${extract('ReaderPagedCell', ['cellWidth', 'imageHeight', 'imageWidth', 'frame'])} }`
-  const exports = {}, core = load('ReaderPagedSession')
+    `export class Cell { ${extract('ReaderPagedCell', ['cellWidth', 'imageHeight', 'imageWidth', 'frame', 'splitTopologyPending'])} }`
+  const exports = {}, core = load('ReaderPagedSession'), display = load('ReaderDisplayMap')
+  const { ReaderSnapshot, ReaderUnitKey } = load('ReaderSession'), { ReaderDisplayPart } = display
   vm.runInNewContext(ts.transpileModule(source,
     { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText,
-    { exports, readerPagedFrameAspectRatio: core.readerPagedFrameAspectRatio })
-  const { ReaderSnapshot } = load('ReaderSession'), { ReaderDisplayPart } = load('ReaderDisplayMap')
+    { exports, readerPagedFrameAspectRatio: core.readerPagedFrameAspectRatio, readerPageIsWide: display.readerPageIsWide,
+      ReaderPagedFrame: core.ReaderPagedFrame, ReaderDisplayPart, ReaderUnitKey, ReaderSnapshot })
   const key = new ReaderUnitKey('source', 'work', 'unit'), page = new ReaderPage(key, 'p0', 0)
   const asset = new ReaderSnapshot(); asset.page = page; asset.kind = 'original'
   const frame = new core.ReaderPagedFrame(5, new ReaderDisplayPart(key, 'p0', 0), asset)
@@ -183,6 +184,18 @@ test('ordinary single pages retain viewport constraints before and after source 
   assert.equal(view.fitWholePageInViewport(), false, 'entry measurement keeps its existing geometry')
   view.entryTransition = null; snapshot.policy.splitWidePages = true
   assert.equal(view.fitWholePageInViewport(), false, 'split-wide geometry keeps its existing path')
+  snapshot.policy.layout = 'single'; snapshot.policy.splitWidePages = true; frame.asset.page.width = 0; frame.asset.page.height = 0
+  assert.equal(cell.splitTopologyPending(), true, 'unknown wide-page geometry keeps loading until split topology resolves')
+  frame.asset.page.width = 800; frame.asset.page.height = 1200
+  assert.equal(cell.splitTopologyPending(), false, 'a measured portrait page keeps its whole-page branch')
+  frame.asset.page.width = 2000; frame.asset.page.height = 1000
+  assert.equal(cell.splitTopologyPending(), true, 'a wide whole frame remains hidden until core publishes both halves')
+  snapshot.frames = [new core.ReaderPagedFrame(5, new ReaderDisplayPart(key, 'p0', 0, 'left'), asset)]
+  cell.renderedFragment = 'left'
+  assert.equal(cell.splitTopologyPending(), false, 'a published split half owns its pixels')
+  snapshot.policy.splitWidePages = false
+  assert.equal(cell.splitTopologyPending(), false, 'ordinary paging does not wait for split geometry')
+  snapshot.frames = [frame]; cell.renderedFragment = 'whole'
   snapshot.policy.splitWidePages = false; snapshot.policy.layout = 'spread'
   assert.equal(view.fitWholePageInViewport(), false, 'spread layout keeps its existing path')
   const otherPage = new ReaderPage(key, 'p1', 1)
