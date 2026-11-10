@@ -441,8 +441,9 @@ struct ReaderContinuousList {
   }
 
   private rowHeight(index: number): number {
-    const frame = this.snapshot.forItem(this.snapshot.displayKeys[index]).frames[0]
-    return frame?.asset.phase === 'failed' ? 220 : Math.max(220, this.imageHeight(index))
+    // Failure and retry reuse the loading row height. Shrinking only the error
+    // state makes the list jump when the user retries the same page.
+    return Math.max(220, this.imageHeight(index))
   }
 
   private imageIdentity(key: string, frame: ReaderPagedFrame): string {
@@ -875,7 +876,7 @@ struct ReaderContinuousCell {
           })
         }, (frame: ReaderPagedFrame): string =>
           readerElementKey(`${frame.slotId}:${frame.asset.assetRequestId}`))
-      }.width('100%').height(220).id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
+      }.width('100%').height(this.imageHeight).id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
         .onTouch((event: TouchEvent): void => { this.terminalTouch(event) })
         .gesture(TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => { this.terminalTap(event) }))
     } else if (this.snapshot.frames[0]?.asset.phase === 'failed') {
@@ -889,7 +890,7 @@ struct ReaderContinuousCell {
           })
         }, (frame: ReaderPagedFrame): string =>
           readerElementKey(`${frame.slotId}:${frame.asset.assetRequestId}`))
-      }.width('100%').height(220).id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
+      }.width('100%').height(this.imageHeight).id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
         .onTouch((event: TouchEvent): void => { this.terminalTouch(event) })
         .gesture(TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => { this.terminalTap(event) }))
     } else {
