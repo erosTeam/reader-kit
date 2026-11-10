@@ -18,6 +18,11 @@ export { ReaderViewportGeometry, ReaderViewportTransform } from './src/main/ets/
 export { ReaderThumbnailWindow, ReaderThumbnailFrame } from './src/main/ets/ReaderThumbnailWindow'
 export { ReaderInputPort, ReaderMoveIntent } from './src/main/ets/ReaderInputPort'
 export { ReaderImageInformation, ReaderImageInformationSource } from './src/main/ets/ReaderImageInformation'
+export { ReaderImagePixelSize, readerImagePixelSize, ReaderImageHeaderProbe }
+  from './src/main/ets/ReaderImageHeaderProbe'
+export { ReaderReadingShape, ReaderReadingShapePolicy, READER_RUNTIME_SHAPE_POLICY,
+  READER_CATALOG_SHAPE_POLICY, readerReadingShape, readerImageIsStripLike }
+  from './src/main/ets/ReaderReadingShape'
 export { ReaderImageCropBounds, ReaderImageCropRegion, ReaderImageCropSource,
   ReaderImageCropDetector } from './src/main/ets/ReaderImageCrop'
 export { ReaderImageShareTarget, ReaderImageSharePresentation, ReaderImageShareHost,
