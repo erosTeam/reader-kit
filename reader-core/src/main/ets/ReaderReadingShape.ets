@@ -26,7 +26,11 @@ export interface ReaderReadingShapePolicy {
  * dimensions may be missing or approximate and therefore stay conservative.
  */
 export const READER_RUNTIME_SHAPE_POLICY: ReaderReadingShapePolicy = {
-  strongRatio: 2.2,
+  // A single measured original settles only when it is unmistakably strip
+  // shaped; ordinary portrait pages stay well below this. 1.9 keeps a first
+  // page that is roughly twice as tall as wide readable as one strip block,
+  // while the two-thirds rule below still governs ordinary multi-page sets.
+  strongRatio: 1.9,
   longRatio: 1.6,
   minimumKnown: 2,
   sample: 6,
