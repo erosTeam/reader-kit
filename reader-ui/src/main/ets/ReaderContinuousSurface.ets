@@ -751,10 +751,14 @@ struct ReaderContinuousList {
     })
     .onDidScroll((_offset: number, state: ScrollState): void => {
       if (!this.pendingPosition && !this.positionInFlight && state !== ScrollState.Idle) this.entryTransition?.cancel()
-      this.moving = state !== ScrollState.Idle
+      const nextMoving = state !== ScrollState.Idle
+      if (this.moving !== nextMoving) this.moving = nextMoving
       this.scheduleMeasure()
     })
-    .onScrollStop((): void => { this.moving = false; this.scheduleMeasure() })
+    .onScrollStop((): void => {
+      if (this.moving) this.moving = false
+      this.scheduleMeasure()
+    })
   }
 
 }
