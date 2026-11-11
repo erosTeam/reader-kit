@@ -22,9 +22,15 @@ export class ReaderImagePresentation {
     // ends feedback; a resource's old displayed phase cannot do so. Retained
     // in-place replacements and the entry reveal gate keep their prior rules.
     const awaitingNative = asset?.kind === 'original' && asset.phase === 'displayed' && !decoded
-    const awaitingPixels = frame === null || awaitingNative || waitingForGeometry ||
+    // Failure and inline notice own their own panel. The paged cell keeps this
+    // placeholder mounted as a sibling of those panels, so a geometry or entry
+    // gate must never revive loading feedback on a terminal asset: an unknown or
+    // wide page that failed would otherwise show the loading bar over the retry
+    // panel for as long as the split topology stays pending.
+    const terminal = asset !== undefined && (asset.phase === 'failed' || asset.phase === 'suppressed')
+    const awaitingPixels = !terminal && (frame === null || awaitingNative || waitingForGeometry ||
       (asset !== undefined && asset.needsImagePlaceholder() && !decoded) ||
-      (frame !== null && entry?.hidesOriginal(frame) === true)
+      (frame !== null && entry?.hidesOriginal(frame) === true))
     this.phase = awaitingPixels ? 'loading'
       : asset !== undefined && asset.phase !== 'failed' && asset.phase !== 'suppressed' ? 'image' : 'empty'
   }
