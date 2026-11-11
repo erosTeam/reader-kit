@@ -65,6 +65,16 @@ test('shared presentation never exposes image pixels together with loading feedb
   frame.asset.retainedUri = 'file://retained'; frame.asset.retainedAssetRequestId = 6
   const retained = new presentationExports.ReaderImagePresentation(frame, '')
   assert.equal(retained.loading, false); assert.equal(retained.pixels, true)
+  // A paged cell keeps the placeholder beside the failure/notice panel. A
+  // pending split topology may not reopen loading feedback over a terminal asset.
+  for (const phase of ['failed', 'suppressed']) {
+    frame.asset.phase = phase
+    const terminal = new presentationExports.ReaderImagePresentation(frame, '', null, true)
+    assert.equal(terminal.loading, false, phase); assert.equal(terminal.pixels, false, phase)
+  }
+  frame.asset.phase = 'asset'
+  const awaitingGeometry = new presentationExports.ReaderImagePresentation(frame, '', null, true)
+  assert.equal(awaitingGeometry.loading, true); assert.equal(awaitingGeometry.pixels, false)
 })
 
 // A native decode is not yet an exposed original while entry owns opacity zero.
