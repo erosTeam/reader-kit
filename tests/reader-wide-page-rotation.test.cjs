@@ -59,3 +59,19 @@ test('wide-page policy returns the rotated content aspect ratio', () => {
 
 // Geometry, native rotation and progress projection require runtime tests;
 // textual matches of ArkUI builders cannot establish their visual correctness.
+
+// Koma opts out of continuous rotation while preserving the paged preference.
+test('host can disable wide rotation in continuous without changing paged behavior', () => {
+  const wide = page(2400, 1200), policy = new ReaderDisplayPolicy()
+  policy.rotateWidePages = true
+  policy.rotateWidePagesInContinuous = false
+  policy.layout = 'continuous'
+  assert.equal(readerPolicyRotatesPage(policy.copy(), wide), false)
+  policy.layout = 'single'
+  assert.equal(readerPolicyRotatesPage(policy.copy(), wide), true)
+  policy.layout = 'spread'
+  assert.equal(readerPolicyRotatesPage(policy.copy(), wide), true)
+  policy.rotateWidePagesInContinuous = true
+  policy.layout = 'continuous'
+  assert.equal(readerPolicyRotatesPage(policy.copy(), wide), true)
+})

@@ -15,6 +15,8 @@ export class ReaderDisplayPolicy {
   firstPageAlone: boolean = false
   splitWidePages: boolean = false
   rotateWidePages: boolean = false
+  /** Hosts may keep wide-page settings dormant in continuous reading. */
+  rotateWidePagesInContinuous: boolean = true
   widePageRatio: number = 1.2
 
   copy(): ReaderDisplayPolicy {
@@ -26,6 +28,7 @@ export class ReaderDisplayPolicy {
     value.firstPageAlone = this.firstPageAlone
     value.splitWidePages = this.splitWidePages
     value.rotateWidePages = this.rotateWidePages
+    value.rotateWidePagesInContinuous = this.rotateWidePagesInContinuous
     value.widePageRatio = this.widePageRatio
     return value
   }
@@ -39,7 +42,8 @@ export function readerPageIsWide(page: ReaderPage | null, widePageRatio: number)
 }
 
 export function readerPolicyRotatesPage(policy: ReaderDisplayPolicy, page: ReaderPage | null): boolean {
-  return policy.rotateWidePages && !policy.splitWidePages && readerPageIsWide(page, policy.widePageRatio)
+  return policy.rotateWidePages && !policy.splitWidePages &&
+    (policy.layout !== 'continuous' || policy.rotateWidePagesInContinuous) && readerPageIsWide(page, policy.widePageRatio)
 }
 
 function normalized(value: number, fallback: number): number {
