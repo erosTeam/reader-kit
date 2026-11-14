@@ -403,8 +403,11 @@ test('inactive viewport cannot observe and repeated identical observations do no
 test('a superseded undecoded replacement keeps the last presented asset and releases each lease once', async () => {
   const releases = [], snapshots = []
   const assets = new Assets()
-  assets.load = async (_page, _kind, _cancel, force) =>
-    new ReaderAsset(force ? 'source' : 'enhanced', () => releases.push(force ? 'source' : 'presented'))
+  assets.load = async (_page, _kind, _cancel, force) => {
+    const asset = new ReaderAsset(force ? 'source' : 'enhanced', () => releases.push(force ? 'source' : 'presented'))
+    if (!force) asset.pixelSize = { width: 4500, height: 6400 }
+    return asset
+  }
   const session = new ReaderSession(new Catalog(), assets)
   session.subscribe(snapshot => snapshots.push(snapshot))
   await session.open(key())
@@ -413,10 +416,16 @@ test('a superseded undecoded replacement keeps the last presented asset and rele
   await session.show(0, 'original', true)
   const superseded = session.snapshot()
   const plan = { page: superseded.page.copy(), variant: 'enhanced', identity: 'cached',
-    async load() { return new ReaderAsset('enhanced', () => releases.push('candidate')) } }
+    async load() {
+      const asset = new ReaderAsset('enhanced', () => releases.push('candidate'))
+      asset.pixelSize = { width: 4096, height: 5824 }
+      return asset
+    } }
   snapshots.length = 0
   await session.show(0, 'original', false, plan)
   const candidate = session.snapshot()
+  assert.deepEqual(candidate.pixelSize, { width: 4096, height: 5824 })
+  assert.deepEqual(candidate.retainedPixelSize, { width: 4500, height: 6400 })
   assert.equal(candidate.retainedUri, displayed.uri)
   assert.equal(candidate.retainedAssetRequestId, displayed.assetRequestId)
   assert.equal(candidate.phase, 'decoding')
@@ -429,6 +438,7 @@ test('a superseded undecoded replacement keeps the last presented asset and rele
   session.reportPresentation(candidate.assetRequestId, true)
   assert.equal(session.snapshot().phase, 'displayed')
   assert.equal(session.snapshot().retainedUri, '')
+  assert.equal(session.snapshot().retainedPixelSize, null)
   assert.deepEqual(releases, ['source', 'presented'])
   session.close()
   assert.deepEqual(releases, ['source', 'presented', 'candidate'])

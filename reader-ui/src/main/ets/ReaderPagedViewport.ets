@@ -1,6 +1,6 @@
 import { ReaderImageEffects, ReaderImageEffectsLayer } from './ReaderImageEffects'
-import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPart, ReaderDisplayPolicy, ReaderSnapshot, ReaderAssetNotice,
-  ReaderUnitKey, ReaderFragment, readerPolicyRotatesPage, readerPagedFrameAspectRatio, readerPageIsWide } from '@reader-kit/core'
+import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPolicy, ReaderAssetNotice,
+  ReaderFragment, readerPolicyRotatesPage, readerPagedFrameAspectRatio, readerPageIsWide } from '@reader-kit/core'
 import { ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/core'
 import { ReaderFailurePanel } from './ReaderFailurePanel'
 import { ReaderAssetNoticePanel } from './ReaderAssetNoticePanel'
@@ -109,6 +109,7 @@ export struct ReaderPagedViewport {
   @Param imageEffects: ReaderImageEffects = new ReaderImageEffects()
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param pageGap: number = 0
+  @Param fitPagedImageDecode: boolean = false
   @Param doubleTapEnabled: boolean = true
   @Param doubleTapIntervalMs: number = 300
   @Require @Param snapshot: ReaderPagedSnapshot
@@ -425,10 +426,13 @@ export struct ReaderPagedViewport {
     this.panning = false
   }
 
-  private totalRatio(): number {
+  @Computed
+  private get contentRatio(): number {
     return Math.max(0.01, this.snapshot.frames.reduce((sum: number, frame: ReaderPagedFrame) =>
       sum + readerPagedFrameAspectRatio(frame, this.snapshot.policy), 0))
   }
+
+  private totalRatio(): number { return this.contentRatio }
 
   private frameHeight(): number { return Math.min(this.viewportHeight, this.viewportWidth / this.totalRatio()) }
 
@@ -478,11 +482,20 @@ export struct ReaderPagedViewport {
     Stack() {
       Row({ space: this.effectivePageGap() }) {
         ForEach(this.snapshot.frames, (frame: ReaderPagedFrame) => {
-          // Only stable identity comes from the ForEach closure. Cell state is
-          // resolved from the current snapshot so same-key updates are not lost.
+          // Resolve the current frame by key on same-key updates. Each child
+          // consumes only its own asset, even while the other side is decoding.
           ReaderPagedCell({
             imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects, loadingInk: this.loadingInk,
-            snapshot: this.snapshot, slotId: frame.slotId,
+            frame: this.snapshot.frames.find((item: ReaderPagedFrame): boolean =>
+              item.slotId === frame.slotId && item.part.fragment === frame.part.fragment) ?? frame,
+            policy: this.snapshot.policy,
+            pagedDecode: !this.fitPagedImageDecode ? 'default' :
+              this.selected && (this.zoomState.zoomed() || this.pinching) ? 'original' : 'fit',
+            compact: this.snapshot.frames.length > 1,
+            selectionId: this.selected ? this.snapshot.selectionId : 0,
+            navigationRevision: this.selected ? this.snapshot.navigationRevision : 0,
+            topologyRevision: this.snapshot.topologyRevision,
+            ready: this.snapshot.phase === 'ready', slotId: frame.slotId,
             entryTransition: this.entryTransition,
             entryMeasurement: this.entryMeasurement,
             entryGeometryReady: this.entryViewportLaidOut && this.entryRatiosReady(),
@@ -566,7 +579,14 @@ struct ReaderPagedCell {
   @Param loadingInk: ResourceColor = Color.White
   @Param imageEffects: ReaderImageEffects = new ReaderImageEffects()
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
-  @Require @Param snapshot: ReaderPagedSnapshot
+  @Require @Param frame: ReaderPagedFrame
+  @Require @Param policy: ReaderDisplayPolicy
+  @Param pagedDecode: ReaderPagedDecode = 'default'
+  @Param compact: boolean = false
+  @Param ready: boolean = false
+  @Param selectionId: number = 0
+  @Param navigationRevision: number = 0
+  @Param topologyRevision: number = 0
   @Param entryTransition: ReaderEntryTransition | null = null
   @Param entryMeasurement: ReaderEntryMeasurement | null = null
   @Param entryGeometryReady: boolean = false
@@ -589,41 +609,35 @@ struct ReaderPagedCell {
   @Local private noticeActionBusy: boolean = false
 
   private originalDrawableIdentity(): string {
-    const frame = this.frame()
+    const frame = this.frame
     return `${this.slotId}:${frame.asset.assetRequestId}:` +
       `${frame.part.sourceIndex}:${this.renderedFragment}:${frame.asset.visualRevision}`
   }
 
   private originalDecoded(identity: string): void {
-    if (this.frame().asset.kind === 'original' && identity === this.originalDrawableIdentity()) {
-      this.onDecodedOriginal(this.slotId, this.frame().asset.assetRequestId)
+    if (this.frame.asset.kind === 'original' && identity === this.originalDrawableIdentity()) {
+      this.onDecodedOriginal(this.slotId, this.frame.asset.assetRequestId)
       this.decodedOriginalIdentity = identity
     }
   }
 
   private imagePresentation(): ReaderImagePresentation {
-    return new ReaderImagePresentation(this.frame(), this.decodedOriginalIdentity, this.entryTransition,
+    return new ReaderImagePresentation(this.frame, this.decodedOriginalIdentity, this.entryTransition,
       this.splitTopologyPending())
   }
 
   /** Unknown or wide whole frames are still the pre-split projection. */
   private splitTopologyPending(): boolean {
-    const frame = this.frame()
-    if (this.snapshot.policy.layout !== 'single' || !this.snapshot.policy.splitWidePages ||
+    const frame = this.frame
+    if (this.policy.layout !== 'single' || !this.policy.splitWidePages ||
       frame.part.fragment !== 'whole') return false
     const page = frame.asset.page
     return page === null || page.width <= 0 || page.height <= 0 ||
-      readerPageIsWide(page, this.snapshot.policy.widePageRatio)
-  }
-
-  private frame(): ReaderPagedFrame {
-    return this.snapshot.frames.find((frame: ReaderPagedFrame) => frame.slotId === this.slotId &&
-      frame.part.fragment === this.renderedFragment) ??
-      new ReaderPagedFrame(0, new ReaderDisplayPart(new ReaderUnitKey('', '', ''), null, 0), new ReaderSnapshot())
+      readerPageIsWide(page, this.policy.widePageRatio)
   }
 
   private syncRetainedFrame(): void {
-    const frame = this.frame()
+    const frame = this.frame
     const retainedUri = frame.asset.retainedUri
     const retainedRequest = frame.asset.retainedAssetRequestId
     // Do not collapse equal URI strings. A force reload is a new presentation
@@ -642,6 +656,8 @@ struct ReaderPagedCell {
     asset.assetRequestId = retainedRequest
     asset.retainedUri = ''
     asset.retainedAssetRequestId = 0
+    asset.pixelSize = frame.asset.retainedPixelSize
+    asset.retainedPixelSize = null
     const retained = new ReaderPagedFrame(frame.slotId, frame.part, asset, frame.crop)
     retained.cropPending = frame.cropPending
     this.retainedFrameValue = retained
@@ -649,43 +665,38 @@ struct ReaderPagedCell {
 
   aboutToAppear(): void { this.syncRetainedFrame() }
 
-  @Monitor('snapshot')
-  onSnapshotChanged(): void { this.syncRetainedFrame() }
-
-  private retainedFrame(): ReaderPagedFrame {
-    return this.retainedFrameValue ??
-      new ReaderPagedFrame(0, new ReaderDisplayPart(new ReaderUnitKey('', '', ''), null, 0), new ReaderSnapshot())
-  }
+  @Monitor('frame')
+  onFrameChanged(): void { this.syncRetainedFrame() }
 
   private presentedFrame(): ReaderPagedFrame {
-    return this.retainedFrameValue ?? this.frame()
+    return this.retainedFrameValue ?? this.frame
   }
 
   private cellWidth(): number {
     return this.frameWidth > 0 ? this.frameWidth : this.frameHeight *
-      readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy)
+      readerPagedFrameAspectRatio(this.frame, this.policy)
   }
   private imageHeight(): number {
     return this.fitViewport ? this.frameHeight : Math.min(this.frameHeight, this.cellWidth() /
-      readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy))
+      readerPagedFrameAspectRatio(this.frame, this.policy))
   }
   private imageWidth(): number {
     return this.fitViewport ? this.cellWidth() : this.imageHeight() *
-      readerPagedFrameAspectRatio(this.frame(), this.snapshot.policy)
+      readerPagedFrameAspectRatio(this.frame, this.policy)
   }
 
-  private rotateClockwise(): boolean { return rotatedFrame(this.frame(), this.snapshot.policy) }
+  private rotateClockwise(): boolean { return rotatedFrame(this.frame, this.policy) }
 
   private entryContentReady(): boolean {
     const transition = this.entryTransition
-    const frame = this.frame()
+    const frame = this.frame
     return this.active && this.entryGeometryReady && transition !== null && transition.pending() &&
       transition.matches(frame.part) && frame.asset.kind === 'original' && this.renderedFragment === 'whole' &&
       !this.rotateClockwise()
   }
 
   private async resolveNoticeAction(): Promise<void> {
-    const frame = this.frame()
+    const frame = this.frame
     const notice = frame.asset.notice
     if (notice === null || this.noticeActionBusy) return
     this.noticeActionBusy = true
@@ -698,29 +709,30 @@ struct ReaderPagedCell {
 
   build() {
     Stack() {
-      if (this.frame().asset.phase === 'suppressed' && this.frame().asset.notice !== null) {
+      if (this.frame.asset.phase === 'suppressed' && this.frame.asset.notice !== null) {
         ReaderAssetNoticePanel({
-          notice: this.frame().asset.notice as ReaderAssetNotice,
-          page: this.frame().part.sourceIndex + 1,
-          compact: this.snapshot.frames.length > 1,
+          notice: this.frame.asset.notice as ReaderAssetNotice,
+          page: this.frame.part.sourceIndex + 1,
+          compact: this.compact,
           actionBusy: this.noticeActionBusy,
           onAction: (): void => { void this.resolveNoticeAction() },
         })
-      } else if (this.frame().asset.phase === 'failed') {
+      } else if (this.frame.asset.phase === 'failed') {
         ReaderFailurePanel({
-          page: this.frame().part.sourceIndex + 1, compact: this.snapshot.frames.length > 1,
-          failure: this.frame().asset.failure,
+          page: this.frame.part.sourceIndex + 1, compact: this.compact,
+          failure: this.frame.asset.failure,
           retryEnabled: this.active,
-          onRetry: (): void => { this.onRetry(this.slotId, this.frame().asset.requestId) },
+          onRetry: (): void => { this.onRetry(this.slotId, this.frame.asset.requestId) },
         })
-      } else if (this.frame().asset.uri.length > 0 || this.entryContentReady()) {
+      } else if (this.frame.asset.uri.length > 0 || this.entryContentReady()) {
         // This first call site exists from initial decode onward. During an exact
         // replacement it keeps the same presented URI/id/native node in front;
         // the conditional second site below alone owns the new request.
         ReaderPagedImage({
           imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
-          frame: this.presentedFrame(), selectionId: this.snapshot.selectionId,
-          topologyRevision: this.snapshot.topologyRevision, navigationRevision: this.snapshot.navigationRevision,
+          pagedDecode: this.pagedDecode, fitDecodeToContent: this.policy.layout === 'single',
+          frame: this.presentedFrame(), selectionId: this.selectionId,
+          topologyRevision: this.topologyRevision, navigationRevision: this.navigationRevision,
           entryTransition: this.retainedFrameValue === null ? this.entryTransition : null,
           entryMeasurement: this.entryMeasurement,
           entryPhase: this.entryTransition?.phase ?? 'finished',
@@ -733,7 +745,7 @@ struct ReaderPagedCell {
           slotId: this.slotId, assetRequestId: this.presentedFrame().asset.assetRequestId,
           renderedFragment: this.renderedFragment,
           rotateClockwise: this.rotateClockwise(),
-          active: this.retainedFrameValue === null && this.active && this.snapshot.phase === 'ready',
+          active: this.retainedFrameValue === null && this.active && this.ready,
           onDecodedOriginal: (identity: string): void => {
             if (this.retainedFrameValue === null) this.originalDecoded(identity)
           },
@@ -753,12 +765,13 @@ struct ReaderPagedCell {
           .opacity(this.imagePresentation().pixels ? 1 : 0)
           .width(this.imageWidth())
           .height(this.imageHeight())
-          .zIndex(this.retainedFrameValue !== null && this.frame().asset.phase === 'decoding' ? 1 : 0)
+          .zIndex(this.retainedFrameValue !== null && this.frame.asset.phase === 'decoding' ? 1 : 0)
         if (this.retainedFrameValue !== null) {
           ReaderPagedImage({
             imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
-            frame: this.frame(), selectionId: this.snapshot.selectionId,
-            topologyRevision: this.snapshot.topologyRevision, navigationRevision: this.snapshot.navigationRevision,
+            pagedDecode: this.pagedDecode, fitDecodeToContent: this.policy.layout === 'single',
+            frame: this.frame, selectionId: this.selectionId,
+            topologyRevision: this.topologyRevision, navigationRevision: this.navigationRevision,
             entryTransition: this.entryTransition,
             entryMeasurement: this.entryMeasurement,
             entryPhase: this.entryTransition?.phase ?? 'finished',
@@ -768,25 +781,48 @@ struct ReaderPagedCell {
             allocatedWidth: this.imageWidth(),
             allocatedHeight: this.imageHeight(),
             geometryAllocationRequired: true,
-            slotId: this.slotId, assetRequestId: this.frame().asset.assetRequestId,
+            slotId: this.slotId, assetRequestId: this.frame.asset.assetRequestId,
             renderedFragment: this.renderedFragment,
             rotateClockwise: this.rotateClockwise(),
-            active: this.active && this.snapshot.phase === 'ready',
+            active: this.active && this.ready,
             onDecodedOriginal: (identity: string): void => { this.originalDecoded(identity) },
             onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onInvalidDecodedMetrics: this.onInvalidDecodedMetrics,
           }).opacity(this.imagePresentation().pixels ? 1 : 0)
             .width(this.imageWidth())
             .height(this.imageHeight())
-            .zIndex(this.frame().asset.phase === 'displayed' ? 1 : 0)
+            .zIndex(this.frame.asset.phase === 'displayed' ? 1 : 0)
         }
       }
       ReaderImagePlaceholder({ loadingInk: this.loadingInk, presentation: this.imagePresentation(),
-        frame: this.frame(), entryTransition: this.entryTransition }).zIndex(2)
+        frame: this.frame, entryTransition: this.entryTransition }).zIndex(2)
     }
     .width(this.cellWidth())
     .height(this.frameHeight).clip(true)
-    .id(`rkit-part-${this.frame().part.sourceIndex}-${this.frame().part.fragment}`)
+    .id(`rkit-part-${this.frame.part.sourceIndex}-${this.frame.part.fragment}`)
+  }
+}
+
+type ReaderPagedDecode = 'default' | 'fit' | 'original'
+
+class ReaderImageDecodeModifier implements AttributeModifier<ImageAttribute> {
+  static readonly defaultDecode = new ReaderImageDecodeModifier('default')
+  static readonly fit = new ReaderImageDecodeModifier('fit')
+  static readonly original = new ReaderImageDecodeModifier('original')
+
+  private readonly mode: ReaderPagedDecode
+  private readonly sourceSize: ImageSourceSize
+
+  constructor(mode: ReaderPagedDecode, width: number = 0, height: number = 0) {
+    this.mode = mode
+    this.sourceSize = { width, height }
+  }
+
+  applyNormalAttribute(attribute: ImageAttribute): void {
+    if (this.mode === 'default') return
+    // Zero clears a previous explicit fit size on the same Image. ArkUI keeps
+    // the fitted drawable visible while the original is decoded for zoom.
+    attribute.autoResize(this.mode === 'fit').sourceSize(this.sourceSize)
   }
 }
 
@@ -794,6 +830,8 @@ struct ReaderPagedCell {
 export struct ReaderPagedImage {
   @Param imageEffects: ReaderImageEffects = new ReaderImageEffects()
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
+  @Param pagedDecode: ReaderPagedDecode = 'default'
+  @Param fitDecodeToContent: boolean = false
   @Param quarantineOriginal: boolean = false
   @Param guardUndecodedOriginal: boolean = false
   @Param alignGeometryBeforeVisible: boolean = false
@@ -1255,6 +1293,28 @@ export struct ReaderPagedImage {
   private renderWidth(): number { return this.rotateClockwise ? this.paintHeight() : this.paintWidth() }
   private renderHeight(): number { return this.rotateClockwise ? this.paintWidth() : this.paintHeight() }
 
+  @Computed
+  private get decodeModifier(): ReaderImageDecodeModifier {
+    if (this.pagedDecode === 'default') return ReaderImageDecodeModifier.defaultDecode
+    if (this.pagedDecode === 'original') return ReaderImageDecodeModifier.original
+    const frame = this.frame
+    const size = frame.asset.pixelSize
+    if (!this.fitDecodeToContent || size === null || this.rotateClockwise ||
+      frame.part.fragment !== 'whole' || frame.crop.applied() ||
+      !Number.isFinite(size.width) || !Number.isFinite(size.height) || size.width <= 0 || size.height <= 0) {
+      return ReaderImageDecodeModifier.fit
+    }
+    // Single whole pages can start in a viewport-sized fallback before their
+    // catalog geometry settles. Choose a decode level for the visible pixels,
+    // using the actual asset size even on the first layout of an enhancement.
+    const pixelUnit = this.getUIContext().px2vp(1)
+    const fitScale = Math.min(this.renderWidth() / size.width, this.renderHeight() / size.height) / pixelUnit
+    if (fitScale <= 0 || fitScale > 0.5) return ReaderImageDecodeModifier.fit
+    let level = 0.5
+    while (level / 2 >= fitScale) level /= 2
+    return new ReaderImageDecodeModifier('fit', size.width * level * pixelUnit, size.height * level * pixelUnit)
+  }
+
   build() {
     ReaderImageEffectsLayer({ effects: this.imageEffects }) {
     Stack() {
@@ -1291,6 +1351,7 @@ export struct ReaderPagedImage {
             .height(this.renderHeight() / this.frame.crop.region(this.frame.part).height)
             .id(this.entryLeafId())
             .interpolation(this.imageInterpolation)
+            .attributeModifier(this.decodeModifier)
             .onAreaChange((): void => {
               this.entryLeafLaidOut = true
               this.publishEntryTarget()

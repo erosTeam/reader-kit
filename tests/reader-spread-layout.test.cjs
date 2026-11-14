@@ -8,7 +8,7 @@ const core = { ...load('ReaderContent'), ...load('ReaderSession'), ...load('Read
 function subject(file, names, prelude = '') {
   const source = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets', file + '.ets'), 'utf8')
   const bodies = names.map(name => {
-    const match = new RegExp('^  (?:private )?' + name + '\\(', 'm').exec(source)
+    const match = new RegExp('^  (?:private )?(?:get )?' + name + '\\(', 'm').exec(source)
     assert.ok(match, name)
     const start = match.index, brace = source.indexOf('{', start); let depth = 1, end = brace + 1
     for (; depth; end++) { if (source[end] === '{') depth++; else if (source[end] === '}') depth-- }
@@ -22,7 +22,7 @@ function subject(file, names, prelude = '') {
 }
 const src = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderPagedViewport.ets'), 'utf8')
 const rotated = src.slice(src.indexOf('function rotatedFrame('), src.indexOf('/** Entry eligibility'))
-const Viewport = subject('ReaderPagedViewport', ['geometry', 'totalRatio', 'frameHeight', 'splitLayout',
+const Viewport = subject('ReaderPagedViewport', ['geometry', 'contentRatio', 'totalRatio', 'frameHeight', 'splitLayout',
   'effectivePageGap', 'equalSlotWidth', 'containedHeight', 'equalSlots'],
   rotated + '\nfunction normalizedReaderPageGap(value) { return Number.isFinite(value) ? Math.max(0, Math.min(96, value)) : 0 }')
 const Chrome = subject('ReaderChrome', ['toggleSpreadLayout'])
@@ -118,9 +118,9 @@ test('spread menu copies policy without changing direction, axis, grouping optio
 test('same-page replacement keeps stable slot identity and promotes only a composed candidate', () => {
   assert.match(src, /\(frame: ReaderPagedFrame\): string => readerElementKey\(`\$\{frame\.slotId\}:\$\{frame\.part\.fragment\}`\)/)
   assert.match(src, /@Local private retainedFrameValue: ReaderPagedFrame \| null = null/)
-  assert.match(src, /private presentedFrame\(\): ReaderPagedFrame \{[\s\S]*this\.retainedFrameValue \?\? this\.frame\(\)/)
-  assert.match(src, /frame: this\.presentedFrame\(\)[\s\S]*?active: this\.retainedFrameValue === null[\s\S]*?\.zIndex\(this\.retainedFrameValue !== null && this\.frame\(\)\.asset\.phase === 'decoding' \? 1 : 0\)/)
-  assert.match(src, /if \(this\.retainedFrameValue !== null\) \{[\s\S]*?frame: this\.frame\(\)[\s\S]*?onPresented: this\.onPresented[\s\S]*?\.zIndex\(this\.frame\(\)\.asset\.phase === 'displayed' \? 1 : 0\)/)
+  assert.match(src, /private presentedFrame\(\): ReaderPagedFrame \{[\s\S]*this\.retainedFrameValue \?\? this\.frame/)
+  assert.match(src, /frame: this\.presentedFrame\(\)[\s\S]*?active: this\.retainedFrameValue === null[\s\S]*?\.zIndex\(this\.retainedFrameValue !== null && this\.frame\.asset\.phase === 'decoding' \? 1 : 0\)/)
+  assert.match(src, /if \(this\.retainedFrameValue !== null\) \{[\s\S]*?frame: this\.frame[\s\S]*?onPresented: this\.onPresented[\s\S]*?\.zIndex\(this\.frame\.asset\.phase === 'displayed' \? 1 : 0\)/)
   assert.match(src, /postFrameCallback\(new ReaderEntryAfterLayout[\s\S]*?this\.onPresented\(this\.slotId, requestId, true, width, height\)/)
 })
 

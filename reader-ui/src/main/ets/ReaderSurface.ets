@@ -92,6 +92,8 @@ export struct ReaderSurface {
   /** A host mode change can stop the current timer without changing its policy. */
   @Param autoReadStopRevision: number = 0
   @Param pageTurnAnimation: boolean = false
+  /** Opt in after the host has verified fit and native-detail zoom on its devices. */
+  @Param fitPagedImageDecode: boolean = false
   /** Disabled double tap routes a single immediately; hosts own the persisted choice. */
   @Param doubleTapEnabled: boolean = true
   @Param doubleTapIntervalMs: number = 300
@@ -298,6 +300,8 @@ export struct ReaderSurface {
     const busy = this.active && !this.closing && !this.chromeDisposed &&
       (this.touching || this.menuVisible || this.tapZonePreviewVisible || this.inputLocked ||
         this.entryTransition?.blocksInput() === true)
+    this.session.setAutomaticPagingBusy(this.touching || this.inputLocked ||
+      this.entryTransition?.blocksInput() === true)
     if (busy === this.interactionBusyReported) return
     this.interactionBusyReported = busy
     this.activitySink?.interactionBusyChanged(busy)
@@ -1084,6 +1088,7 @@ export struct ReaderSurface {
           })
         } else {
           ReaderPagerSurface({
+            fitPagedImageDecode: this.fitPagedImageDecode,
             loadingInk: this.loadingInk ?? this.canvasForeground,
             imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
             doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
@@ -1092,6 +1097,9 @@ export struct ReaderSurface {
             zoomResetCommand: this.zoomResetCommand,
             command: this.pagerCommand,
             entryTransition: this.entryTransition,
+            onViewportChange: (width: number, height: number): void => {
+              this.session.setAutomaticPagingViewport(width, height)
+            },
             onInputLockChange: (locked: boolean, topology: number): void => { this.reportInputLock(locked, topology) },
             onZoomedChange: (zoomed: boolean, topology: number, navigation: number): void => {
               this.reportZoomed(zoomed, topology, navigation)

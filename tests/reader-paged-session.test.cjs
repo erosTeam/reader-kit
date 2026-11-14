@@ -109,6 +109,131 @@ test('spread presentation preserves source anchor, fragment, axis and topology b
   }
 })
 
+test('automatic paging defers a newly known wide boundary and preserves the original page across viewport changes', async () => {
+  const { session, key, catalog } = setup({ count: 7, wide: [2] })
+  const loadPage = catalog.page
+  catalog.page = async (unit, index) => {
+    const page = await loadPage(unit, index)
+    if (index === 4) { page.width = 0; page.height = 0 }
+    return page
+  }
+  const settleLayout = () => new Promise(resolve => setTimeout(resolve, 0))
+  try {
+    session.setNeighborPreload(true)
+    session.setPagedPreloadDepth(4)
+    session.setAutomaticPagingViewport(1000, 700)
+    session.setPolicy(policy({ automaticPaging: true, direction: 'rtl', splitWidePages: true }))
+    await session.open(key); await tick(); await settleLayout(); await tick()
+    const initial = session.snapshot()
+    assert.deepEqual(initial.frames.map(frame => frame.part.sourceIndex), [1, 0])
+    assert.ok(initial.displayKeys.includes('2:whole'))
+    assert.ok(initial.displayKeys.includes('3:whole+4:whole'))
+    const currentFrame = initial.frames.find(frame => frame.part.sourceIndex === 0)
+    decode(session, currentFrame, 800, 1200)
+    assert.equal(session.reportVisible(initial.selectionId, currentFrame.slotId, currentFrame.asset.assetRequestId, 'whole'), true)
+
+    const late = new ReaderPage(key, 'A-4', 4)
+    late.width = 1800; late.height = 1200
+    session.setAutomaticPagingBusy(true)
+    session.reportAutomaticPageSize(late)
+    await settleLayout()
+    assert.deepEqual(session.snapshot().displayKeys, initial.displayKeys)
+    session.setAutomaticPagingBusy(false)
+    await settleLayout()
+    const regrouped = session.snapshot()
+    assert.ok(!regrouped.displayKeys.includes('3:whole+4:whole'))
+    assert.ok(regrouped.displayKeys.includes('4:whole'))
+    assert.equal(regrouped.selectionId, initial.selectionId)
+    assert.equal(regrouped.observedAnchor.sourceIndexHint, 0)
+
+    session.move('next'); await tick()
+    const wide = session.snapshot()
+    assert.equal(wide.anchor.sourceIndexHint, 2)
+    assert.deepEqual(wide.frames.map(frame => frame.part.fragment), ['whole'])
+    session.setAutomaticPagingViewport(700, 1000)
+    await settleLayout()
+    const portrait = session.snapshot()
+    assert.equal(portrait.anchor.sourceIndexHint, 2)
+    assert.deepEqual(portrait.frames.map(frame => frame.part.fragment), ['right'])
+    assert.ok(portrait.displayKeys.includes('2:left'))
+  } finally {
+    session.close()
+  }
+})
+
+test('a portrait size arriving with different proportions keeps the selected RTL slots and navigation', async () => {
+  const { session, key, catalog } = setup({ count: 18, wide: [7] })
+  const loadPage = catalog.page
+  catalog.page = async (unit, index) => {
+    const page = await loadPage(unit, index)
+    if (index === 9) { page.width = 0; page.height = 0 }
+    return page
+  }
+  try {
+    catalog.spreadMetadata = (unit) => {
+      const wide = new ReaderPage(unit.key, 'A-7', 7)
+      wide.width = 1800; wide.height = 1200
+      return [wide]
+    }
+    session.setNeighborPreload(true)
+    session.setPagedPreloadDepth(2)
+    session.setAutomaticPagingViewport(1000, 700)
+    session.setPolicy(policy({ automaticPaging: true, direction: 'rtl' }))
+    await session.open(key, 8); await tick()
+    const initial = session.snapshot()
+    assert.deepEqual(initial.frames.map(frame => frame.part.sourceIndex), [9, 8])
+    const frame = initial.frames.find(frame => frame.part.sourceIndex === 8)
+    decode(session, frame, 800, 1200)
+    assert.equal(session.reportVisible(initial.selectionId, frame.slotId, frame.asset.assetRequestId, 'whole'), true)
+    const observed = session.snapshot()
+    const neighbor = new ReaderPage(key, 'A-9', 9)
+    neighbor.width = 960; neighbor.height = 1200
+    session.reportAutomaticPageSize(neighbor)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.equal(session.snapshot().topologyRevision, initial.topologyRevision)
+    assert.equal(session.snapshot().selectionId, observed.selectionId)
+    session.move('previous'); await tick()
+    session.move('next'); await tick()
+    assert.deepEqual(session.snapshot().frames.map(frame => frame.part.sourceIndex), [9, 8])
+    assert.equal(session.snapshot().anchor.sourceIndexHint, 8)
+  } finally {
+    session.close()
+  }
+})
+
+test('a late earlier page does not change the alignment of a spread already read', async () => {
+  const { session, key, catalog } = setup({ count: 7, wide: [1] })
+  const loadPage = catalog.page
+  catalog.page = async (unit, index) => {
+    const page = await loadPage(unit, index)
+    if (index === 2) { page.width = 0; page.height = 0 }
+    return page
+  }
+  const settleLayout = () => new Promise(resolve => setTimeout(resolve, 0))
+  try {
+    session.setNeighborPreload(true)
+    session.setPagedPreloadDepth(3)
+    session.setAutomaticPagingViewport(1000, 700)
+    session.setPolicy(policy({ automaticPaging: true, direction: 'rtl' }))
+    await session.open(key, 3); await tick(); await settleLayout(); await tick()
+    const spread = session.snapshot()
+    assert.deepEqual(spread.frames.map(frame => frame.part.sourceIndex), [3, 2])
+    const frame = spread.frames.find(frame => frame.part.sourceIndex === 3)
+    decode(session, frame, 800, 1200)
+    assert.equal(session.reportVisible(spread.selectionId, frame.slotId, frame.asset.assetRequestId, 'whole'), true)
+    const previous = new ReaderPage(key, 'A-2', 2)
+    previous.width = 800; previous.height = 1200
+    session.reportAutomaticPageSize(previous)
+    await settleLayout()
+    session.move('next'); await tick(); await settleLayout()
+    session.move('previous'); await tick()
+    assert.deepEqual(session.snapshot().frames.map(frame => frame.part.sourceIndex), [3, 2])
+    assert.equal(session.snapshot().anchor.sourceIndexHint, 2)
+  } finally {
+    session.close()
+  }
+})
+
 test('paging axis retires native topology while preserving original anchor and split fragment', async () => {
   for (const direction of ['ltr', 'rtl']) {
     const { session, key } = setup({ count: 4, wide: [0] })
@@ -1399,6 +1524,26 @@ test('explicit paging prepares spread sources once and honors neighbor disable',
   assert.equal(calls.load.length,6); assert.deepEqual(calls.preload,[])
   session.setNeighborPreload(false); await tick()
   assert.equal(session.snapshot().window.length,1); assert.equal(session.snapshot().nativeCacheDepth,0)
+  session.close()
+})
+
+test('automatic spreads keep adjacent full-size pages ready while warming farther originals as files', async () => {
+  const {session,key,calls}=setup({count:24,preload:true})
+  session.setNeighborPreload(true)
+  session.setPagedPreloadDepth(4)
+  session.setPreloadDepth(4)
+  session.setAutomaticPagingViewport(1000,700)
+  session.setPolicy(policy({automaticPaging:true,direction:'rtl'}))
+  await session.open(key,8); await tick()
+  const initial=session.snapshot()
+  assert.equal(initial.nativeCacheDepth,1)
+  assert.deepEqual(initial.window.map(item=>item.index),[4,3,5])
+  assert.deepEqual(calls.preload.map(call=>call.index),[12,13,14,15,16,17])
+  const next=initial.window.find(item=>item.index===5).frames.map(frame=>frame.slotId)
+  session.move('next'); await tick()
+  assert.deepEqual(session.snapshot().frames.map(frame=>frame.slotId),next)
+  session.move('previous'); await tick()
+  assert.deepEqual(session.snapshot().frames.map(frame=>frame.slotId),initial.frames.map(frame=>frame.slotId))
   session.close()
 })
 

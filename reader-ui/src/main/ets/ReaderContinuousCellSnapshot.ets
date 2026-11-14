@@ -39,7 +39,7 @@ function settledOriginal(frame: ReaderPagedFrame): boolean {
     asset.retainedAssetRequestId === 0 && asset.failure === null && asset.notice === null && asset.error.length === 0
 }
 
-function sameSettledOriginal(left: ReaderPagedFrame, right: ReaderPagedFrame): boolean {
+export function sameSettledOriginal(left: ReaderPagedFrame, right: ReaderPagedFrame): boolean {
   if (!settledOriginal(left) || !settledOriginal(right)) return false
   const a = left.asset
   const b = right.asset

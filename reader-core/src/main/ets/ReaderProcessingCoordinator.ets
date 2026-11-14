@@ -86,6 +86,7 @@ class ReaderPreparedVariantPlan implements ReaderVariantAssetPlan {
     const lease = new ReaderAsset(this.asset.uri, (): void => this.releaseReference(), this.asset.information,
       (): void => this.asset.present())
     lease.saveUri = this.asset.saveUri
+    lease.pixelSize = this.asset.pixelSize
     lease.crop = this.asset.crop
     lease.originalAvailable = this.asset.originalAvailable
     return lease

@@ -154,6 +154,7 @@ export struct ReaderChrome {
   private setLayout(layout: 'single' | 'spread' | 'continuous', axis: 'horizontal' | 'vertical' = 'horizontal'): void {
     const policy = this.snapshot.policy.copy()
     policy.layout = layout
+    policy.automaticPaging = false
     policy.pagingAxis = axis
     this.onPolicy(policy, 'layout')
   }

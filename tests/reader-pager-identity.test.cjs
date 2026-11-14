@@ -40,35 +40,44 @@ test('native datasource publishes a matching map before reload and retains obser
  const names=['ReaderPagerRenderItem','ReaderPagerDataSource']
  const classes=names.map(name=>tree.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.getText(tree)===name).getText(tree)).join('\n')
  const out={}
- vm.runInNewContext(ts.transpileModule(classes+'\nexports.Source=ReaderPagerDataSource', {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020,experimentalDecorators:true}}).outputText,{exports:out,ObservedV2:c=>c,Trace:()=>undefined,DataOperationType:{ADD:'add',RELOAD:'reload'}})
+ const { ReaderPagedSnapshot } = require('./load-core.cjs')('ReaderPagedSession')
+ const { ReaderDisplayPolicy } = require('./load-core.cjs')('ReaderDisplayMap')
+ vm.runInNewContext(ts.transpileModule(classes+'\nexports.Source=ReaderPagerDataSource', {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020,experimentalDecorators:true}}).outputText,{exports:out,ReaderPagedSnapshot,sameSettledOriginal:(a,b)=>a===b,ObservedV2:c=>c,Trace:()=>undefined,DataOperationType:{ADD:'add',RELOAD:'reload'}})
  const ids=new exports_.ReaderPagerIdentityMap(), ds=new out.Source()
  let reloads=0, expectedIndex=244, expectedKey='244:whole'
  const listener={onDatasetChange(operations){assert.equal(operations.length,1);assert.equal(operations[0].type,'reload');reloads++;assert.equal(ds.getData(expectedIndex).key,expectedKey);assert.equal(ds.getData(expectedIndex).snapshot.displayIndex,expectedIndex)}}
  ds.registerDataChangeListener(listener)
- const first={displayIndex:244}
+ const snapshot=(index, keys, extra={}) => ({displayIndex:index,pagerIndex:index,pagerKeys:keys,pagerWindow:[],phase:'ready',topologyRevision:1,kind:'original',policy:new ReaderDisplayPolicy(),...extra})
+ const first=snapshot(244,singles(300))
  ds.update(ids.update(singles(300),244,1,'a'),first)
  const selected=ds.getData(244)
  expectedIndex=122;expectedKey='244:whole+245:whole'
- ds.update(ids.update(spreads(300),122,2,'a'),{displayIndex:122})
+ ds.update(ids.update(spreads(300),122,2,'a'),snapshot(122,spreads(300)))
  assert.equal(ds.getData(122),selected)
  assert.equal(reloads,2)
- const arrival={displayIndex:122,frames:['ready']}
+ const initialRender=selected.snapshot
+ const readyFrame={slotId:10,part:{fragment:'whole'}}
+ const arrival=snapshot(122,spreads(300),{pagerWindow:[{key:expectedKey,frames:[readyFrame]}]})
  ds.update(ids.update(spreads(300),122,2,'a'),arrival)
- assert.equal(ds.getData(122),selected);assert.equal(selected.snapshot,arrival)
+ assert.equal(ds.getData(122),selected);assert.notEqual(selected.snapshot,initialRender)
+ assert.equal(selected.snapshot.frames[0],readyFrame)
+ const afterImage=selected.snapshot
+ ds.update(ids.update(spreads(300),122,2,'a'),{...arrival,observedSelectionId:3})
+ assert.equal(selected.snapshot,afterImage,'an observation alone does not invalidate a ready viewport')
  assert.equal(reloads,2,'image delivery must not request structural refresh')
  expectedIndex=123;expectedKey='246:whole+247:whole'
- ds.update(ids.update(spreads(300),123,2,'a'),{displayIndex:123})
+ ds.update(ids.update(spreads(300),123,2,'a'),snapshot(123,spreads(300)))
  assert.equal(reloads,2,'ordinary page navigation must not reload the native data')
  ds.unregisterDataChangeListener(listener)
- ds.update(ids.update(singles(300),246,3,'a'),{displayIndex:246})
+ ds.update(ids.update(singles(300),246,3,'a'),snapshot(246,singles(300)))
  assert.equal(reloads,2)
  const beforeInsert=ds.getData(246), batches=[]
  ds.registerDataChangeListener({onDatasetChange(operations){batches.push(JSON.parse(JSON.stringify(operations)))}})
  const keys=[...Array.from({length:12},(_,i)=>`previous-${i}`),...singles(300),'next-0','next-1']
- ds.update(ids.update(keys,258,3,'a'),{displayIndex:246})
+ ds.update(ids.update(keys,258,3,'a'),snapshot(246,singles(300)))
  assert.equal(ds.getData(258),beforeInsert,'the selected viewport retains its observable identity')
  assert.deepEqual(batches,[[{type:'add',index:0,count:12},{type:'add',index:312,count:2}]])
- ds.update(ids.update(keys,258,3,'a'),{displayIndex:246,frames:['updated']})
+ ds.update(ids.update(keys,258,3,'a'),snapshot(258,keys,{displayIndex:246,frames:['updated']}))
  assert.equal(batches.length,1,'image updates do not publish another structural event')
 })
 

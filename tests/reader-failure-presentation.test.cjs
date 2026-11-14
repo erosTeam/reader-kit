@@ -15,7 +15,7 @@ test('failure panel prefers host-classified text while retaining generic fallbac
 test('paged and continuous failure cells forward their exact asset classification', () => {
   const paged = read('reader-ui/src/main/ets/ReaderPagedViewport.ets')
   const continuous = read('reader-ui/src/main/ets/ReaderContinuousSurface.ets')
-  assert.match(paged, /ReaderFailurePanel\(\{[\s\S]*?failure: this\.frame\(\)\.asset\.failure/)
+  assert.match(paged, /ReaderFailurePanel\(\{[\s\S]*?failure: this\.frame\.asset\.failure/)
   assert.match(continuous, /ReaderFailurePanel\(\{[\s\S]*?failure: frame\.asset\.failure/)
 })
 

@@ -1,6 +1,7 @@
 import { ReaderUnitKey, ReaderUnit, ReaderPage } from './ReaderContent'
 import { ReaderReadingAnchor } from './ReaderDisplayMap'
 import { ReaderImageInformation, ReaderImageInformationSource } from './ReaderImageInformation'
+import { ReaderImagePixelSize } from './ReaderImageHeaderProbe'
 import { ReaderImageCropBounds, ReaderImageCropSource } from './ReaderImageCrop'
 export { ReaderUnitKey, ReaderUnit, ReaderPage, ReaderThumbnail } from './ReaderContent'
 
@@ -108,6 +109,8 @@ export class ReaderAsset {
   uri: string
   /** Source captured for an explicit user export. Defaults to the displayed URI. */
   saveUri: string
+  /** Actual file dimensions, when already known by the asset provider. */
+  pixelSize: ReaderImagePixelSize | null = null
   crop: ReaderImageCropSource | null = null
   originalAvailable: boolean = false
   notice: ReaderAssetNotice | null = null
@@ -162,6 +165,8 @@ export class ReaderAsset {
 export interface ReaderCatalog {
   open(key: ReaderUnitKey, cancellation: ReaderCancellation): Promise<ReaderUnit>
   page(unit: ReaderUnit, index: number, cancellation: ReaderCancellation): Promise<ReaderPage>
+  /** Known original dimensions from the already loaded catalog, with no I/O. */
+  spreadMetadata?(unit: ReaderUnit): ReaderPage[]
   adjacent(unit: ReaderUnit, direction: 'next' | 'previous'): ReaderUnitKey | null
 }
 
@@ -238,6 +243,9 @@ export class ReaderSnapshot {
   /** Previous displayed pixels kept below an exact in-place replacement. */
   retainedUri: string = ''
   retainedAssetRequestId: number = 0
+  /** File pixels are independent of chapter geometry and source-page metadata. */
+  pixelSize: ReaderImagePixelSize | null = null
+  retainedPixelSize: ReaderImagePixelSize | null = null
   /** Increments only when a retained candidate is promoted to the foreground claim. */
   visualRevision: number = 0
   requestId: number = 0
@@ -287,6 +295,8 @@ export class ReaderSnapshot {
     value.saveUri = this.saveUri
     value.retainedUri = this.retainedUri
     value.retainedAssetRequestId = this.retainedAssetRequestId
+    value.pixelSize = this.pixelSize
+    value.retainedPixelSize = this.retainedPixelSize
     value.visualRevision = this.visualRevision
     value.requestId = this.requestId
     value.loadProgressLoaded = this.loadProgressLoaded
@@ -334,10 +344,17 @@ export class ReaderSession {
 
   subscribe(listener: (snapshot: ReaderSnapshot) => void): void {
     this.listener = listener
-    listener(this.state.copy())
+    listener(this.snapshot())
   }
 
-  snapshot(): ReaderSnapshot { return this.state.copy() }
+  snapshot(): ReaderSnapshot {
+    const value = this.state.copy()
+    const size = this.asset?.pixelSize
+    const retained = this.retiredAsset?.pixelSize
+    value.pixelSize = size != null ? { width: size.width, height: size.height } : null
+    value.retainedPixelSize = retained != null ? { width: retained.width, height: retained.height } : null
+    return value
+  }
 
   /** Native decode can expose pixels before the composed-frame receipt. Keep
    * that lease across a fast replacement without inventing displayed progress. */
@@ -414,7 +431,7 @@ export class ReaderSession {
   setViewportActive(active: boolean): void { this.viewportActive = !this.disposed && active }
 
   private emit(): void {
-    if (this.listener !== null) this.listener(this.state.copy())
+    if (this.listener !== null) this.listener(this.snapshot())
   }
 
   private begin(): number {

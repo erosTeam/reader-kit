@@ -22,6 +22,7 @@ function scenario({ deferred = false, translation = false } = {}) {
       const result = { page: p.copy(), variant, identity, async load() {
         const a = new ReaderAsset(`${variant}:${p.key}:${identity}`, () => calls.release.push([p.sourceIndex, identity]))
         a.saveUri = `raw:${p.key}`
+        a.pixelSize = { width: 4500, height: 6400 }
         return a
       } }
       if (!deferred) return result
@@ -53,6 +54,7 @@ test('a future recipe is adopted on its first native slot, with no default-image
   assert.equal(frame.asset.variant, 'enhanced')
   assert.equal(frame.asset.uri, 'enhanced:A-3:v1')
   assert.equal(frame.asset.saveUri, 'raw:A-3')
+  assert.deepEqual(frame.asset.pixelSize, { width: 4500, height: 6400 })
   assert.equal(calls.raw.includes(3), false)
   assert.equal(frame.asset.phase, 'decoding')
   assert.equal(session.snapshot().isPreparingVariant(3, 'enhanced'), true)

@@ -9,6 +9,8 @@ export type ReaderSpreadLayout = 'joined' | 'split'
 /** Runtime layout policy, not a new preference store or host enum mapping. */
 export class ReaderDisplayPolicy {
   layout: ReaderLayout = 'single'
+  /** The session resolves the effective layout from the measured viewport. */
+  automaticPaging: boolean = false
   pagingAxis: ReaderPagingAxis = 'horizontal'
   spreadLayout: ReaderSpreadLayout = 'joined'
   direction: ReaderDirection = 'ltr'
@@ -19,9 +21,18 @@ export class ReaderDisplayPolicy {
   rotateWidePagesInContinuous: boolean = true
   widePageRatio: number = 1.2
 
+  equals(other: ReaderDisplayPolicy): boolean {
+    return this.automaticPaging === other.automaticPaging && this.layout === other.layout &&
+      this.pagingAxis === other.pagingAxis && this.direction === other.direction &&
+      this.spreadLayout === other.spreadLayout && this.firstPageAlone === other.firstPageAlone &&
+      this.splitWidePages === other.splitWidePages && this.rotateWidePages === other.rotateWidePages &&
+      this.rotateWidePagesInContinuous === other.rotateWidePagesInContinuous && this.widePageRatio === other.widePageRatio
+  }
+
   copy(): ReaderDisplayPolicy {
     const value = new ReaderDisplayPolicy()
     value.layout = this.layout
+    value.automaticPaging = this.automaticPaging
     value.pagingAxis = this.pagingAxis
     value.spreadLayout = this.spreadLayout
     value.direction = this.direction
@@ -43,6 +54,7 @@ export function readerPageIsWide(page: ReaderPage | null, widePageRatio: number)
 
 export function readerPolicyRotatesPage(policy: ReaderDisplayPolicy, page: ReaderPage | null): boolean {
   return policy.rotateWidePages && !policy.splitWidePages &&
+    !(policy.automaticPaging && policy.layout === 'spread') &&
     (policy.layout !== 'continuous' || policy.rotateWidePagesInContinuous) && readerPageIsWide(page, policy.widePageRatio)
 }
 
@@ -131,7 +143,8 @@ export class ReaderAnchorResolution {
 
 /**
  * Single-unit, platform-free display topology. Metadata updates retain topology
- * unless wide-page splitting changes. Layout changes resolve the old anchor; neither writes progress.
+ * unless wide-page splitting or automatic spread boundaries change. The source anchor
+ * survives layout changes; display mapping never writes progress.
  * Pairing follows E/N's cover-alignment rule. Splitting follows Koma's paged-only
  * left/right expansion; spread and continuous layouts never silently split.
  */
@@ -142,7 +155,9 @@ export class ReaderDisplayMap {
   private readonly pageIndexes: Map<string, number> = new Map()
   private readonly items: ReaderDisplayItem[] = []
 
-  constructor(unit: ReaderUnit, pages: ReaderPage[], policy: ReaderDisplayPolicy = new ReaderDisplayPolicy()) {
+  constructor(unit: ReaderUnit, pages: ReaderPage[], policy: ReaderDisplayPolicy = new ReaderDisplayPolicy(),
+    stablePrefix: ReaderDisplayItem[] = [], singlePages: Set<number> = new Set<number>(),
+    seenPairs: Set<number> = new Set<number>()) {
     if (!Number.isSafeInteger(unit.pageCount) || unit.pageCount < 0) {
       throw new Error('reader_invalid_page_count')
     }
@@ -160,10 +175,25 @@ export class ReaderDisplayMap {
       this.metadata.set(page.sourceIndex, page.copy())
       this.pageIndexes.set(page.key, page.sourceIndex)
     })
-    this.build()
+    this.build(stablePrefix, singlePages, seenPairs)
   }
 
   count(): number { return this.items.length }
+
+  /** Keep displayed groups stable when later metadata changes upcoming pairs. */
+  prefixThrough(sourceIndex: number): ReaderDisplayItem[] {
+    const prefix: ReaderDisplayItem[] = []
+    for (const item of this.items) {
+      if (item.parts[0].sourceIndex > sourceIndex) break
+      prefix.push(item.copy())
+    }
+    return prefix
+  }
+
+  private occupiesSpread(page: ReaderPage | undefined): boolean {
+    return page !== undefined && Number.isFinite(page.width) && Number.isFinite(page.height) &&
+      page.width > 0 && page.height > 0 && page.width >= page.height
+  }
 
   item(index: number): ReaderDisplayItem | null {
     if (!Number.isInteger(index) || index < 0 || index >= this.items.length) return null
@@ -174,7 +204,7 @@ export class ReaderDisplayMap {
     return value
   }
 
-  /** Returns false without mutation only when the page changes display topology. */
+  /** False asks the session to rebuild display groups. Automatic pairing still records the page. */
   updatePage(page: ReaderPage): boolean {
     const existingIndex = this.pageIndexes.get(page.key)
     if (!page.unit.equals(this.unit.key) || !Number.isInteger(page.sourceIndex) ||
@@ -186,10 +216,14 @@ export class ReaderDisplayMap {
     if (this.policy.layout === 'single' && this.policy.splitWidePages &&
       readerPageIsWide(previous ?? null, this.policy.widePageRatio) !==
       readerPageIsWide(page, this.policy.widePageRatio)) return false
+    const pairingChanged = this.policy.automaticPaging && this.policy.layout === 'spread' &&
+      (this.occupiesSpread(previous) !== this.occupiesSpread(page) ||
+        readerPageIsWide(previous ?? null, this.policy.widePageRatio) !==
+        readerPageIsWide(page, this.policy.widePageRatio))
     if (previous !== undefined && previous.key !== page.key) this.pageIndexes.delete(previous.key)
     this.metadata.set(page.sourceIndex, page.copy())
     this.pageIndexes.set(page.key, page.sourceIndex)
-    return true
+    return !pairingChanged
   }
 
   /** Logical next/previous stays the same in RTL and never crosses a unit. */
@@ -214,7 +248,56 @@ export class ReaderDisplayMap {
     return readerPageIsWide(page ?? null, this.policy.widePageRatio)
   }
 
-  private build(): void {
+  private buildAutomaticSpread(stablePrefix: ReaderDisplayItem[], singlePages: Set<number>,
+    seenPairs: Set<number>): void {
+    let start = 0
+    stablePrefix.forEach((item: ReaderDisplayItem): void => {
+      this.items.push(item.copy())
+      start += item.parts.length
+    })
+    while (start < this.unit.pageCount) {
+      if (this.occupiesSpread(this.metadata.get(start)) || singlePages.has(start) ||
+        (start === 0 && this.policy.firstPageAlone)) {
+        this.items.push(new ReaderDisplayItem([this.part(start)]))
+        start++
+        continue
+      }
+      if (this.isSeenPair(start, singlePages, seenPairs)) {
+        this.items.push(new ReaderDisplayItem([this.part(start), this.part(start + 1)]))
+        start += 2
+        continue
+      }
+      // Keep slots for unknown sizes. Only confirmed horizontal spreads or a
+      // reader-selected boundary can change alignment, never download order.
+      let end = start + 1
+      while (end < this.unit.pageCount && !singlePages.has(end) && !this.occupiesSpread(this.metadata.get(end)) &&
+        !this.isSeenPair(end, singlePages, seenPairs)) end++
+      const startsAfterExplicitSingle = (start === 1 && this.policy.firstPageAlone) || singlePages.has(start - 1)
+      const endsAtSpread = readerPageIsWide(this.metadata.get(end) ?? null, this.policy.widePageRatio)
+      if (endsAtSpread && !startsAfterExplicitSingle && (end - start) % 2 !== 0) {
+        // OpenComic and KCC align the preceding run backwards from a full
+        // spread. The first page in an odd run is the one left on its own.
+        this.items.push(new ReaderDisplayItem([this.part(start)]))
+        start++
+      }
+      while (start < end) {
+        const parts: ReaderDisplayPart[] = [this.part(start++)]
+        if (start < end) parts.push(this.part(start++))
+        this.items.push(new ReaderDisplayItem(parts))
+      }
+    }
+  }
+
+  private isSeenPair(index: number, singlePages: Set<number>, seenPairs: Set<number>): boolean {
+    return seenPairs.has(index) && index + 1 < this.unit.pageCount && !singlePages.has(index + 1) &&
+      !this.occupiesSpread(this.metadata.get(index)) && !this.occupiesSpread(this.metadata.get(index + 1))
+  }
+
+  private build(stablePrefix: ReaderDisplayItem[], singlePages: Set<number>, seenPairs: Set<number>): void {
+    if (this.policy.automaticPaging && this.policy.layout === 'spread') {
+      this.buildAutomaticSpread(stablePrefix, singlePages, seenPairs)
+      return
+    }
     let index = 0
     while (index < this.unit.pageCount) {
       if (this.policy.layout === 'spread') {

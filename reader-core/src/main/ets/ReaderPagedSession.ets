@@ -241,6 +241,10 @@ class ReaderWindowUnit {
   plans: Map<number, ReaderResolvedAssetPlan> = new Map()
   processing: ReaderProcessingCoordinator
   map: ReaderDisplayMap | null = null
+  automaticFrozenThrough: number = -1
+  automaticDirtyFrom: number = -1
+  automaticSinglePages: Set<number> = new Set<number>()
+  automaticSeenPairs: Set<number> = new Set<number>()
   constructor(unit: ReaderUnit, processing: ReaderProcessingCoordinator) {
     this.unit = unit.copy(); this.processing = processing
   }
@@ -322,6 +326,11 @@ export class ReaderPagedSession {
   /** Last observed paged item, kept leased until the new selection is visible. */
   private outgoingPositionKey: string | null = null
   private topologySignature: string = ''
+  private automaticViewportWide: boolean = false
+  private automaticPagingBusy: boolean = false
+  private automaticRegroupPending: boolean = false
+  private automaticPagerSelection: number = 0
+  private automaticLayoutTimer: number = -1
   private topologyRevision: number = 0
   private navigationRevision: number = 0
   // Resource preparation follows native motion without committing a reading position.
@@ -686,21 +695,24 @@ export class ReaderPagedSession {
       value.continuousCrops = this.continuousRows.map((row: ReaderContinuousRow): ReaderImageCropBounds =>
         this.continuousRowCrop(row))
     }
-    value.frames = this.framesAt(this.state.policy.layout === 'continuous'
-      ? value.continuousIndex : this.state.displayIndex)
     if (this.state.policy.layout === 'continuous') {
+      value.frames = this.framesAt(value.continuousIndex)
       value.window = this.resourceWindowIndexes.map((index: number) =>
         new ReaderPagedItemSnapshot(this.displayKeys[index], index, this.framesAt(index)))
     } else {
       value.pagerIndex = this.pagerSelectedIndex()
       value.pagerKeys = this.pagerRows.map((row: ReaderPagerRow): string => row.key)
+      // The chapter and native-window views use different indexes but the same
+      // pixel state. Project each row once per publication.
       value.pagerWindow = this.resourceWindowIndexes.map((index: number): ReaderPagedItemSnapshot =>
         new ReaderPagedItemSnapshot(this.pagerRows[index].key, index, this.framesForPagerRow(index)))
-      value.window = this.resourceWindowIndexes.filter((index: number): boolean =>
-        this.pagerRows[index]?.context.unit.key.equals(this.state.unit!.key) === true)
-        .map((index: number): ReaderPagedItemSnapshot => {
-          const local = this.pagerRows[index].index
-          return new ReaderPagedItemSnapshot(this.displayKeys[local], local, this.framesAt(local))
+      value.frames = value.pagerWindow.find((item: ReaderPagedItemSnapshot): boolean =>
+        item.index === value.pagerIndex)?.frames ?? this.framesAt(this.state.displayIndex)
+      value.window = value.pagerWindow.filter((item: ReaderPagedItemSnapshot): boolean =>
+        this.pagerRows[item.index]?.context.unit.key.equals(this.state.unit!.key) === true)
+        .map((item: ReaderPagedItemSnapshot): ReaderPagedItemSnapshot => {
+          const local = this.pagerRows[item.index].index
+          return new ReaderPagedItemSnapshot(this.displayKeys[local], local, item.frames)
         })
     }
     return value
@@ -755,7 +767,12 @@ export class ReaderPagedSession {
    */
   private nativeNeighborDepth(): number {
     const depth = this.pagedPreloadDepth ?? 1
-    return this.state.policy.layout === 'continuous' ? Math.min(1, depth) : depth
+    const layout = this.state.policy.layout
+    // Automatic spreads may retain two full-resolution buffers per cell.
+    // Keep the adjacent turns ready; farther pages use the existing file and
+    // processing lookahead. Preserve the retained reverse edge and zoom pixels.
+    return layout === 'continuous' || (layout === 'spread' && this.state.policy.automaticPaging)
+      ? Math.min(1, depth) : depth
   }
 
   private nativeWindowDistance(index: number): number {
@@ -822,7 +839,13 @@ export class ReaderPagedSession {
     if (this.disposed || !this.active || this.state.phase !== 'ready' || this.state.policy.layout === 'continuous' ||
       topology !== this.topologyRevision || navigation !== this.navigationRevision ||
       !Number.isSafeInteger(index) || index < 0 || index >= this.pagerRows.length) return false
-    const target = index === this.pagerSelectedIndex() ? -1 : index
+    const selected = this.pagerSelectedIndex()
+    const target = index === selected ? -1 : index
+    // A normal adjacent fling can use its already requested window. Loading
+    // or retiring farther images belongs to the selection that actually lands.
+    if (this.state.policy.automaticPaging && this.state.policy.layout === 'spread' &&
+      this.pagedTargetNavigation !== navigation && Math.abs(index - selected) === 1 &&
+      this.resourceWindowIndexes.includes(index)) return true
     if (target === this.pagedTargetIndex && topology === this.pagedTargetTopology &&
       navigation === this.pagedTargetNavigation) return true
     this.pagedTargetIndex = target
@@ -1195,7 +1218,15 @@ export class ReaderPagedSession {
     if (!Number.isFinite(policy.widePageRatio) || policy.widePageRatio <= 1) {
       throw new Error('reader_unsupported_paged_policy')
     }
-    if (this.state.policy.layout !== policy.layout) {
+    if (policy.automaticPaging) {
+      policy = policy.copy()
+      policy.layout = this.automaticViewportWide ? 'spread' : 'single'
+    }
+    const old = this.state.policy
+    if (old.equals(policy)) return
+    const compatiblePager = old.automaticPaging && policy.automaticPaging &&
+      old.layout !== 'continuous' && policy.layout !== 'continuous'
+    if (this.state.policy.layout !== policy.layout && !compatiblePager) {
       // Mode changes preserve the selected real page's lease. Only neighboring
       // chapters leave this surface; paged reconciliation retires those slots.
       if (policy.layout !== 'continuous') {
@@ -1207,7 +1238,14 @@ export class ReaderPagedSession {
       this.clearWindowUnits()
       this.resourceWindowIndexes = []
     }
-    this.windowUnits.forEach((context: ReaderWindowUnit): void => { context.map = null })
+    this.automaticRegroupPending = false
+    this.windowUnits.forEach((context: ReaderWindowUnit): void => {
+      context.map = null
+      context.automaticFrozenThrough = -1
+      context.automaticDirtyFrom = -1
+      context.automaticSeenPairs.clear()
+      if (old.firstPageAlone !== policy.firstPageAlone) context.automaticSinglePages.clear()
+    })
     this.state.policy = policy.copy()
     this.outgoingPositionKey = null
     this.cancelOriginalPreparations()
@@ -1217,6 +1255,35 @@ export class ReaderPagedSession {
     this.continuousEnd = -1
     if (this.state.phase === 'ready') this.rebuild()
     else this.emit()
+  }
+
+  setAutomaticPagingViewport(width: number, height: number): void {
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 1 || height <= 1) return
+    const wide = width > height
+    if (wide === this.automaticViewportWide) return
+    this.automaticViewportWide = wide
+    if (this.state.policy.automaticPaging) this.scheduleAutomaticLayout()
+  }
+
+  setAutomaticPagingBusy(busy: boolean): void {
+    if (this.automaticPagingBusy === busy) return
+    this.automaticPagingBusy = busy
+    if (!busy && this.state.policy.automaticPaging) this.scheduleAutomaticLayout()
+  }
+
+  private scheduleAutomaticLayout(): void {
+    if (this.disposed || this.automaticPagingBusy || this.automaticLayoutTimer >= 0) return
+    // Let the native selection callback finish before replacing any pager keys.
+    this.automaticLayoutTimer = setTimeout((): void => {
+      this.automaticLayoutTimer = -1
+      if (this.disposed || this.automaticPagingBusy || !this.state.policy.automaticPaging) return
+      const layout = this.automaticViewportWide ? 'spread' : 'single'
+      if (this.state.policy.layout !== layout) this.setPolicy(this.state.policy)
+      else if (this.automaticRegroupPending && this.state.phase === 'ready') {
+        this.automaticRegroupPending = false
+        this.rebuild(true)
+      }
+    }, 0)
   }
 
   move(direction: 'next' | 'previous'): void {
@@ -1231,6 +1298,7 @@ export class ReaderPagedSession {
       this.state.unit === null || this.map === null) return null
     const item = this.map.item(this.state.displayIndex)
     if (item === null || item.parts.length === 0) return null
+    if (this.state.policy.automaticPaging && item.parts.length !== 2) return null
     const target = item.parts[0].sourceIndex + 1
     return target < this.state.unit.pageCount ? target : null
   }
@@ -1249,7 +1317,17 @@ export class ReaderPagedSession {
     this.state.policy = this.state.policy.copy()
     this.outgoingPositionKey = null
     this.navigationRevision += 1
-    if (item.parts.length === 1) {
+    if (this.state.policy.automaticPaging) {
+      const context = this.ensureWindowCurrent()
+      if (context !== null) {
+        context.automaticFrozenThrough = item.parts[0].sourceIndex - 1
+        context.automaticSinglePages.add(item.parts[0].sourceIndex)
+        context.automaticSeenPairs.forEach((index: number): void => {
+          if (index >= item.parts[0].sourceIndex) context.automaticSeenPairs.delete(index)
+        })
+      }
+      this.state.anchor = new ReaderReadingAnchor(unit, this.pages.get(target)?.key ?? null, target)
+    } else if (item.parts.length === 1) {
       // Single-cell (the leading alone page): step only the pairing offset and keep
       // the current source page; rebuild() re-resolves the unchanged anchor into the
       // new pair ([1] -> [1,2], page index 0 stays current).
@@ -1325,6 +1403,8 @@ export class ReaderPagedSession {
     this.state.anchor = this.map.anchorAt(index)
     // A native selection changes position, not chapter maps or their keyed row projection.
     this.resolvePosition()
+    this.automaticPagerSelection = this.state.selectionId
+    this.schedulePendingAutomaticPairing()
     return true
   }
 
@@ -1441,9 +1521,12 @@ export class ReaderPagedSession {
     return true
   }
 
-  private rebuild(): void {
+  private rebuild(automaticRegroup: boolean = false): void {
     if (this.state.unit === null || this.state.anchor === null) return
-    this.map = new ReaderDisplayMap(this.state.unit, Array.from(this.pages.values()), this.state.policy)
+    const previousKey = this.pagerRows[this.pagerSelectedIndex()]?.key
+    const context = this.state.policy.automaticPaging ? this.ensureWindowCurrent() : null
+    this.map = context === null ? new ReaderDisplayMap(this.state.unit, Array.from(this.pages.values()),
+      this.state.policy) : this.buildAutomaticMap(context, automaticRegroup)
     if (this.state.policy.layout === 'continuous') {
       this.ensureWindowCurrent()
       this.rebuildContinuousRows()
@@ -1461,7 +1544,7 @@ export class ReaderPagedSession {
         `${part.sourceIndex}:${part.fragment}`).join('+'))
     }
     const pagingAxis = this.state.policy.pagingAxis
-    const signature = `${this.state.policy.layout}:${this.state.policy.direction}:${pagingAxis}:` +
+    const signature = `${this.state.policy.layout}:${this.state.policy.automaticPaging}:${this.state.policy.direction}:${pagingAxis}:` +
       `${this.state.policy.rotateWidePages}:${this.state.policy.splitWidePages}:${this.state.policy.firstPageAlone}`
     if (signature !== this.topologySignature) {
       this.topologySignature = signature
@@ -1471,6 +1554,20 @@ export class ReaderPagedSession {
     this.displayKeys = keys
     this.ensureWindowCurrent()
     this.rebuildPagerRows()
+    if (automaticRegroup && this.state.anchor !== null) {
+      const resolved = this.map.resolve(this.state.anchor)
+      if (resolved.resolved()) {
+        const resolvedIndex = resolved.displayIndex
+        const current = this.pagerRows.find((row: ReaderPagerRow): boolean =>
+          row.context.unit.key.equals(this.state.unit!.key) && row.index === resolvedIndex)
+        if (current?.key === previousKey) {
+          this.state.displayIndex = resolvedIndex
+          this.state.anchor = resolved.anchor
+          this.reconcile()
+          return
+        }
+      }
+    }
     this.resolvePosition()
   }
 
@@ -1610,12 +1707,118 @@ export class ReaderPagedSession {
     // changes. Keep the existing selected-position reconciliation (including its
     // selection receipt invalidation) without rebuilding every display item.
     if (this.map === null || !this.map.updatePage(page)) {
-      this.rebuild()
-    } else if (displayed && geometryChanged) {
+      if (this.state.policy.automaticPaging && this.state.policy.layout === 'spread') {
+        const context = this.ensureWindowCurrent()
+        if (context !== null) this.invalidateAutomaticPairing(context, page.sourceIndex)
+        // The visible image can settle while a finger is still holding the
+        // pager. Publish its geometry without committing the pending grouping.
+        if (displayed) {
+          if (this.state.anchor?.sourceIndexHint === page.sourceIndex && this.state.anchor.pageKey !== page.key) {
+            this.resolvePosition()
+          } else this.emit()
+        }
+      } else this.rebuild()
+    } else if (displayed && geometryChanged &&
+      (!(this.state.policy.automaticPaging && this.state.policy.layout === 'spread') ||
+        (this.state.anchor?.sourceIndexHint === page.sourceIndex && this.state.anchor?.pageKey !== page.key))) {
       this.resolvePosition()
     } else {
+      // A new size for either half of an unchanged spread is a render update.
+      // It must not invalidate the current selection or its visible receipt.
       this.emit()
     }
+  }
+
+  /** Original dimensions from the host's existing bounded image preparation. */
+  reportAutomaticPageSize(page: ReaderPage): void {
+    if (this.disposed || !this.state.policy.automaticPaging || this.state.phase !== 'ready') return
+    if (this.state.unit?.key.equals(page.unit) === true) {
+      const previous = this.pages.get(page.sourceIndex)?.copy()
+      const value = previous?.copy() ?? page.copy()
+      value.width = page.width
+      value.height = page.height
+      if (this.installSlotPage(value)) this.publishPageMetadata(previous, value)
+      return
+    }
+    const context = this.windowUnits.find((item: ReaderWindowUnit): boolean => item.unit.key.equals(page.unit))
+    if (context === undefined) return
+    const previous = context.pages.get(page.sourceIndex)
+    if (previous?.width === page.width && previous?.height === page.height) return
+    const value = previous?.copy() ?? page.copy()
+    value.width = page.width
+    value.height = page.height
+    context.pages.set(page.sourceIndex, value)
+    if (context.map?.updatePage(value) !== true && this.state.policy.layout === 'spread') {
+      this.invalidateAutomaticPairing(context, page.sourceIndex)
+    }
+  }
+
+  private invalidateAutomaticPairing(context: ReaderWindowUnit, sourceIndex: number): void {
+    // A newly discovered spread can set the alignment of every preceding
+    // page in its run. Previously presented pairs remain explicit boundaries.
+    const affected = Math.max(0, sourceIndex - 1)
+    let start = affected
+    const known = context.pages
+    while (start > 0 && !context.automaticSinglePages.has(start - 1) &&
+      !context.automaticSeenPairs.has(start - 2)) {
+      const previous = known.get(start - 1)
+      if (previous !== undefined && previous.height > 0 && previous.width >= previous.height) break
+      start--
+    }
+    context.automaticDirtyFrom = context.automaticDirtyFrom < 0 ? start :
+      Math.min(context.automaticDirtyFrom, start)
+    this.automaticRegroupPending = true
+    this.scheduleAutomaticLayout()
+  }
+
+  private schedulePendingAutomaticPairing(): void {
+    if (this.state.policy.automaticPaging && this.state.policy.layout === 'spread' &&
+      (this.ensureWindowCurrent()?.automaticDirtyFrom ?? -1) >= 0) {
+      this.automaticRegroupPending = true
+      this.scheduleAutomaticLayout()
+    }
+  }
+
+  private buildAutomaticMap(context: ReaderWindowUnit, preserveVisible: boolean = false): ReaderDisplayMap {
+    const previous = context.map
+    const stableThrough = context.automaticDirtyFrom < 0 ? context.automaticFrozenThrough :
+      Math.min(context.automaticFrozenThrough, context.automaticDirtyFrom - 1)
+    const metadata = this.state.policy.layout === 'spread'
+      ? this.catalog.spreadMetadata?.(context.unit) ?? [] : []
+    const pages = new Map<number, ReaderPage>()
+    metadata.forEach((page: ReaderPage): void => { pages.set(page.sourceIndex, page) })
+    context.pages.forEach((page: ReaderPage, index: number): void => {
+      const known = pages.get(index)
+      if (known !== undefined && (page.width <= 0 || page.height <= 0)) {
+        const fallback = page.copy()
+        fallback.width = known.width
+        fallback.height = known.height
+        pages.set(index, fallback)
+      } else pages.set(index, page)
+    })
+    const mappedPages = Array.from(pages.values())
+    const next = new ReaderDisplayMap(context.unit, mappedPages, this.state.policy,
+      previous?.prefixThrough(stableThrough) ?? [], context.automaticSinglePages, context.automaticSeenPairs)
+    const anchor = this.state.anchor
+    const visible = this.state.observedSelectionId === this.state.selectionId ||
+      this.automaticPagerSelection === this.state.selectionId
+    if (preserveVisible && previous !== null && anchor !== null && visible) {
+      const oldParts = previous.item(this.state.displayIndex)?.parts ?? []
+      const newParts = next.item(next.resolve(anchor).displayIndex)?.parts ?? []
+      const wouldCompactWide = oldParts.length === 2 && oldParts.some((part: ReaderDisplayPart): boolean => {
+        const page = pages.get(part.sourceIndex)
+        return page !== undefined && page.height > 0 && page.width >= page.height
+      })
+      if (!wouldCompactWide && oldParts.length > 0 && (oldParts.length !== newParts.length || oldParts.some(
+        (part: ReaderDisplayPart, index: number): boolean => part.sourceIndex !== newParts[index].sourceIndex))) {
+        // Once the original is on screen, keep this spread intact. Next/previous
+        // still navigate the visible grouping; revisit it after leaving to pair.
+        return new ReaderDisplayMap(context.unit, mappedPages, this.state.policy,
+          previous.prefixThrough(anchor.sourceIndexHint), context.automaticSinglePages, context.automaticSeenPairs)
+      }
+    }
+    context.automaticDirtyFrom = -1
+    return next
   }
 
   reportDecoded(slotId: number, requestId: number): void {
@@ -1628,18 +1831,16 @@ export class ReaderPagedSession {
     if (this.disposed || slot === undefined) return
     const before = slot.session.snapshot()
     if (before.assetRequestId !== requestId || requestId === 0) return
-    // The slot listener runs synchronously. Publish a newly displayed continuous
-    // original with its measured size in one snapshot so the native List
-    // doesn't reproject the chapter once for each half of the same receipt.
-    const batchContinuousOriginal = success && this.state.policy.layout === 'continuous' &&
-      this.state.phase === 'ready' && before.kind === 'original' && before.phase === 'decoding' &&
-      before.requestId === requestId
-    if (batchContinuousOriginal) this.reconcileDepth += 1
+    // The slot listener runs synchronously. Publish pixels and measured size
+    // together so neither native surface redraws two versions of one receipt.
+    const batchOriginal = success && this.state.phase === 'ready' && before.kind === 'original' &&
+      before.phase === 'decoding' && before.requestId === requestId
+    if (batchOriginal) this.reconcileDepth += 1
     try {
       slot.session.reportPresentation(requestId, success)
       if (success && before.kind === 'original') this.recordPresentedPage(slot, width, height)
     } finally {
-      if (batchContinuousOriginal) {
+      if (batchOriginal) {
         this.reconcileDepth -= 1
         this.emit()
       }
@@ -1707,6 +1908,14 @@ export class ReaderPagedSession {
     if (this.state.observedSelectionId === selectionId) return true
     this.state.observedAnchor = anchor.copy()
     this.state.observedSelectionId = selectionId
+    if (this.state.policy.automaticPaging && this.state.policy.layout === 'spread') {
+      const context = this.ensureWindowCurrent()
+      if (context !== null) {
+        context.automaticFrozenThrough = Math.max(context.automaticFrozenThrough, anchor.sourceIndexHint)
+        const parts = this.map.item(this.state.displayIndex)?.parts ?? []
+        if (parts.length === 2) context.automaticSeenPairs.add(parts[0].sourceIndex)
+      }
+    }
     if (this.outgoingPositionKey !== null) {
       this.outgoingPositionKey = null
       this.reconcile()
@@ -1762,8 +1971,11 @@ export class ReaderPagedSession {
     const oldResources = this.resourceWindowIndexes.map((index: number): string => this.pagerRows[index]?.key ?? '')
     const rows: ReaderPagerRow[] = []
     this.windowUnits.forEach((context: ReaderWindowUnit): void => {
-      context.map = context.unit.key.equals(this.state.unit!.key) ? this.map : context.map ??
-        new ReaderDisplayMap(context.unit, Array.from(context.pages.values()), this.state.policy)
+      if (context.unit.key.equals(this.state.unit!.key)) context.map = this.map
+      else if (context.map === null || context.automaticDirtyFrom >= 0 && !this.automaticPagingBusy) {
+        context.map = this.state.policy.automaticPaging ? this.buildAutomaticMap(context) :
+          new ReaderDisplayMap(context.unit, Array.from(context.pages.values()), this.state.policy)
+      }
       for (let index = 0; index < (context.map?.count() ?? 0); index++) rows.push(new ReaderPagerRow(context, index))
     })
     const previousUnits: Set<ReaderWindowUnit> = new Set(this.pagerRows.map((row: ReaderPagerRow): ReaderWindowUnit => row.context))
@@ -1821,6 +2033,8 @@ export class ReaderPagedSession {
         `${part.sourceIndex}:${part.fragment}`).join('+'))
     }
     this.reconcile()
+    this.automaticPagerSelection = this.state.selectionId
+    this.schedulePendingAutomaticPairing()
     return true
   }
 
@@ -1966,7 +2180,11 @@ export class ReaderPagedSession {
     }
     context.pages.set(page.sourceIndex, value)
     if (this.state.policy.layout !== 'continuous') {
-      if (context.map?.updatePage(value) !== true) { context.map = null; this.rebuildPagerRows() }
+      if (context.map?.updatePage(value) !== true) {
+        if (this.state.policy.automaticPaging && this.state.policy.layout === 'spread') {
+          this.invalidateAutomaticPairing(context, page.sourceIndex)
+        } else { context.map = null; this.rebuildPagerRows() }
+      }
     }
     if (selectedUnit) {
       this.map?.updatePage(value)
@@ -2114,6 +2332,8 @@ export class ReaderPagedSession {
     this.nextUnitPreloadSignature = ''
     this.nextUnitPreloadCancellation.cancel()
     this.disposed = true
+    if (this.automaticLayoutTimer >= 0) clearTimeout(this.automaticLayoutTimer)
+    this.automaticLayoutTimer = -1
     this.active = false
     this.cancellation.cancel()
     this.preloadCancellation.cancel()

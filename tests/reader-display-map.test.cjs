@@ -67,6 +67,21 @@ test('E/N pairing preserves first-page-alone and an unpaired final page', () => 
   }
 })
 
+test('automatic pairing aligns to a complete spread and reserves unknown portrait positions', () => {
+  const settings = policy({ layout: 'spread', automaticPaging: true })
+  const source = [page(1, 'page-1', 600, 1200), page(2, 'page-2', 900, 1200),
+    page(5, 'wide', 2100, 1200), page(8, 'square', 1200, 1200)]
+  const pairs = (map) => topology(map).map(parts => parts.map(([index]) => index))
+  const expected = [[0], [1, 2], [3, 4], [5], [6, 7], [8], [9, 10]]
+  const map = new ReaderDisplayMap(unit(11), source, settings)
+  assert.deepEqual(pairs(map), expected)
+  assert.equal(map.updatePage(page(4)), true)
+  assert.equal(map.updatePage(page(5, 'wide', 800, 1200)), false)
+  assert.deepEqual(pairs(new ReaderDisplayMap(unit(11), [...source].reverse(), settings)), expected)
+  const manual = new ReaderDisplayMap(unit(11), source, settings, [], new Set([1]))
+  assert.deepEqual(pairs(manual).slice(0, 5), [[0], [1], [2, 3], [4], [5]])
+})
+
 test('RTL changes visual spread order, not source identity or logical navigation', () => {
   const map = new ReaderDisplayMap(unit(4), pages(4), policy({ layout: 'spread', direction: 'rtl' }))
   assert.deepEqual(map.item(0).parts.map(part => part.sourceIndex), [0, 1])
