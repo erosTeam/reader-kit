@@ -281,11 +281,11 @@ export class ReaderSnapshot {
     return this.isAssetLoading() && !this.hasDisplayedPixels()
   }
 
-  copy(): ReaderSnapshot {
+  copy(page: ReaderPage | null = this.page): ReaderSnapshot {
     const value = new ReaderSnapshot()
     value.phase = this.phase
     value.unit = this.unit === null ? null : this.unit.copy()
-    value.page = this.page === null ? null : this.page.copy()
+    value.page = page === null ? null : page.copy()
     value.sourceIndex = this.sourceIndex
     value.kind = this.kind
     value.variant = this.variant
@@ -347,13 +347,25 @@ export class ReaderSession {
     listener(this.snapshot())
   }
 
-  snapshot(): ReaderSnapshot {
-    const value = this.state.copy()
+  snapshot(page?: ReaderPage): ReaderSnapshot {
+    // The paged catalog can refine this source page while the same asset is
+    // mounted. Project the detached current metadata directly into the frame.
+    const value = this.state.copy(this.state.page === null ? null : page ?? this.state.page)
     const size = this.asset?.pixelSize
     const retained = this.retiredAsset?.pixelSize
     value.pixelSize = size != null ? { width: size.width, height: size.height } : null
     value.retainedPixelSize = retained != null ? { width: retained.width, height: retained.height } : null
     return value
+  }
+
+  /** Validation for a native receipt does not need a detached render snapshot. */
+  hasAssetRequest(requestId: number): boolean {
+    return requestId > 0 && this.state.assetRequestId === requestId
+  }
+
+  displayedOriginalKey(requestId: number): string | null {
+    if (!this.hasAssetRequest(requestId) || this.state.phase !== 'displayed' || this.state.kind !== 'original') return null
+    return this.state.page?.key ?? null
   }
 
   /** Native decode can expose pixels before the composed-frame receipt. Keep

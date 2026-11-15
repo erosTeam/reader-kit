@@ -1,6 +1,6 @@
-import { ReaderImageEffects, ReaderImageEffectsLayer } from './ReaderImageEffects'
+import { ReaderImageEffects, ReaderImageEffectOverlays } from './ReaderImageEffects'
 import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPolicy, ReaderAssetNotice,
-  ReaderFragment, readerPolicyRotatesPage, readerPagedFrameAspectRatio, readerPageIsWide } from '@reader-kit/core'
+  ReaderFragment, ReaderImageCropRegion, readerPolicyRotatesPage, readerPagedFrameAspectRatio, readerPageIsWide } from '@reader-kit/core'
 import { ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/core'
 import { ReaderFailurePanel } from './ReaderFailurePanel'
 import { ReaderAssetNoticePanel } from './ReaderAssetNoticePanel'
@@ -130,6 +130,7 @@ export struct ReaderPagedViewport {
   private measuredViewportWidth: number = 1
   private measuredViewportHeight: number = 1
   @Local private entryViewportLaidOut: boolean = false
+  @Local private viewportOnScreen: boolean = false
   @Local private zoomState: ReaderViewportTransform = new ReaderViewportTransform()
   @Local private zoomAnimating: boolean = false
   @Local private recovering: boolean = false
@@ -222,8 +223,11 @@ export struct ReaderPagedViewport {
       this.pinchAdjusted = false
     } else if (!this.gesturesEnabled()) {
       this.cancelGesture()
-      this.setZoomState(this.zoomState.settled(this.geometry()))
-    } else {
+      if (this.zoomState.zoomed()) this.setZoomState(this.zoomState.constrained(this.geometry()))
+      else this.setZoomState(new ReaderViewportTransform())
+    } else if (this.zoomState.x !== 0 || this.zoomState.y !== 0) {
+      // Center is always inside the allowed range. Routine page updates
+      // at zero offset need no frame ratio or crop geometry for clamping.
       this.setZoomState(this.zoomState.constrained(this.geometry()))
     }
     this.scheduleSelectedVisible()
@@ -496,6 +500,7 @@ export struct ReaderPagedViewport {
             navigationRevision: this.selected ? this.snapshot.navigationRevision : 0,
             topologyRevision: this.snapshot.topologyRevision,
             ready: this.snapshot.phase === 'ready', slotId: frame.slotId,
+            showsLoading: this.selected || this.viewportOnScreen,
             entryTransition: this.entryTransition,
             entryMeasurement: this.entryMeasurement,
             entryGeometryReady: this.entryViewportLaidOut && this.entryRatiosReady(),
@@ -532,6 +537,10 @@ export struct ReaderPagedViewport {
     .width('100%').height('100%')
     .clip(true)
     .id(this.selected ? 'rkit-image-viewport' : `rkit-cached-viewport-${this.snapshot.displayIndex}`)
+    .onVisibleAreaChange([0], (_expanding: boolean, ratio: number): void => {
+      const onScreen = ratio > 0
+      if (this.viewportOnScreen !== onScreen) this.viewportOnScreen = onScreen
+    })
     .onTouch((event: TouchEvent): void => {
       this.tapSequence.touch(event)
       if (event.type === TouchType.Down && this.tapSequence.allowed()) {
@@ -539,15 +548,18 @@ export struct ReaderPagedViewport {
         if (point !== undefined) this.tapArbiter.down(point.x, point.y)
       } else if (!this.tapSequence.allowed()) this.tapArbiter.cancel()
     })
-    .onAreaChange((_old: Area, area: Area): void => {
+    // A slide moves the viewport without changing its fit or zoom constraints.
+    .onSizeChange((_old: SizeOptions, size: SizeOptions): void => {
       if (this.entryViewportLaidOut && this.entryTransition !== null && this.entryTransition.target !== null &&
-        (this.measuredViewportWidth !== Math.max(1, Number(area.width)) ||
-          this.measuredViewportHeight !== Math.max(1, Number(area.height)))) this.entryTransition.cancel()
+        (this.measuredViewportWidth !== Math.max(1, Number(size.width)) ||
+          this.measuredViewportHeight !== Math.max(1, Number(size.height)))) this.entryTransition.cancel()
       this.cancelGesture()
-      this.measuredViewportWidth = Math.max(1, Number(area.width))
-      this.measuredViewportHeight = Math.max(1, Number(area.height))
+      this.measuredViewportWidth = Math.max(1, Number(size.width))
+      this.measuredViewportHeight = Math.max(1, Number(size.height))
       this.entryViewportLaidOut = true
-      this.setZoomState(this.zoomState.settled(this.geometry()))
+      if (this.zoomState.zoomed() || this.zoomState.x !== 0 || this.zoomState.y !== 0) {
+        this.setZoomState(this.zoomState.settled(this.geometry()))
+      }
     })
     .gesture(GestureGroup(GestureMode.Parallel,
       TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => {
@@ -584,6 +596,7 @@ struct ReaderPagedCell {
   @Param pagedDecode: ReaderPagedDecode = 'default'
   @Param compact: boolean = false
   @Param ready: boolean = false
+  @Param showsLoading: boolean = true
   @Param selectionId: number = 0
   @Param navigationRevision: number = 0
   @Param topologyRevision: number = 0
@@ -621,7 +634,16 @@ struct ReaderPagedCell {
     }
   }
 
+  @Computed
+  private get settledImagePresentation(): ReaderImagePresentation {
+    return new ReaderImagePresentation(this.frame, this.decodedOriginalIdentity, null,
+      this.splitTopologyPending())
+  }
+
   private imagePresentation(): ReaderImagePresentation {
+    // A live entry still reads its owning claim. Once settled, the pixels and
+    // placeholder share one projection for the current asset and decode.
+    if (this.entryTransition?.pending() !== true) return this.settledImagePresentation
     return new ReaderImagePresentation(this.frame, this.decodedOriginalIdentity, this.entryTransition,
       this.splitTopologyPending())
   }
@@ -672,17 +694,21 @@ struct ReaderPagedCell {
     return this.retainedFrameValue ?? this.frame
   }
 
+  @Computed
+  private get imageRatio(): number { return readerPagedFrameAspectRatio(this.frame, this.policy) }
+
   private cellWidth(): number {
-    return this.frameWidth > 0 ? this.frameWidth : this.frameHeight *
-      readerPagedFrameAspectRatio(this.frame, this.policy)
+    return this.frameWidth > 0 ? this.frameWidth : this.frameHeight * this.imageRatio
   }
-  private imageHeight(): number {
-    return this.fitViewport ? this.frameHeight : Math.min(this.frameHeight, this.cellWidth() /
-      readerPagedFrameAspectRatio(this.frame, this.policy))
+
+  @Computed
+  private get imageHeight(): number {
+    return this.fitViewport ? this.frameHeight : Math.min(this.frameHeight, this.cellWidth() / this.imageRatio)
   }
-  private imageWidth(): number {
-    return this.fitViewport ? this.cellWidth() : this.imageHeight() *
-      readerPagedFrameAspectRatio(this.frame, this.policy)
+
+  @Computed
+  private get imageWidth(): number {
+    return this.fitViewport ? this.cellWidth() : this.imageHeight * this.imageRatio
   }
 
   private rotateClockwise(): boolean { return rotatedFrame(this.frame, this.policy) }
@@ -737,10 +763,10 @@ struct ReaderPagedCell {
           entryMeasurement: this.entryMeasurement,
           entryPhase: this.entryTransition?.phase ?? 'finished',
           entryLayoutWidth: this.entryGeometryReady ?
-            this.imageWidth() : 0,
-          entryLayoutHeight: this.entryGeometryReady ? this.imageHeight() : 0,
-          allocatedWidth: this.imageWidth(),
-          allocatedHeight: this.imageHeight(),
+            this.imageWidth : 0,
+          entryLayoutHeight: this.entryGeometryReady ? this.imageHeight : 0,
+          allocatedWidth: this.imageWidth,
+          allocatedHeight: this.imageHeight,
           geometryAllocationRequired: true,
           slotId: this.slotId, assetRequestId: this.presentedFrame().asset.assetRequestId,
           renderedFragment: this.renderedFragment,
@@ -763,8 +789,8 @@ struct ReaderPagedCell {
           },
         })
           .opacity(this.imagePresentation().pixels ? 1 : 0)
-          .width(this.imageWidth())
-          .height(this.imageHeight())
+          .width(this.imageWidth)
+          .height(this.imageHeight)
           .zIndex(this.retainedFrameValue !== null && this.frame.asset.phase === 'decoding' ? 1 : 0)
         if (this.retainedFrameValue !== null) {
           ReaderPagedImage({
@@ -776,10 +802,10 @@ struct ReaderPagedCell {
             entryMeasurement: this.entryMeasurement,
             entryPhase: this.entryTransition?.phase ?? 'finished',
             entryLayoutWidth: this.entryGeometryReady ?
-              this.imageWidth() : 0,
-            entryLayoutHeight: this.entryGeometryReady ? this.imageHeight() : 0,
-            allocatedWidth: this.imageWidth(),
-            allocatedHeight: this.imageHeight(),
+              this.imageWidth : 0,
+            entryLayoutHeight: this.entryGeometryReady ? this.imageHeight : 0,
+            allocatedWidth: this.imageWidth,
+            allocatedHeight: this.imageHeight,
             geometryAllocationRequired: true,
             slotId: this.slotId, assetRequestId: this.frame.asset.assetRequestId,
             renderedFragment: this.renderedFragment,
@@ -789,13 +815,17 @@ struct ReaderPagedCell {
             onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
             onInvalidDecodedMetrics: this.onInvalidDecodedMetrics,
           }).opacity(this.imagePresentation().pixels ? 1 : 0)
-            .width(this.imageWidth())
-            .height(this.imageHeight())
+            .width(this.imageWidth)
+            .height(this.imageHeight)
             .zIndex(this.frame.asset.phase === 'displayed' ? 1 : 0)
         }
       }
-      ReaderImagePlaceholder({ loadingInk: this.loadingInk, presentation: this.imagePresentation(),
-        frame: this.frame, entryTransition: this.entryTransition }).zIndex(2)
+      // A settled page must not mount an empty loading component when a
+      // swipe changes which cached cells are visible.
+      if (this.imagePresentation().loading && this.showsLoading) {
+        ReaderImagePlaceholder({ loadingInk: this.loadingInk, presentation: this.imagePresentation(),
+          frame: this.frame, entryTransition: this.entryTransition }).zIndex(2)
+      }
     }
     .width(this.cellWidth())
     .height(this.frameHeight).clip(true)
@@ -904,13 +934,13 @@ export struct ReaderPagedImage {
     // A cached Swiper neighbor may have completed before the command claim
     // existed. Re-publish only that same mounted Image's decode when it becomes
     // the selected native cell; a displayed URI alone cannot create a receipt.
-    const original = this.frame.asset.kind === 'original'
-    const identity = `${this.selectionId}:${this.slotId}:${this.assetRequestId}:` +
-      (original ? this.originalGeometryIdentity() : '')
     if (!this.active || !this.entryMounted || !this.decoded || this.decodedRequestId !== this.assetRequestId ||
-      (original && (!this.originalGeometryReady() ||
-        this.decodedGeometryIdentity !== this.originalGeometryIdentity())) ||
-      this.frame.asset.phase !== 'displayed' || this.selectedReplayIdentity === identity) return
+      this.frame.asset.phase !== 'displayed') return
+    const original = this.frame.asset.kind === 'original'
+    const geometry = original ? this.originalGeometryIdentity() : ''
+    if (original && (!this.originalGeometryReady() || this.decodedGeometryIdentity !== geometry)) return
+    const identity = `${this.selectionId}:${this.slotId}:${this.assetRequestId}:${geometry}`
+    if (this.selectedReplayIdentity === identity) return
     this.selectedReplayIdentity = identity
     const width = this.decodedWidth
     const height = this.decodedHeight
@@ -1000,6 +1030,20 @@ export struct ReaderPagedImage {
 
   @Monitor('entryPhase')
   onEntryPhaseChanged(): void { this.reportVisible() }
+
+  private markEntryLeafLaidOut(): void {
+    this.entryLeafLaidOut = true
+    this.publishEntryTarget()
+  }
+
+  private imageAreaChanged(size: SizeOptions): void {
+    this.viewportWidth = Math.max(1, Number(size.width))
+    this.viewportHeight = Math.max(1, Number(size.height))
+    this.entryContentLaidOut = true
+    this.schedulePresentation()
+    this.publishEntryTarget()
+    this.scheduleNativeStability()
+  }
 
   private entryLeafId(): string {
     return `rkit-entry-image-${this.entryTransition?.entryId ?? 0}-${this.slotId}-${this.assetRequestId}`
@@ -1293,6 +1337,11 @@ export struct ReaderPagedImage {
   private renderWidth(): number { return this.rotateClockwise ? this.paintHeight() : this.paintWidth() }
   private renderHeight(): number { return this.rotateClockwise ? this.paintWidth() : this.paintHeight() }
 
+  // One immutable geometry projection per input; Image consumes it for size
+  // and position, and an unrelated page update does not recalculate the crop.
+  @Computed
+  private get cropRegion(): ReaderImageCropRegion { return this.frame.crop.region(this.frame.part) }
+
   @Computed
   private get decodeModifier(): ReaderImageDecodeModifier {
     if (this.pagedDecode === 'default') return ReaderImageDecodeModifier.defaultDecode
@@ -1316,95 +1365,94 @@ export struct ReaderPagedImage {
   }
 
   build() {
-    ReaderImageEffectsLayer({ effects: this.imageEffects }) {
+    // Apply grayscale and inversion to the existing measured content. An
+    // outer blend group still isolates tint/dim from loading, chrome and siblings.
     Stack() {
-      if (this.frame.asset.uri.length > 0 && this.frame.asset.kind === 'thumbnail' &&
-        this.frame.asset.page?.thumbnail.kind === 'sprite') {
-        Stack({ alignContent: Alignment.TopStart }) {
-          Image(this.frame.asset.uri)
-            // Parsed extents describe the occupied cells, not necessarily the entire canvas.
-            // Keep one pixel scale on both axes, including any decoded sheet padding.
-            .width((this.sheetWidth || this.frame.asset.page.thumbnail.spriteWidth) * this.spriteScale())
-            .height((this.sheetHeight || this.frame.asset.page.thumbnail.spriteHeight) * this.spriteScale())
-            .objectFit(ImageFit.Fill)
-            .position({
-              x: -this.frame.asset.page.thumbnail.offsetX * this.spriteScale(),
-              y: -this.frame.asset.page.thumbnail.offsetY * this.spriteScale(),
-            })
-            .onComplete((event): void => {
-              if (event?.loadingStatus === 1) this.completed(event.width, event.height)
-            })
-            .onError((): void => { this.failed() })
-        }
-        .width(this.frame.asset.page.thumbnail.width * this.spriteScale())
-        .height(this.frame.asset.page.thumbnail.height * this.spriteScale())
-        .clip(true)
-        .rotate({ angle: this.rotateClockwise ? 90 : 0 })
-      } else if (this.originalMountReady() && this.frame.asset.uri.length > 0 &&
-        this.frame.asset.kind === 'original') {
-        // Full-page and cropped geometry share one native Image owner.
-        Stack({ alignContent: Alignment.TopStart }) {
+      Stack() {
+        if (this.frame.asset.uri.length > 0 && this.frame.asset.kind === 'thumbnail' &&
+          this.frame.asset.page?.thumbnail.kind === 'sprite') {
+          Stack({ alignContent: Alignment.TopStart }) {
+            Image(this.frame.asset.uri)
+              // Parsed extents describe the occupied cells, not necessarily the entire canvas.
+              // Keep one pixel scale on both axes, including any decoded sheet padding.
+              .width((this.sheetWidth || this.frame.asset.page.thumbnail.spriteWidth) * this.spriteScale())
+              .height((this.sheetHeight || this.frame.asset.page.thumbnail.spriteHeight) * this.spriteScale())
+              .objectFit(ImageFit.Fill)
+              .position({
+                x: -this.frame.asset.page.thumbnail.offsetX * this.spriteScale(),
+                y: -this.frame.asset.page.thumbnail.offsetY * this.spriteScale(),
+              })
+              .onComplete((event): void => {
+                if (event?.loadingStatus === 1) this.completed(event.width, event.height)
+              })
+              .onError((): void => { this.failed() })
+          }
+          .width(this.frame.asset.page.thumbnail.width * this.spriteScale())
+          .height(this.frame.asset.page.thumbnail.height * this.spriteScale())
+          .clip(true)
+          .rotate({ angle: this.rotateClockwise ? 90 : 0 })
+        } else if (this.originalMountReady() && this.frame.asset.uri.length > 0 &&
+          this.frame.asset.kind === 'original') {
+          // Full-page and cropped geometry share one native Image owner.
+          Stack({ alignContent: Alignment.TopStart }) {
+            Image(this.frame.asset.uri)
+              .opacity((this.quarantineOriginal || this.guardUndecodedOriginal) &&
+                this.stableDrawableIdentity !== this.originalGeometryIdentity() ? 0 : 1)
+              .width(this.renderWidth() / this.cropRegion.width)
+              .height(this.renderHeight() / this.cropRegion.height)
+              .id(this.entryLeafId())
+              .interpolation(this.imageInterpolation)
+              .attributeModifier(this.decodeModifier)
+              .onSizeChange((_old: SizeOptions, _size: SizeOptions): void => this.markEntryLeafLaidOut())
+              .onAreaChange(this.entryTransition?.pending() === true
+                ? (): void => this.publishEntryTarget() : undefined)
+              .objectFit(this.frame.part.fragment !== 'whole' || this.frame.crop.applied() ? ImageFit.Fill : ImageFit.Contain)
+              .position({
+                x: -this.renderWidth() * this.cropRegion.x / this.cropRegion.width,
+                y: -this.renderHeight() * this.cropRegion.y / this.cropRegion.height,
+              })
+              .onComplete((event): void => {
+                if (event?.loadingStatus === 1) this.completed(event.width, event.height)
+              })
+              .onError((): void => { this.failed() })
+          }
+          .width(this.renderWidth()).height(this.renderHeight()).clip(true)
+          .rotate({ angle: this.rotateClockwise ? 90 : 0 })
+        } else if (this.frame.asset.uri.length > 0 &&
+          (this.frame.asset.kind !== 'original' || this.originalMountReady())) {
           Image(this.frame.asset.uri)
             .opacity((this.quarantineOriginal || this.guardUndecodedOriginal) &&
+              this.frame.asset.kind === 'original' &&
               this.stableDrawableIdentity !== this.originalGeometryIdentity() ? 0 : 1)
-            .width(this.renderWidth() / this.frame.crop.region(this.frame.part).width)
-            .height(this.renderHeight() / this.frame.crop.region(this.frame.part).height)
+            .width(this.renderWidth()).height(this.renderHeight())
+            .interpolation(this.frame.asset.kind === 'original' ? this.imageInterpolation : ImageInterpolation.Low)
+            .objectFit(this.thumbnailCover && this.frame.asset.kind === 'thumbnail' ? ImageFit.Cover : ImageFit.Contain)
+            .rotate({ angle: this.rotateClockwise ? 90 : 0 })
             .id(this.entryLeafId())
-            .interpolation(this.imageInterpolation)
-            .attributeModifier(this.decodeModifier)
-            .onAreaChange((): void => {
-              this.entryLeafLaidOut = true
-              this.publishEntryTarget()
-            })
-            .objectFit(this.frame.part.fragment !== 'whole' || this.frame.crop.applied() ? ImageFit.Fill : ImageFit.Contain)
-            .position({
-              x: -this.renderWidth() * this.frame.crop.region(this.frame.part).x / this.frame.crop.region(this.frame.part).width,
-              y: -this.renderHeight() * this.frame.crop.region(this.frame.part).y / this.frame.crop.region(this.frame.part).height,
-            })
+            .onSizeChange((_old: SizeOptions, _size: SizeOptions): void => this.markEntryLeafLaidOut())
+            .onAreaChange(this.entryTransition?.pending() === true
+              ? (): void => this.publishEntryTarget() : undefined)
             .onComplete((event): void => {
               if (event?.loadingStatus === 1) this.completed(event.width, event.height)
             })
             .onError((): void => { this.failed() })
         }
-        .width(this.renderWidth()).height(this.renderHeight()).clip(true)
-        .rotate({ angle: this.rotateClockwise ? 90 : 0 })
-      } else if (this.frame.asset.uri.length > 0 &&
-        (this.frame.asset.kind !== 'original' || this.originalMountReady())) {
-        Image(this.frame.asset.uri)
-          .opacity((this.quarantineOriginal || this.guardUndecodedOriginal) &&
-            this.frame.asset.kind === 'original' &&
-            this.stableDrawableIdentity !== this.originalGeometryIdentity() ? 0 : 1)
-          .width(this.renderWidth()).height(this.renderHeight())
-          .interpolation(this.frame.asset.kind === 'original' ? this.imageInterpolation : ImageInterpolation.Low)
-          .objectFit(this.thumbnailCover && this.frame.asset.kind === 'thumbnail' ? ImageFit.Cover : ImageFit.Contain)
-          .rotate({ angle: this.rotateClockwise ? 90 : 0 })
-          .id(this.entryLeafId())
-          .onAreaChange((): void => {
-            this.entryLeafLaidOut = true
-            this.publishEntryTarget()
-          })
-          .onComplete((event): void => {
-            if (event?.loadingStatus === 1) this.completed(event.width, event.height)
-          })
-          .onError((): void => { this.failed() })
       }
-    }
-    .width('100%').height('100%')
-    .id(this.entryContentId())
-    .clip(this.thumbnailCover && this.frame.asset.kind === 'thumbnail')
-    .opacity(this.entryTransition?.opacity(this.frame.part) ?? 1)
-    .onVisibleAreaChange([0, 1], (_expanding: boolean, ratio: number): void => {
-      this.fullyVisible = ratio >= 1
-      this.reportVisible()
-    })
-    .onAreaChange((_old: Area, area: Area): void => {
-      this.viewportWidth = Math.max(1, Number(area.width))
-      this.viewportHeight = Math.max(1, Number(area.height))
-      this.entryContentLaidOut = true
-      this.schedulePresentation()
-      this.publishEntryTarget()
-      this.scheduleNativeStability()
-    })
-    }
+      .width('100%').height('100%')
+      .id(this.entryContentId())
+      .clip(this.thumbnailCover && this.frame.asset.kind === 'thumbnail')
+      .opacity(this.entryTransition?.opacity(this.frame.part) ?? 1)
+      .onVisibleAreaChange([0, 1], (_expanding: boolean, ratio: number): void => {
+        this.fullyVisible = ratio >= 1
+        this.reportVisible()
+      })
+      .onSizeChange((_old: SizeOptions, size: SizeOptions): void => this.imageAreaChanged(size))
+      .onAreaChange(this.entryTransition?.pending() === true
+        ? (): void => this.publishEntryTarget() : undefined)
+      .grayscale(this.imageEffects.grayscale ? 1 : 0)
+      .invert(this.imageEffects.inverted ? 1 : 0)
+      ReaderImageEffectOverlays({ effects: this.imageEffects })
+    }.width('100%').height('100%')
+      .blendMode(BlendMode.SRC_OVER, this.imageEffects.tint ? BlendApplyType.OFFSCREEN : BlendApplyType.FAST)
   }
 }

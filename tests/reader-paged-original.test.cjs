@@ -161,12 +161,12 @@ test('ordinary single pages retain viewport constraints before and after source 
     return methods.map(method => cls.members.find(value => value.name?.getText(tree) === method).getText(tree)).join('\n')
   }
   const source = `export class Viewport { ${extract('ReaderPagedViewport', ['fitWholePageInViewport', 'equalSlots', 'splitLayout'])} }\n` +
-    `export class Cell { ${extract('ReaderPagedCell', ['cellWidth', 'imageHeight', 'imageWidth', 'splitTopologyPending'])} }`
+    `export class Cell { ${extract('ReaderPagedCell', ['imageRatio', 'cellWidth', 'imageHeight', 'imageWidth', 'splitTopologyPending'])} }`
   const exports = {}, core = load('ReaderPagedSession'), display = load('ReaderDisplayMap')
   const { ReaderSnapshot, ReaderUnitKey } = load('ReaderSession'), { ReaderDisplayPart } = display
   vm.runInNewContext(ts.transpileModule(source,
-    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText,
-    { exports, readerPagedFrameAspectRatio: core.readerPagedFrameAspectRatio, readerPageIsWide: display.readerPageIsWide,
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, experimentalDecorators: true } }).outputText,
+    { exports, Computed: () => undefined, readerPagedFrameAspectRatio: core.readerPagedFrameAspectRatio, readerPageIsWide: display.readerPageIsWide,
       ReaderPagedFrame: core.ReaderPagedFrame, ReaderDisplayPart, ReaderUnitKey, ReaderSnapshot })
   const key = new ReaderUnitKey('source', 'work', 'unit'), page = new ReaderPage(key, 'p0', 0)
   const asset = new ReaderSnapshot(); asset.page = page; asset.kind = 'original'
@@ -178,7 +178,7 @@ test('ordinary single pages retain viewport constraints before and after source 
   for (const [width, height] of [[0, 0], [640, 960], [1920, 1080]]) {
     frame.asset.page.width = width; frame.asset.page.height = height
     assert.equal(view.fitWholePageInViewport(), true)
-    assert.deepEqual([cell.imageWidth(), cell.imageHeight()], [360, 720])
+    assert.deepEqual([cell.imageWidth, cell.imageHeight], [360, 720])
   }
   view.entryTransition = { pending: () => true }
   assert.equal(view.fitWholePageInViewport(), false, 'entry measurement keeps its existing geometry')

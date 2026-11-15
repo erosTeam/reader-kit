@@ -362,17 +362,17 @@ export struct ReaderSurface {
       this.publishObserved(state)
       this.syncPreferredVariant(state)
       this.entryTransition?.update(state)
-      this.shareController.update(ReaderImageShareTarget.from(state), this.active)
-      this.saveController.update(state, this.active)
+      this.updatePendingMediaTargets(state)
       this.syncAutoRead()
     }, (anchor: ReaderReadingAnchor, selectionId: number): void => {
       const state = this.state
       if (this.chromeDisposed || state.phase !== 'ready' || state.selectionId !== selectionId ||
-        state.observedSelectionId !== selectionId || state.unit?.key.equals(anchor.unit) !== true) return
-      // This snapshot belongs to the surface. Refresh its non-reactive anchor
-      // in place; image topology, native scroller and chrome values are intact.
+        state.unit?.key.equals(anchor.unit) !== true) return
+      // The session publishes the selection before any visibility receipt.
+      // Confirm its anchor without invalidating unchanged images and chrome.
       state.anchor = anchor.copy()
       state.observedAnchor = anchor.copy()
+      state.observedSelectionId = selectionId
       this.publishObserved(state)
     })
     this.inputConnection = this.input?.connect((intent: ReaderMoveIntent): boolean => this.externalMove(intent)) ?? 0
@@ -434,8 +434,9 @@ export struct ReaderSurface {
       this.variantAttempts?.clear()
       this.zoomed = false
     }
-    this.shareController.update(ReaderImageShareTarget.from(this.session.snapshot()), this.active)
-    this.saveController.update(this.session.snapshot(), this.active)
+    if (this.shareController.busy() || this.saveController.busy()) {
+      this.updatePendingMediaTargets(this.session.snapshot())
+    }
     this.flushSaveFeedback()
     this.session.setViewportActive(this.active)
     if (this.active) this.publishChromePresentation()
@@ -548,6 +549,15 @@ export struct ReaderSurface {
     this.preferenceSink?.cropChanged(this.session.snapshot().cropEnabled, policy)
   }
 
+  private updatePendingMediaTargets(state: ReaderPagedSnapshot): void {
+    // Save and share capture the current page at invocation. Only a pending
+    // operation needs live invalidation when the reader moves or goes inactive.
+    if (this.shareController.busy()) {
+      this.shareController.update(ReaderImageShareTarget.from(state), this.active)
+    }
+    if (this.saveController.busy()) this.saveController.update(state, this.active)
+  }
+
   private flushSaveFeedback(): void {
     if (!this.active || this.chromeDisposed || this.closing || this.chromeCloseRequested || this.saveFeedback === null) return
     this.getUIContext().getPromptAction().showToast({ message: this.saveFeedback })
@@ -653,8 +663,12 @@ export struct ReaderSurface {
   }
 
   private temporaryVariantToggleAvailable(state: ReaderPagedSnapshot = this.state): boolean {
+    if (this.temporaryVariantControl?.available !== true || !this.enhancementVisible()) return false
     const scope = this.temporaryVariantScope(state)
-    if (scope === null || this.temporaryVariantControl?.available !== true || !this.enhancementVisible()) return false
+    return scope !== null && this.canToggleVariantScope(scope)
+  }
+
+  private canToggleVariantScope(scope: ReaderTemporaryVariantScope): boolean {
     return scope.sources.every((source): boolean => {
       const preference = this.variantPolicy?.preference(source.sourceIndex) ?? new ReaderVariantPreference()
       return preference.variant === 'enhanced' && preference.identity.length > 0
@@ -662,17 +676,23 @@ export struct ReaderSurface {
   }
 
   private reconcileTemporaryVariantOverride(state: ReaderPagedSnapshot): ReaderTemporaryVariantScope | null {
+    // Until a user disables enhancement for the visible page, a new
+    // render snapshot has no temporary scope to reconcile.
+    if (!this.temporaryVariantOverride.hasOverride()) return null
     const scope = this.temporaryVariantScope(state)
-    if (!this.temporaryVariantActive || this.closing || this.chromeDisposed || !this.temporaryVariantToggleAvailable(state)) {
+    if (!this.temporaryVariantActive || this.closing || this.chromeDisposed ||
+      this.temporaryVariantControl?.available !== true || !this.enhancementVisible() ||
+      scope === null || !this.canToggleVariantScope(scope)) {
       this.temporaryVariantOverride.clear()
-      return scope
+      return null
     }
     this.temporaryVariantOverride.reconcile(scope)
     return scope
   }
 
   private enhancementEnabledForCurrentUnit(): boolean {
-    return !this.temporaryVariantOverride.isDisabled(this.temporaryVariantScope(this.state))
+    return !this.temporaryVariantOverride.hasOverride() ||
+      !this.temporaryVariantOverride.isDisabled(this.temporaryVariantScope(this.state))
   }
 
   private toggleTemporaryVariant(): void {
@@ -1014,8 +1034,10 @@ export struct ReaderSurface {
   private PersistentPageStatus(bottomMargin: number) {
     ReaderPageStatus({ value: `${(this.state.anchor?.sourceIndexHint ?? 0) + 1} / ${this.state.unit?.pageCount ?? 0}`,
       bottomMargin, showPageNumber: this.showPageNumber,
-      showEnhancement: this.enhancementVisible(), enhancementProcessing: this.enhancementProcessing(),
-      enhancementApplied: this.enhancementApplied(), enhancementEnabled: this.enhancementEnabledForCurrentUnit(),
+      showEnhancement: this.enhancementVisible(),
+      enhancementProcessing: this.enhancementVisible() && this.enhancementProcessing(),
+      enhancementApplied: this.enhancementVisible() && this.enhancementApplied(),
+      enhancementEnabled: this.enhancementEnabledForCurrentUnit(),
       enhancementToggleAvailable: this.temporaryVariantToggleAvailable(), accent: this.accent,
       onToggleEnhancement: (): void => { this.toggleTemporaryVariant() } })
   }
@@ -1108,8 +1130,9 @@ export struct ReaderSurface {
               this.requestBoundaryChapter(direction, topology, navigation)
             },
             onTap: (x: number, y: number): void => { this.pageTap(x, y) },
-            onPrepareTarget: (index: number, topology: number, navigation: number): void => {
-              this.session.preparePagerTarget(index, topology, navigation)
+            onPrepareTarget: (index: number, topology: number, navigation: number,
+              adjacentEdge?: 'retire-spare' | 'prepare'): void => {
+              this.session.preparePagerTarget(index, topology, navigation, adjacentEdge)
             },
             onSelect: (index: number, topology: number, navigation: number): void => {
               this.session.selectPagerIndex(index, topology, navigation)

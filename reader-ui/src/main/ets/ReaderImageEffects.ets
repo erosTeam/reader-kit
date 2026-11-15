@@ -8,6 +8,22 @@ export class ReaderImageEffects {
   dimOpacity: number = 0
 }
 
+interface ReaderImageEffectOverlayParams {
+  effects: ReaderImageEffects
+}
+
+@Builder
+export function ReaderImageEffectOverlays($$: ReaderImageEffectOverlayParams): void {
+  if ($$.effects.tint) {
+    Column() {}.width('100%').height('100%').backgroundColor($$.effects.tintColor)
+      .blendMode($$.effects.blendMode).hitTestBehavior(HitTestMode.None)
+  }
+  if ($$.effects.dimOpacity > 0) {
+    Column() {}.width('100%').height('100%').backgroundColor(Color.Black)
+      .opacity($$.effects.dimOpacity).hitTestBehavior(HitTestMode.None)
+  }
+}
+
 /** Isolate blending to drawable pixels; loading, chrome and status remain siblings. */
 @ComponentV2
 export struct ReaderImageEffectsLayer {
@@ -21,14 +37,7 @@ export struct ReaderImageEffectsLayer {
       }.width('100%').height('100%')
         .grayscale(this.effects.grayscale ? 1 : 0)
         .invert(this.effects.inverted ? 1 : 0)
-      if (this.effects.tint) {
-        Column() {}.width('100%').height('100%').backgroundColor(this.effects.tintColor)
-          .blendMode(this.effects.blendMode).hitTestBehavior(HitTestMode.None)
-      }
-      if (this.effects.dimOpacity > 0) {
-        Column() {}.width('100%').height('100%').backgroundColor(Color.Black)
-          .opacity(this.effects.dimOpacity).hitTestBehavior(HitTestMode.None)
-      }
+      ReaderImageEffectOverlays({ effects: this.effects })
     }.width('100%').height('100%')
       .blendMode(BlendMode.SRC_OVER, this.effects.tint ? BlendApplyType.OFFSCREEN : BlendApplyType.FAST)
   }

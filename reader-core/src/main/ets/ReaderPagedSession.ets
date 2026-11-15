@@ -20,11 +20,13 @@ export class ReaderPagedFrame {
   crop: ReaderImageCropBounds
 
   constructor(slotId: number, part: ReaderDisplayPart, asset: ReaderSnapshot,
-    crop: ReaderImageCropBounds = new ReaderImageCropBounds()) {
+    crop: ReaderImageCropBounds = new ReaderImageCropBounds(), detached: boolean = false) {
     this.slotId = slotId
-    this.part = part.copy()
-    this.asset = asset.copy()
-    this.crop = crop.copy()
+    // Internal projection already owns detached records. Public callers still
+    // receive a frame that does not alias their constructor arguments.
+    this.part = detached ? part : part.copy()
+    this.asset = detached ? asset : asset.copy()
+    this.crop = detached ? crop : crop.copy()
   }
 }
 
@@ -118,7 +120,31 @@ export class ReaderPagedSnapshot {
   visibleDisplayEnd: number = -1
   window: ReaderPagedItemSnapshot[] = []
   /** Geometry metadata may outlive an evicted asset; it is never an image lease. */
-  pageMetadata: ReaderPage[] = []
+  private metadata: ReaderPage[] | null = null
+  private metadataSource: ReaderPage[] | null = null
+
+  get pageMetadata(): ReaderPage[] {
+    if (this.metadata === null) {
+      // Materialize only for consumers such as auto-read. Copy the retained
+      // value records before exposing them through the mutable snapshot API.
+      this.metadata = this.metadataSource === null ? [] :
+        this.metadataSource.map((page: ReaderPage): ReaderPage => page.copy())
+      this.metadataSource = null
+    }
+    return this.metadata
+  }
+
+  set pageMetadata(value: ReaderPage[]) {
+    this.metadata = value
+    this.metadataSource = null
+  }
+
+  /** The session replaces page records instead of mutating them in place. */
+  capturePageMetadata(pages: Map<number, ReaderPage>): void {
+    this.metadata = null
+    this.metadataSource = Array.from(pages.values())
+  }
+
   cropMetadata: ReaderPageCropMetadata[] = []
   /** Native pager projection; displayIndex/count remain chapter-local. */
   pagerIndex: number = 0
@@ -679,7 +705,7 @@ export class ReaderPagedSession {
     value.visibleDisplayStart = this.state.policy.layout === 'continuous' ? this.continuousStart : this.state.displayIndex
     value.visibleDisplayEnd = this.state.policy.layout === 'continuous' ? this.continuousEnd : this.state.displayIndex
     value.displayKeys = this.displayKeys.slice()
-    value.pageMetadata = Array.from(this.pages.values()).map((page: ReaderPage) => page.copy())
+    value.capturePageMetadata(this.pages)
     if (this.cropEnabled && !this.cropPresentationDeferred && this.state.kind === 'original') {
       this.cropPages.forEach((bounds: ReaderImageCropBounds, index: number) => {
         value.cropMetadata.push(new ReaderPageCropMetadata(index, this.state.policy.layout === 'continuous'
@@ -729,27 +755,25 @@ export class ReaderPagedSession {
       const page = row.context.pages.get(row.index)
       if (page !== undefined && asset.page !== null) asset.page = page.copy()
       const part = new ReaderDisplayPart(row.context.unit.key, page?.key ?? null, row.index)
-      const frame = new ReaderPagedFrame(slot.id, part, asset, this.continuousRowCrop(row))
+      const frame = new ReaderPagedFrame(slot.id, part, asset, this.continuousRowCrop(row), true)
       frame.cropPending = this.cropEnabled && !this.cropPresentationDeferred && asset.kind === 'original' &&
         (slot.cropRequestId !== asset.assetRequestId || !slot.cropSettled)
       return [frame]
     }
-    const parts = this.map?.item(index)?.visualParts(this.state.policy.direction) ?? []
+    const parts = this.map?.visualPartsAt(index, this.state.policy.direction) ?? []
     return parts.filter((part: ReaderDisplayPart) =>
       this.slots.some((slot: ReaderPageSlot) => slot.index === part.sourceIndex &&
         slot.unit?.key.equals(part.unit) === true))
       .map((part: ReaderDisplayPart): ReaderPagedFrame => {
       const slot = this.slots.find((candidate: ReaderPageSlot) => candidate.index === part.sourceIndex &&
         candidate.unit?.key.equals(part.unit) === true)
-      const asset = slot?.session.snapshot() ?? new ReaderSnapshot()
-      const page = this.pages.get(part.sourceIndex)
-      if (page !== undefined && asset.page !== null) asset.page = page.copy()
+      const asset = slot?.session.snapshot(this.pages.get(part.sourceIndex)) ?? new ReaderSnapshot()
       let crop = this.cropEnabled && !this.cropPresentationDeferred && slot?.cropRequestId === asset.assetRequestId
         ? slot?.crop?.copy() ?? new ReaderImageCropBounds() : new ReaderImageCropBounds()
       if (this.state.policy.layout === 'continuous') {
         crop = crop.forContinuousPage(part.sourceIndex, this.state.unit?.pageCount ?? 0)
       }
-      const frame = new ReaderPagedFrame(slot?.id ?? 0, part, asset, crop)
+      const frame = new ReaderPagedFrame(slot?.id ?? 0, part, asset, crop, true)
       frame.cropPending = this.cropEnabled && !this.cropPresentationDeferred && asset.kind === 'original' &&
         (slot?.cropRequestId !== asset.assetRequestId || slot?.cropSettled !== true)
       return frame
@@ -835,22 +859,45 @@ export class ReaderPagedSession {
     return this.preparePagerTarget(native, topology, navigation)
   }
 
-  preparePagerTarget(index: number, topology: number, navigation: number): boolean {
+  preparePagerTarget(index: number, topology: number, navigation: number,
+    adjacentEdge?: 'retire-spare' | 'prepare'): boolean {
     if (this.disposed || !this.active || this.state.phase !== 'ready' || this.state.policy.layout === 'continuous' ||
       topology !== this.topologyRevision || navigation !== this.navigationRevision ||
       !Number.isSafeInteger(index) || index < 0 || index >= this.pagerRows.length) return false
     const selected = this.pagerSelectedIndex()
     const target = index === selected ? -1 : index
-    // A normal adjacent fling can use its already requested window. Loading
-    // or retiring farther images belongs to the selection that actually lands.
-    if (this.state.policy.automaticPaging && this.state.policy.layout === 'spread' &&
-      this.pagedTargetNavigation !== navigation && Math.abs(index - selected) === 1 &&
-      this.resourceWindowIndexes.includes(index)) return true
+    // ArkUI can prepare the edge during idle time once the native turn has
+    // a real target. The ordinary path never expands a ready adjacent spread.
+    const adjacentSpread = this.state.policy.automaticPaging && this.state.policy.layout === 'spread' &&
+      Math.abs(index - selected) === 1 && this.resourceWindowIndexes.includes(index)
+    if (adjacentEdge !== undefined) {
+      const edge = index + (index - selected)
+      const outgoing = this.outgoingPositionKey === null ? selected :
+        this.pagerRows.findIndex((row: ReaderPagerRow): boolean => row.key === this.outgoingPositionKey)
+      if (!adjacentSpread || !this.prefetchNeighbors || this.nativeNeighborDepth() === 0 ||
+        (outgoing >= 0 && Math.abs(outgoing - selected) > 1) ||
+        edge < 0 || edge >= this.pagerRows.length || this.resourceWindowIndexes.includes(edge)) return true
+      if (adjacentEdge === 'retire-spare') {
+        const required = this.windowIndexes()
+        const retained = this.resourceWindowIndexes.filter((item: number): boolean => required.includes(item))
+        if (retained.length === this.resourceWindowIndexes.length) return true
+        // Free the old offscreen native cells before admitting the new edge.
+        // The live selection, handoff and its immediate neighbors all remain leased.
+        this.resourceWindowIndexes = retained
+        this.reconcile()
+        return true
+      }
+    } else if (adjacentSpread && this.pagedTargetNavigation !== navigation) return true
     if (target === this.pagedTargetIndex && topology === this.pagedTargetTopology &&
       navigation === this.pagedTargetNavigation) return true
     this.pagedTargetIndex = target
     this.pagedTargetTopology = topology
     this.pagedTargetNavigation = navigation
+    const requested = this.nextPagedResourceWindow()
+    // The native target sometimes already has its entire render window.
+    // Record the claim, but keep the current slots and snapshot untouched.
+    if (requested.length === this.resourceWindowIndexes.length &&
+      requested.every((value: number, position: number): boolean => value === this.resourceWindowIndexes[position])) return true
     this.reconcile()
     return true
   }
@@ -1604,13 +1651,23 @@ export class ReaderPagedSession {
     }
   }
 
-  private reconcileSlots(): void {
-    if (this.state.policy.layout === 'continuous') { this.reconcileContinuousSlots(); return }
+  private nextPagedResourceWindow(): number[] {
     const requested = this.windowIndexes()
-    const spare = this.prefetchNeighbors && this.pagedPreloadDepth !== null && this.pagedPreloadDepth > 0
+    const warmingAdjacentSpread = this.state.policy.automaticPaging && this.state.policy.layout === 'spread' &&
+      this.pagedTargetTopology === this.topologyRevision && this.pagedTargetNavigation === this.navigationRevision &&
+      Math.abs(this.pagedTargetIndex - this.pagerSelectedIndex()) === 1 && requested.length > 3
+    // Keep both immediate neighbors. During a claimed turn the farther
+    // incoming edge takes the allowance of the older offscreen edge.
+    const spare = !warmingAdjacentSpread && this.prefetchNeighbors &&
+      this.pagedPreloadDepth !== null && this.pagedPreloadDepth > 0
       ? this.resourceWindowIndexes.filter((index: number): boolean => !requested.includes(index) &&
         this.nativeWindowDistance(index) <= this.nativeNeighborDepth() + 1).slice(0, 1) : []
-    this.resourceWindowIndexes = requested.concat(spare)
+    return requested.concat(spare)
+  }
+
+  private reconcileSlots(): void {
+    if (this.state.policy.layout === 'continuous') { this.reconcileContinuousSlots(); return }
+    this.resourceWindowIndexes = this.nextPagedResourceWindow()
     this.syncPagerProcessing()
     const parts: ReaderDisplayPart[] = []
     this.resourceWindowIndexes.forEach((index: number): void => {
@@ -1873,9 +1930,9 @@ export class ReaderPagedSession {
     fragment: ReaderFragment): ReaderPageSlot | undefined {
     if (this.disposed || this.state.phase !== 'ready' || selectionId !== this.state.selectionId) return undefined
     const slot = this.slots.find((candidate: ReaderPageSlot) => candidate.id === slotId)
-    if (slot === undefined || requestId === 0 || slot.session.snapshot().assetRequestId !== requestId) return undefined
-    return this.map?.item(this.state.displayIndex)?.parts.some((part: ReaderDisplayPart) =>
-      part.unit.equals(slot.unit!.key) && part.sourceIndex === slot.index && part.fragment === fragment) ? slot : undefined
+    if (slot === undefined || !slot.session.hasAssetRequest(requestId) ||
+      slot.unit?.key.equals(this.state.unit!.key) !== true) return undefined
+    return this.map?.hasPart(this.state.displayIndex, slot.index, fragment) === true ? slot : undefined
   }
 
   reportRenderFailure(selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment): void {
@@ -1901,10 +1958,9 @@ export class ReaderPagedSession {
     const slot = this.currentRenderSlot(selectionId, slotId, requestId, fragment)
     if (slot === undefined) return false
     if (this.cropEnabled && !this.cropPresentationDeferred && (slot.cropRequestId !== requestId || !slot.cropSettled)) return false
-    const asset = slot.session.snapshot()
     const anchor = this.state.anchor
     // A spread's second page decoding first must not change the selected original.
-    if (asset.phase !== 'displayed' || asset.assetRequestId !== requestId || asset.page?.key !== anchor.pageKey) return false
+    if (anchor.pageKey === null || slot.session.displayedOriginalKey(requestId) !== anchor.pageKey) return false
     if (this.state.observedSelectionId === selectionId) return true
     this.state.observedAnchor = anchor.copy()
     this.state.observedSelectionId = selectionId
@@ -1916,10 +1972,22 @@ export class ReaderPagedSession {
         if (parts.length === 2) context.automaticSeenPairs.add(parts[0].sourceIndex)
       }
     }
-    if (this.outgoingPositionKey !== null) {
-      this.outgoingPositionKey = null
-      this.reconcile()
-    } else this.emit()
+    const outgoing = this.outgoingPositionKey
+    this.outgoingPositionKey = null
+    if (outgoing !== null) {
+      const index = this.pagerRows.findIndex((row: ReaderPagerRow): boolean => row.key === outgoing)
+      // An adjacent page already belongs to the ordinary cache. Observing
+      // the landing page retires the handoff, but does not change that window.
+      if (index >= 0 && (!this.prefetchNeighbors || this.nativeWindowDistance(index) > this.nativeNeighborDepth())) {
+        this.reconcile()
+        return true
+      }
+    }
+    // A confirmed native turn can commit progress without publishing every
+    // frame in the unchanged pager window again. Snapshot-only subscribers
+    // retain the original delivery path.
+    if (this.positionListener !== null) this.positionListener(anchor.copy(), selectionId)
+    else this.emit()
     return true
   }
 
@@ -1992,17 +2060,15 @@ export class ReaderPagedSession {
   private framesForPagerRow(index: number): ReaderPagedFrame[] {
     const row = this.pagerRows[index]
     if (row === undefined) return []
-    return (row.context.map?.item(row.index)?.visualParts(this.state.policy.direction) ?? [])
+    return (row.context.map?.visualPartsAt(row.index, this.state.policy.direction) ?? [])
       .map((part: ReaderDisplayPart): ReaderPagedFrame | null => {
         const slot = this.slots.find((candidate: ReaderPageSlot): boolean =>
           candidate.unit?.key.equals(part.unit) === true && candidate.index === part.sourceIndex)
         if (slot === undefined) return null
-        const asset = slot.session.snapshot()
-        const page = row.context.pages.get(part.sourceIndex)
-        if (page !== undefined && asset.page !== null) asset.page = page.copy()
+        const asset = slot.session.snapshot(row.context.pages.get(part.sourceIndex))
         const crop = this.cropEnabled && !this.cropPresentationDeferred && slot.cropRequestId === asset.assetRequestId
           ? slot.crop?.copy() ?? new ReaderImageCropBounds() : new ReaderImageCropBounds()
-        const frame = new ReaderPagedFrame(slot.id, part, asset, crop)
+        const frame = new ReaderPagedFrame(slot.id, part, asset, crop, true)
         frame.cropPending = this.cropEnabled && !this.cropPresentationDeferred && asset.kind === 'original' &&
           (slot.cropRequestId !== asset.assetRequestId || !slot.cropSettled)
         return frame

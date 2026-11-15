@@ -204,6 +204,21 @@ export class ReaderDisplayMap {
     return value
   }
 
+  hasPart(index: number, sourceIndex: number, fragment: ReaderFragment): boolean {
+    return this.items[index]?.parts.some((part: ReaderDisplayPart): boolean =>
+      part.sourceIndex === sourceIndex && part.fragment === fragment) === true
+  }
+
+  /** Detached parts for paint, in visual order, with current source identities. */
+  visualPartsAt(index: number, direction: ReaderDirection): ReaderDisplayPart[] {
+    if (!Number.isInteger(index) || index < 0 || index >= this.items.length) return []
+    const parts = this.items[index].visualParts(direction)
+    parts.forEach((part: ReaderDisplayPart): void => {
+      part.pageKey = this.metadata.get(part.sourceIndex)?.key ?? null
+    })
+    return parts
+  }
+
   /** False asks the session to rebuild display groups. Automatic pairing still records the page. */
   updatePage(page: ReaderPage): boolean {
     const existingIndex = this.pageIndexes.get(page.key)

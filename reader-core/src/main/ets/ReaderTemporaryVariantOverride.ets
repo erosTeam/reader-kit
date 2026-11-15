@@ -43,6 +43,7 @@ export class ReaderTemporaryVariantScope {
 export class ReaderTemporaryVariantOverride {
   revision: number = 0
   private disabledScope: ReaderTemporaryVariantScope | null = null
+  hasOverride(): boolean { return this.disabledScope !== null }
   isDisabled(scope: ReaderTemporaryVariantScope | null): boolean {
     return scope !== null && this.disabledScope?.equals(scope) === true
   }

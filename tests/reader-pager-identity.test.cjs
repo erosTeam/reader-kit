@@ -97,7 +97,7 @@ test('adjacent chapter insertion preserves keyed native pages within the same wo
 test('an old native echo cannot take a newer press or cancel its real reverse turn', () => {
  const text=fs.readFileSync(path.join(__dirname,'../reader-ui/src/main/ets/ReaderPagerSurface.ets'),'utf8')
  const touch=text.slice(text.indexOf('  private handleBoundaryTouch('),text.indexOf('  aboutToAppear()',text.indexOf('struct ReaderNativePager')))
- const turn=text.slice(text.indexOf('class ReaderNativeTurn'),text.indexOf('@ComponentV2\nstruct ReaderNativePager'))
+ const turn=text.slice(text.indexOf('class ReaderNativeTurn'),text.indexOf('class ReaderPagerIdle'))
  const selection=text.slice(text.indexOf('  onCommandChanged()'),text.indexOf('  build() {',text.indexOf('  private queueSelection(')))
  const tasks=new Map();let serial=0
  const out={}

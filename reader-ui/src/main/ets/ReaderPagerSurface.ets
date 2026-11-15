@@ -1,3 +1,4 @@
+import { FrameCallback } from '@kit.ArkUI'
 import { ReaderImageEffects } from './ReaderImageEffects'
 import { ReaderPagedSnapshot, ReaderFragment, ReaderPagedFrame, ReaderPagedItemSnapshot } from '@reader-kit/core'
 import { ReaderPagedViewport } from './ReaderPagedViewport'
@@ -175,7 +176,8 @@ export struct ReaderPagerSurface {
   @Event onBoundary: (direction: ReaderBoundaryDirection, topologyRevision: number,
     navigationRevision: number) => void = () => {}
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
-  @Event onPrepareTarget: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
+  @Event onPrepareTarget: (index: number, topologyRevision: number, navigationRevision: number,
+    adjacentEdge?: 'retire-spare' | 'prepare') => void = () => {}
   @Event onDecodedOriginal: (slotId: number, requestId: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -231,6 +233,17 @@ class ReaderNativeTurn {
   }
 }
 
+class ReaderPagerIdle extends FrameCallback {
+  private readonly prepare: (available: number) => void
+
+  constructor(prepare: (available: number) => void) {
+    super()
+    this.prepare = prepare
+  }
+
+  onIdle(available: number): void { this.prepare(available) }
+}
+
 @ComponentV2
 struct ReaderNativePager {
   @Param loadingInk: ResourceColor = Color.White
@@ -252,7 +265,8 @@ struct ReaderNativePager {
   @Event onBoundary: (direction: ReaderBoundaryDirection, topologyRevision: number,
     navigationRevision: number) => void = () => {}
   @Event onSelect: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
-  @Event onPrepareTarget: (index: number, topologyRevision: number, navigationRevision: number) => void = () => {}
+  @Event onPrepareTarget: (index: number, topologyRevision: number, navigationRevision: number,
+    adjacentEdge?: 'retire-spare' | 'prepare') => void = () => {}
   @Event onDecodedOriginal: (slotId: number, requestId: number) => void = () => {}
   @Event onPresented: (slotId: number, requestId: number, success: boolean, width: number, height: number) => void = () => {}
   @Event onVisible: (selectionId: number, slotId: number, requestId: number, fragment: ReaderFragment) => void = () => {}
@@ -465,6 +479,23 @@ struct ReaderNativePager {
     this.claimedTurn = new ReaderNativeTurn(source, target, this.gestureTopology, this.gestureNavigation, this.gestureSerial)
   }
 
+  private warmClaimedSpread(turn: ReaderNativeTurn,
+    stage: 'retire-spare' | 'prepare' = 'retire-spare', attempt: number = 0): void {
+    this.getUIContext().postFrameCallback(new ReaderPagerIdle((available: number): void => {
+      if (!this.active || !this.moving || this.claimedTurn !== turn || this.gestureSerial !== turn.serial ||
+        this.snapshot.topologyRevision !== turn.topology || this.snapshot.navigationRevision !== turn.navigation ||
+        this.snapshot.pagerKeys[this.snapshot.pagerIndex] !== turn.sourceKey) return
+      if (available < 4_000_000) {
+        if (attempt < 2) this.warmClaimedSpread(turn, stage, attempt + 1)
+        return
+      }
+      const target = this.snapshot.pagerKeys.indexOf(turn.targetKey)
+      if (target < 0) return
+      this.onPrepareTarget(target, turn.topology, turn.navigation, stage)
+      if (stage === 'retire-spare') this.warmClaimedSpread(turn, 'prepare')
+    }))
+  }
+
   private finishNativeAnimation(index: number): void {
     this.moving = false
     // An interrupted older animation can finish on its source without a change.
@@ -583,9 +614,9 @@ struct ReaderNativePager {
     .maintainVisibleContentPosition(true)
     .disableSwipe(!this.active || this.snapshot.phase !== 'ready' || this.inputLocked)
     .width('100%').height('100%').id('rkit-native-pager')
-    .onAreaChange((_old: Area, area: Area): void => {
-      this.viewportWidth = Math.max(1, Number(area.width))
-      this.viewportHeight = Math.max(1, Number(area.height))
+    .onSizeChange((_old: SizeOptions, size: SizeOptions): void => {
+      this.viewportWidth = Math.max(1, Number(size.width))
+      this.viewportHeight = Math.max(1, Number(size.height))
       this.onViewportChange(this.viewportWidth, this.viewportHeight)
     })
     .onTouch((event: TouchEvent): void => { this.handleBoundaryTouch(event) })
@@ -602,7 +633,14 @@ struct ReaderNativePager {
       this.beginMotion()
       if (this.active && this.gestureTopology === this.snapshot.topologyRevision &&
         this.gestureNavigation === this.snapshot.navigationRevision) {
-        this.onPrepareTarget(targetIndex, this.gestureTopology, this.gestureNavigation)
+        const turn = this.claimedTurn
+        if (turn !== null && this.snapshot.policy.automaticPaging && this.snapshot.policy.layout === 'spread' &&
+          Math.abs(targetIndex - this.snapshot.pagerIndex) === 1 && this.snapshot.nativeCacheDepth > 0 &&
+          this.snapshot.pagerWindow.some((item: ReaderPagedItemSnapshot): boolean => item.index === targetIndex)) {
+          this.warmClaimedSpread(turn)
+        } else {
+          this.onPrepareTarget(targetIndex, this.gestureTopology, this.gestureNavigation)
+        }
       }
     })
     .onScrollStateChanged((state: ScrollState): void => {
