@@ -1,4 +1,5 @@
 import { ReaderImageEffects, ReaderImageEffectsLayer } from './ReaderImageEffects'
+import { ReaderHdrImage } from './ReaderHdrImage'
 import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPolicy, ReaderAssetNotice,
   ReaderFragment, readerPolicyRotatesPage, readerPagedFrameAspectRatio, readerPageIsWide } from '@reader-kit/core'
 import { ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/core'
@@ -869,6 +870,9 @@ export struct ReaderPagedImage {
   @Local private sheetWidth: number = 0
   @Local private sheetHeight: number = 0
   private fullyVisible: boolean = false
+  private originalVisible: boolean = false
+  @Local private hdrVisible: boolean = false
+  @Local private hdrDrawableIdentity: string = ''
   private decoded: boolean = false
   private decodedRequestId: number = 0
   @Local private stableNativeIdentity: string = ''
@@ -894,6 +898,15 @@ export struct ReaderPagedImage {
     this.scheduleNativeStability()
   }
   aboutToDisappear(): void { this.entryMounted = false }
+
+  @Monitor('imageEffects')
+  onHdrPreferenceChanged(): void { this.updateHdrVisibility() }
+
+  private updateHdrVisibility(): void {
+    const show = this.imageEffects.hdrBrightness && this.originalVisible
+    if (this.hdrVisible !== show) this.hdrVisible = show
+    if (!show && this.hdrDrawableIdentity.length > 0) this.hdrDrawableIdentity = ''
+  }
 
   @Monitor('active', 'selectionId', 'frame')
   onSelectionChanged(): void {
@@ -1345,8 +1358,9 @@ export struct ReaderPagedImage {
         // Full-page and cropped geometry share one native Image owner.
         Stack({ alignContent: Alignment.TopStart }) {
           Image(this.frame.asset.uri)
-            .opacity((this.quarantineOriginal || this.guardUndecodedOriginal) &&
-              this.stableDrawableIdentity !== this.originalGeometryIdentity() ? 0 : 1)
+            .opacity(((this.quarantineOriginal || this.guardUndecodedOriginal) &&
+              this.stableDrawableIdentity !== this.originalGeometryIdentity()) ||
+              (this.hdrVisible && this.hdrDrawableIdentity === this.drawableIdentity()) ? 0 : 1)
             .width(this.renderWidth() / this.frame.crop.region(this.frame.part).width)
             .height(this.renderHeight() / this.frame.crop.region(this.frame.part).height)
             .id(this.entryLeafId())
@@ -1365,6 +1379,28 @@ export struct ReaderPagedImage {
               if (event?.loadingStatus === 1) this.completed(event.width, event.height)
             })
             .onError((): void => { this.failed() })
+          if (this.hdrVisible && this.frame.asset.phase === 'displayed' &&
+            (!(this.quarantineOriginal || this.guardUndecodedOriginal) ||
+              this.stableDrawableIdentity === this.originalGeometryIdentity())) {
+            ReaderHdrImage({
+              uri: this.frame.asset.uri, identity: this.drawableIdentity(),
+              imageFit: this.frame.part.fragment !== 'whole' || this.frame.crop.applied() ? ImageFit.Fill : ImageFit.Contain,
+              imageInterpolation: this.imageInterpolation,
+              onReady: (identity: string): void => {
+                if (identity === this.drawableIdentity()) this.hdrDrawableIdentity = identity
+              },
+              onClear: (identity: string): void => {
+                if (this.hdrDrawableIdentity === identity) this.hdrDrawableIdentity = ''
+              },
+            })
+              .width(this.renderWidth() / this.frame.crop.region(this.frame.part).width)
+              .height(this.renderHeight() / this.frame.crop.region(this.frame.part).height)
+              .position({
+                x: -this.renderWidth() * this.frame.crop.region(this.frame.part).x / this.frame.crop.region(this.frame.part).width,
+                y: -this.renderHeight() * this.frame.crop.region(this.frame.part).y / this.frame.crop.region(this.frame.part).height,
+              })
+              .hitTestBehavior(HitTestMode.None)
+          }
         }
         .width(this.renderWidth()).height(this.renderHeight()).clip(true)
         .rotate({ angle: this.rotateClockwise ? 90 : 0 })
@@ -1395,6 +1431,8 @@ export struct ReaderPagedImage {
     .opacity(this.entryTransition?.opacity(this.frame.part) ?? 1)
     .onVisibleAreaChange([0, 1], (_expanding: boolean, ratio: number): void => {
       this.fullyVisible = ratio >= 1
+      this.originalVisible = ratio > 0
+      this.updateHdrVisibility()
       this.reportVisible()
     })
     .onAreaChange((_old: Area, area: Area): void => {

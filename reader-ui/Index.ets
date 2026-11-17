@@ -57,5 +57,6 @@ export { ReaderSystemBarController } from './src/main/ets/ReaderSystemBarControl
 export { ReaderRouteTransition } from './src/main/ets/ReaderRouteTransition'
 
 export { ReaderImageEffects, ReaderImageEffectsLayer } from './src/main/ets/ReaderImageEffects'
+export { readerHdrBrightnessAvailable } from './src/main/ets/ReaderHdrImage'
 
 export { ReaderFileCropService } from './src/main/ets/ReaderFileCropService'
