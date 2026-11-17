@@ -244,6 +244,7 @@ export struct ReaderContinuousZoomImage {
     Stack() {
       ReaderPagedImage({
         imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
+        hdrPreserveSourceResolution: this.imageTransform.zoomed(),
         frame: this.presentedFrame(), slotId: this.frame.slotId, assetRequestId: this.presentedFrame().asset.assetRequestId,
         allocatedWidth: this.componentWidth, allocatedHeight: this.imageHeight,
         alignGeometryBeforeVisible: this.retainedFrameValue === null,
@@ -263,10 +264,12 @@ export struct ReaderContinuousZoomImage {
         .width('100%').height('100%')
         .scale({ x: this.imageTransform.scale, y: this.imageTransform.scale })
         .translate({ x: this.imageTransform.x, y: this.imageTransform.y })
-        .zIndex(this.retainedFrameValue !== null && this.frame.asset.phase === 'decoding' ? 1 : 0)
+        .zIndex(this.retainedFrameValue !== null &&
+          (this.imageEffects.hdrBrightness || this.frame.asset.phase === 'decoding') ? 1 : 0)
       if (this.retainedFrameValue !== null) {
         ReaderPagedImage({
           imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
+          hdrWaitForSelection: true,
           frame: this.frame, slotId: this.frame.slotId, assetRequestId: this.frame.asset.assetRequestId,
           allocatedWidth: this.componentWidth, allocatedHeight: this.imageHeight,
           alignGeometryBeforeVisible: true,
@@ -282,7 +285,7 @@ export struct ReaderContinuousZoomImage {
           .width('100%').height('100%')
           .scale({ x: this.imageTransform.scale, y: this.imageTransform.scale })
           .translate({ x: this.imageTransform.x, y: this.imageTransform.y })
-          .zIndex(this.frame.asset.phase === 'displayed' ? 1 : 0)
+          .zIndex(!this.imageEffects.hdrBrightness && this.frame.asset.phase === 'displayed' ? 1 : 0)
       }
     }
     .width('100%').height('100%')

@@ -491,6 +491,7 @@ export struct ReaderPagedViewport {
           // consumes only its own asset, even while the other side is decoding.
           ReaderPagedCell({
             imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects, loadingInk: this.loadingInk,
+            hdrMayStart: this.active,
             frame: this.snapshot.frames.find((item: ReaderPagedFrame): boolean =>
               item.slotId === frame.slotId && item.part.fragment === frame.part.fragment) ?? frame,
             policy: this.snapshot.policy,
@@ -589,6 +590,7 @@ export struct ReaderPagedViewport {
 
 @ComponentV2
 struct ReaderPagedCell {
+  @Param hdrMayStart: boolean = false
   @Param loadingInk: ResourceColor = Color.White
   @Param imageEffects: ReaderImageEffects = new ReaderImageEffects()
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
@@ -758,6 +760,7 @@ struct ReaderPagedCell {
         ReaderPagedImage({
           imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
           pagedDecode: this.pagedDecode, fitDecodeToContent: this.policy.layout === 'single',
+          hdrWaitForSelection: true, hdrMayStart: this.hdrMayStart,
           frame: this.presentedFrame(), selectionId: this.selectionId,
           topologyRevision: this.topologyRevision, navigationRevision: this.navigationRevision,
           entryTransition: this.retainedFrameValue === null ? this.entryTransition : null,
@@ -792,11 +795,13 @@ struct ReaderPagedCell {
           .opacity(this.imagePresentation().pixels ? 1 : 0)
           .width(this.imageWidth)
           .height(this.imageHeight)
-          .zIndex(this.retainedFrameValue !== null && this.frame.asset.phase === 'decoding' ? 1 : 0)
+          .zIndex(this.retainedFrameValue !== null &&
+            (this.imageEffects.hdrBrightness || this.frame.asset.phase === 'decoding') ? 1 : 0)
         if (this.retainedFrameValue !== null) {
           ReaderPagedImage({
             imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
             pagedDecode: this.pagedDecode, fitDecodeToContent: this.policy.layout === 'single',
+            hdrWaitForSelection: true,
             frame: this.frame, selectionId: this.selectionId,
             topologyRevision: this.topologyRevision, navigationRevision: this.navigationRevision,
             entryTransition: this.entryTransition,
@@ -818,7 +823,7 @@ struct ReaderPagedCell {
           }).opacity(this.imagePresentation().pixels ? 1 : 0)
             .width(this.imageWidth)
             .height(this.imageHeight)
-            .zIndex(this.frame.asset.phase === 'displayed' ? 1 : 0)
+            .zIndex(!this.imageEffects.hdrBrightness && this.frame.asset.phase === 'displayed' ? 1 : 0)
         }
       }
       // A settled page must not mount an empty loading component when a
@@ -862,6 +867,9 @@ export struct ReaderPagedImage {
   @Param imageEffects: ReaderImageEffects = new ReaderImageEffects()
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Param pagedDecode: ReaderPagedDecode = 'default'
+  @Param hdrPreserveSourceResolution: boolean = false
+  @Param hdrWaitForSelection: boolean = false
+  @Param hdrMayStart: boolean = false
   @Param fitDecodeToContent: boolean = false
   @Param quarantineOriginal: boolean = false
   @Param guardUndecodedOriginal: boolean = false
@@ -902,7 +910,7 @@ export struct ReaderPagedImage {
   private fullyVisible: boolean = false
   private originalVisible: boolean = false
   @Local private hdrVisible: boolean = false
-  @Local private hdrDrawableIdentity: string = ''
+  @Local private hdrReadyPageKey: string = ''
   private decoded: boolean = false
   private decodedRequestId: number = 0
   @Local private stableNativeIdentity: string = ''
@@ -925,17 +933,23 @@ export struct ReaderPagedImage {
 
   aboutToAppear(): void {
     this.entryMounted = true
+    this.updateHdrVisibility()
     this.scheduleNativeStability()
   }
   aboutToDisappear(): void { this.entryMounted = false }
 
-  @Monitor('imageEffects')
+  @Monitor('imageEffects', 'hdrMayStart', 'frame')
   onHdrPreferenceChanged(): void { this.updateHdrVisibility() }
 
   private updateHdrVisibility(): void {
-    const show = this.imageEffects.hdrBrightness && this.originalVisible
+    // A paged leaf starts only after native selection settles. Keep its
+    // mounted HDR pixels for the existing Swiper cell lifetime, including a
+    // swipe away and a return to the same decoded asset.
+    const show = this.imageEffects.hdrBrightness && (this.hdrWaitForSelection
+      ? this.hdrMayStart || this.hdrReadyPageKey === this.hdrContentKey()
+      : this.originalVisible)
     if (this.hdrVisible !== show) this.hdrVisible = show
-    if (!show && this.hdrDrawableIdentity.length > 0) this.hdrDrawableIdentity = ''
+    if (!show && this.hdrReadyPageKey.length > 0) this.hdrReadyPageKey = ''
   }
 
   @Monitor('active', 'selectionId', 'frame')
@@ -979,6 +993,10 @@ export struct ReaderPagedImage {
       `${this.slotId}:${this.assetRequestId}:` +
       `${this.frame.part.sourceIndex}:${this.renderedFragment}:${this.frame.asset.visualRevision}:` +
       this.originalGeometryIdentity()
+  }
+
+  private hdrContentKey(): string {
+    return `${this.slotId}:${this.frame.part.sourceIndex}:${this.renderedFragment}:${this.frame.asset.page?.key ?? ''}`
   }
 
   private drawableIdentity(): string {
@@ -1411,7 +1429,7 @@ export struct ReaderPagedImage {
             Image(this.frame.asset.uri)
               .opacity(((this.quarantineOriginal || this.guardUndecodedOriginal) &&
                 this.stableDrawableIdentity !== this.originalGeometryIdentity()) ||
-                (this.hdrVisible && this.hdrDrawableIdentity === this.drawableIdentity()) ? 0 : 1)
+                (this.hdrVisible && this.hdrReadyPageKey === this.hdrContentKey()) ? 0 : 1)
               .width(this.renderWidth() / this.cropRegion.width)
               .height(this.renderHeight() / this.cropRegion.height)
               .id(this.entryLeafId())
@@ -1433,14 +1451,15 @@ export struct ReaderPagedImage {
               (!(this.quarantineOriginal || this.guardUndecodedOriginal) ||
                 this.stableDrawableIdentity === this.originalGeometryIdentity())) {
               ReaderHdrImage({
-                uri: this.frame.asset.uri, identity: this.drawableIdentity(),
+                uri: this.frame.asset.uri, identity: this.drawableIdentity(), logicalPageKey: this.hdrContentKey(),
+                preserveSourceResolution: this.pagedDecode === 'original' || this.hdrPreserveSourceResolution,
                 imageFit: this.frame.part.fragment !== 'whole' || this.frame.crop.applied() ? ImageFit.Fill : ImageFit.Contain,
                 imageInterpolation: this.imageInterpolation,
                 onReady: (identity: string): void => {
-                  if (identity === this.drawableIdentity()) this.hdrDrawableIdentity = identity
+                  if (identity === this.hdrContentKey()) this.hdrReadyPageKey = identity
                 },
                 onClear: (identity: string): void => {
-                  if (this.hdrDrawableIdentity === identity) this.hdrDrawableIdentity = ''
+                  if (this.hdrReadyPageKey === identity) this.hdrReadyPageKey = ''
                 },
               })
                 .width(this.renderWidth() / this.cropRegion.width)
