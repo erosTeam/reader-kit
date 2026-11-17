@@ -31,6 +31,12 @@ The original `ReaderFileCropSource` API retains its prior conservative policy;
 explicit host strengths retain their existing thresholds and 1-based Legacy seam
 semantics. Pixel buffer rows use `width * 4`, never native allocation stride.
 
+Reader HDR brightening is opt-in through `ReaderImageEffects`. Hosts own the
+settings and declare `ohos.permission.HDR_BRIGHTNESS`. Only displayed originals
+are eligible for an HDR preview. The native original owns loading, geometry,
+media actions and fallback throughout. See the
+[shared HDR image](reader-ui/src/main/ets/ReaderHdrImage.ets).
+
 Before a product edit, recover the existing user behavior independently of the
 patch, then trace the changed owner, callers, writers, async callbacks, parent
 and sibling state, every applicable consumer, and the retained Legacy route.

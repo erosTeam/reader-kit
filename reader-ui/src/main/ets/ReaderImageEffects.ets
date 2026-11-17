@@ -1,5 +1,6 @@
 /** Optional display-only effects. No cache, asset, gesture or policy ownership. */
 export class ReaderImageEffects {
+  hdrBrightness: boolean = false
   grayscale: boolean = false
   inverted: boolean = false
   tint: boolean = false
