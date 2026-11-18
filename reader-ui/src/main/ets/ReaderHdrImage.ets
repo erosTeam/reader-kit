@@ -1,5 +1,5 @@
 import { abilityAccessCtrl, common } from '@kit.AbilityKit'
-import { AnimatorResult, display } from '@kit.ArkUI'
+import { display } from '@kit.ArkUI'
 import { uiEffect } from '@kit.ArkGraphics2D'
 import { deviceInfo } from '@kit.BasicServicesKit'
 import { image } from '@kit.ImageKit'
@@ -7,19 +7,15 @@ import { image } from '@kit.ImageKit'
 const HDR_BRIGHTNESS_PERMISSION = 'ohos.permission.HDR_BRIGHTNESS'
 const READER_HDR_BRIGHTNESS_RATIO = 1.5
 const HDR_RAMP_DURATION_MS = 280
-const HDR_RATIO_STEPS = 64
 const MAX_HDR_PAGE_PIXELS = 12 * 1024 * 1024
 
-let hdrRampFilters: uiEffect.Filter[] | undefined
+let hdrBrightnessFilter: uiEffect.Filter | undefined
 
-function readerHdrRampFilters(): uiEffect.Filter[] {
-  if (hdrRampFilters !== undefined) return hdrRampFilters
-  const filters: uiEffect.Filter[] = []
-  for (let step = 0; step <= HDR_RATIO_STEPS; step++) {
-    filters.push(uiEffect.createFilter().hdrBrightnessRatio(1 + (READER_HDR_BRIGHTNESS_RATIO - 1) * step / HDR_RATIO_STEPS))
+function readerHdrBrightnessFilter(): uiEffect.Filter {
+  if (hdrBrightnessFilter === undefined) {
+    hdrBrightnessFilter = uiEffect.createFilter().hdrBrightnessRatio(READER_HDR_BRIGHTNESS_RATIO)
   }
-  hdrRampFilters = filters
-  return filters
+  return hdrBrightnessFilter
 }
 
 export function readerHdrBrightnessAvailable(context?: common.Context): boolean {
@@ -96,6 +92,7 @@ export struct ReaderHdrImage {
   @Param imageFit: ImageFit = ImageFit.Contain
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Event onReady: (identity: string) => void = () => {}
+  @Event onOpaque: (identity: string) => void = () => {}
   @Event onClear: (identity: string) => void = () => {}
   @Local private page?: image.PixelMap = undefined
   private displayedPageKey: string = ''
@@ -104,10 +101,10 @@ export struct ReaderHdrImage {
   private pageReduced: boolean = false
   private generation: number = 0
   private mounted: boolean = false
-  @Local private rampProgress: number = 0
+  @Local private blendOpacity: number = 0
   private rampStarted: boolean = false
-  private rampAnimator?: AnimatorResult = undefined
-  private filters?: uiEffect.Filter[] = undefined
+  private rampEpoch: number = 0
+  private filter?: uiEffect.Filter = undefined
 
   aboutToAppear(): void {
     this.mounted = true
@@ -134,9 +131,9 @@ export struct ReaderHdrImage {
     this.displayedPageKey = ''
     this.acceptedAssetIdentity = ''
     this.pageReduced = false
-    this.stopRamp()
+    this.rampEpoch++
     this.rampStarted = false
-    this.rampProgress = 0
+    this.blendOpacity = 0
     if (key.length > 0) this.onClear(key)
     if (previous !== undefined) void releaseHdrPage(previous)
     this.releaseRetiredPixels()
@@ -148,34 +145,26 @@ export struct ReaderHdrImage {
     if (previous !== undefined) void releaseHdrPage(previous)
   }
 
-  private stopRamp(): void {
-    const animator = this.rampAnimator
-    this.rampAnimator = undefined
-    animator?.cancel()
-  }
-
   private imageReady(): void {
     if (!this.mounted || this.displayedPageKey !== this.logicalPageKey) return
     this.releaseRetiredPixels()
     if (this.rampStarted) return
     this.rampStarted = true
-    this.onReady(this.displayedPageKey)
-    // A single display-paced ramp belongs to this logical page; changing its
-    // file (for example when super-resolution finishes) keeps the same ramp.
-    const animator = this.getUIContext().createAnimator({
-      duration: HDR_RAMP_DURATION_MS, easing: 'ease-in-out', delay: 0,
-      fill: 'forwards', direction: 'normal', iterations: 1, begin: 0, end: 1,
+    const key = this.displayedPageKey
+    const epoch = this.rampEpoch
+    this.onReady(key)
+    // Keep one fixed HDR filter and blend over the displayed SDR original.
+    // The compositor advances opacity without a per-frame ArkTS filter update.
+    // A same-page super-resolution replacement keeps the current blend.
+    this.getUIContext().animateTo({
+      duration: HDR_RAMP_DURATION_MS,
+      curve: Curve.EaseInOut,
+      onFinish: (): void => {
+        if (this.mounted && this.rampEpoch === epoch && this.logicalPageKey === key) this.onOpaque(key)
+      },
+    }, (): void => {
+      this.blendOpacity = 1
     })
-    this.rampAnimator = animator
-    animator.onFrame = (progress: number): void => {
-      if (this.rampAnimator === animator) this.rampProgress = Math.max(0, Math.min(1, progress))
-    }
-    animator.onFinish = (): void => {
-      if (this.rampAnimator !== animator) return
-      this.rampAnimator = undefined
-      this.rampProgress = 1
-    }
-    animator.play()
   }
 
   private prepare(): void {
@@ -192,7 +181,7 @@ export struct ReaderHdrImage {
     const current = (): boolean => this.mounted && this.generation === generation && this.identity === identity &&
       this.logicalPageKey === key && this.preserveSourceResolution === preserveSourceResolution
     try {
-      this.filters = readerHdrRampFilters()
+      this.filter = readerHdrBrightnessFilter()
     } catch (_) {
       return
     }
@@ -217,14 +206,15 @@ export struct ReaderHdrImage {
   }
 
   build() {
-    if (this.page !== undefined && this.displayedPageKey === this.logicalPageKey && this.filters !== undefined) {
+    if (this.page !== undefined && this.displayedPageKey === this.logicalPageKey && this.filter !== undefined) {
       Image(this.page)
         .width('100%').height('100%')
         .objectFit(this.imageFit)
         .interpolation(this.imageInterpolation)
         .id('rkit-auto-hdr-image')
-        .hdrBrightness(this.rampProgress)
-        .foregroundFilter(this.filters[Math.round(this.rampProgress * HDR_RATIO_STEPS)])
+        .hdrBrightness(1)
+        .foregroundFilter(this.filter)
+        .opacity(this.blendOpacity)
         .hitTestBehavior(HitTestMode.None)
         .onComplete((event): void => {
           if (event?.loadingStatus === 1) this.imageReady()
