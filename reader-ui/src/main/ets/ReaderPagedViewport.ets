@@ -911,6 +911,7 @@ export struct ReaderPagedImage {
   private originalVisible: boolean = false
   @Local private hdrVisible: boolean = false
   @Local private hdrReadyPageKey: string = ''
+  @Local private hdrOpaquePageKey: string = ''
   private decoded: boolean = false
   private decodedRequestId: number = 0
   @Local private stableNativeIdentity: string = ''
@@ -949,7 +950,10 @@ export struct ReaderPagedImage {
       ? this.hdrMayStart || this.hdrReadyPageKey === this.hdrContentKey()
       : this.originalVisible)
     if (this.hdrVisible !== show) this.hdrVisible = show
-    if (!show && this.hdrReadyPageKey.length > 0) this.hdrReadyPageKey = ''
+    if (!show) {
+      this.hdrReadyPageKey = ''
+      this.hdrOpaquePageKey = ''
+    }
   }
 
   @Monitor('active', 'selectionId', 'frame')
@@ -1429,7 +1433,7 @@ export struct ReaderPagedImage {
             Image(this.frame.asset.uri)
               .opacity(((this.quarantineOriginal || this.guardUndecodedOriginal) &&
                 this.stableDrawableIdentity !== this.originalGeometryIdentity()) ||
-                (this.hdrVisible && this.hdrReadyPageKey === this.hdrContentKey()) ? 0 : 1)
+                (this.hdrVisible && this.hdrOpaquePageKey === this.hdrContentKey()) ? 0 : 1)
               .width(this.renderWidth() / this.cropRegion.width)
               .height(this.renderHeight() / this.cropRegion.height)
               .id(this.entryLeafId())
@@ -1458,8 +1462,12 @@ export struct ReaderPagedImage {
                 onReady: (identity: string): void => {
                   if (identity === this.hdrContentKey()) this.hdrReadyPageKey = identity
                 },
+                onOpaque: (identity: string): void => {
+                  if (identity === this.hdrContentKey()) this.hdrOpaquePageKey = identity
+                },
                 onClear: (identity: string): void => {
                   if (this.hdrReadyPageKey === identity) this.hdrReadyPageKey = ''
+                  if (this.hdrOpaquePageKey === identity) this.hdrOpaquePageKey = ''
                 },
               })
                 .width(this.renderWidth() / this.cropRegion.width)

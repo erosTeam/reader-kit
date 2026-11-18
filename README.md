@@ -33,9 +33,10 @@ semantics. Pixel buffer rows use `width * 4`, never native allocation stride.
 
 Reader HDR brightening is opt-in through `ReaderImageEffects`. Hosts own the
 settings and declare `ohos.permission.HDR_BRIGHTNESS`. The selected SDR page
-ramps to 1.5× after it has been displayed. The same logical page retains that
-brightness when its processed image replaces the original. The native original
-owns loading, geometry, media actions and fallback throughout. See the
+blends to a fixed 1.5× HDR image after it has been displayed. Keep the SDR image
+under the native opacity animation until the HDR image is opaque. The same
+logical page retains the blend when its processed image replaces the original.
+The native original owns loading, geometry, media actions and fallback throughout. See the
 [shared HDR image](reader-ui/src/main/ets/ReaderHdrImage.ets).
 
 Before a product edit, recover the existing user behavior independently of the
