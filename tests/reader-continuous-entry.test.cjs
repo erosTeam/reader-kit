@@ -631,6 +631,20 @@ test('loading, replacing and failed frames always reach the Cell with current by
     assert.equal(after.frames[0].asset.loadProgressLoaded, 100)
   }
 })
+test('a short-image download updates its cell without rebuilding another unchanged loading cell', () => {
+  const bound = continuousCellBinding(); bound.snapshot = continuousCellState()
+  const ongoing = bound.snapshot.window[0].frames[0]
+  ongoing.asset.phase = 'asset'; ongoing.asset.assetRequestId = 0
+  const other = new core.ReaderPagedFrame(ongoing.slotId + 10, ongoing.part, ongoing.asset, ongoing.crop)
+  bound.snapshot.window.push(new core.ReaderPagedItemSnapshot('other', 0, [other]))
+  const unchanged = bound.project('selected'), changed = bound.project('other')
+  bound.snapshot = copyContinuousCellState(bound.snapshot)
+  bound.snapshot.window[1].frames[0].asset.loadProgressLoaded = 400
+  bound.snapshot.window[1].frames[0].asset.loadProgressTotal = 2000
+  assert.equal(bound.project('selected'), unchanged)
+  assert.notEqual(bound.project('other'), changed)
+  assert.equal(bound.project('other').frames[0].asset.loadProgressLoaded, 400)
+})
 test('a changed settled image identity, geometry, crop or navigation never reuses the prior Cell input', () => {
   for (const change of [s => { s.navigationRevision++ }, s => { s.topologyRevision++ },
     s => { s.window[0].frames[0].slotId++ }, s => { s.window[0].frames[0].asset.uri = 'fresh' },
