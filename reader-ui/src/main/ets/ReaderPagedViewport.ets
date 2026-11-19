@@ -839,7 +839,7 @@ struct ReaderPagedCell {
   }
 }
 
-type ReaderPagedDecode = 'default' | 'fit' | 'original'
+export type ReaderPagedDecode = 'default' | 'fit' | 'original'
 
 class ReaderImageDecodeModifier implements AttributeModifier<ImageAttribute> {
   static readonly defaultDecode = new ReaderImageDecodeModifier('default')
@@ -871,6 +871,7 @@ export struct ReaderPagedImage {
   @Param hdrWaitForSelection: boolean = false
   @Param hdrMayStart: boolean = false
   @Param fitDecodeToContent: boolean = false
+  @Param fitContinuousEnhancement: boolean = false
   @Param quarantineOriginal: boolean = false
   @Param guardUndecodedOriginal: boolean = false
   @Param alignGeometryBeforeVisible: boolean = false
@@ -1383,16 +1384,21 @@ export struct ReaderPagedImage {
     if (this.pagedDecode === 'original') return ReaderImageDecodeModifier.original
     const frame = this.frame
     const size = frame.asset.pixelSize
-    if (!this.fitDecodeToContent || size === null || this.rotateClockwise ||
-      frame.part.fragment !== 'whole' || frame.crop.applied() ||
-      !Number.isFinite(size.width) || !Number.isFinite(size.height) || size.width <= 0 || size.height <= 0) {
+    if (size === null || !Number.isFinite(size.width) || !Number.isFinite(size.height) ||
+      size.width <= 0 || size.height <= 0 || (!this.fitContinuousEnhancement &&
+      (!this.fitDecodeToContent || this.rotateClockwise || frame.part.fragment !== 'whole' || frame.crop.applied()))) {
       return ReaderImageDecodeModifier.fit
     }
     // Single whole pages can start in a viewport-sized fallback before their
     // catalog geometry settles. Choose a decode level for the visible pixels,
     // using the actual asset size even on the first layout of an enhancement.
     const pixelUnit = this.getUIContext().px2vp(1)
-    const fitScale = Math.min(this.renderWidth() / size.width, this.renderHeight() / size.height) / pixelUnit
+    // Fit the full image behind a cropped List row. renderWidth/renderHeight
+    // are already in the image's axes when that row is rotated.
+    const region = frame.crop.region(frame.part)
+    const decodeWidth = this.renderWidth() / region.width
+    const decodeHeight = this.renderHeight() / region.height
+    const fitScale = Math.min(decodeWidth / size.width, decodeHeight / size.height) / pixelUnit
     if (fitScale <= 0 || fitScale > 0.5) return ReaderImageDecodeModifier.fit
     let level = 0.5
     while (level / 2 >= fitScale) level /= 2
