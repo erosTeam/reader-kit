@@ -1,6 +1,6 @@
 import { ReaderImageEffects, ReaderImageEffectsLayer } from './ReaderImageEffects'
 import { ReaderPagedFrame, ReaderFragment, ReaderViewportGeometry, ReaderViewportTransform } from '@reader-kit/core'
-import { ReaderPagedImage } from './ReaderPagedViewport'
+import { ReaderPagedDecode, ReaderPagedImage } from './ReaderPagedViewport'
 import { ReaderTapSequence } from './ReaderTapSequence'
 import { ReaderTapArbiter, ReaderTapPoint } from './ReaderTapArbiter'
 import { ReaderEntryTransition } from './ReaderEntryTransition'
@@ -109,6 +109,13 @@ export struct ReaderContinuousZoomImage {
     return this.active && this.interactionAllowed && this.componentWidth > 1
   }
   private presentedFrame(): ReaderPagedFrame { return this.retainedFrameValue ?? this.frame }
+
+  private decodeMode(frame: ReaderPagedFrame): ReaderPagedDecode {
+    // The enhancement file stays intact. At reading scale each List row only
+    // needs its visible pixel density; zoom asks the same Image for all pixels.
+    if (frame.asset.variant !== 'enhanced' || frame.asset.pixelSize === null) return 'default'
+    return this.imageTransform.zoomed() ? 'original' : 'fit'
+  }
 
   private canInteract(): boolean {
     return this.active && this.interactionAllowed && this.frame.asset.phase === 'displayed' && this.componentWidth > 1
@@ -244,6 +251,7 @@ export struct ReaderContinuousZoomImage {
     Stack() {
       ReaderPagedImage({
         imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
+        pagedDecode: this.decodeMode(this.presentedFrame()), fitContinuousEnhancement: true,
         hdrPreserveSourceResolution: this.imageTransform.zoomed(),
         frame: this.presentedFrame(), slotId: this.frame.slotId, assetRequestId: this.presentedFrame().asset.assetRequestId,
         allocatedWidth: this.componentWidth, allocatedHeight: this.imageHeight,
@@ -269,6 +277,7 @@ export struct ReaderContinuousZoomImage {
       if (this.retainedFrameValue !== null) {
         ReaderPagedImage({
           imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
+          pagedDecode: this.decodeMode(this.frame), fitContinuousEnhancement: true,
           hdrWaitForSelection: true,
           frame: this.frame, slotId: this.frame.slotId, assetRequestId: this.frame.asset.assetRequestId,
           allocatedWidth: this.componentWidth, allocatedHeight: this.imageHeight,
