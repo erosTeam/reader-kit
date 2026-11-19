@@ -1,4 +1,4 @@
-import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderPage, ReaderUnit } from '@reader-kit/core'
+import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderPage, ReaderUnit, ReaderImagePixelSize } from '@reader-kit/core'
 
 /** Render-only cell input. Selection, observations and resource leases stay in Core. */
 export class ReaderContinuousCellSnapshot {
@@ -34,20 +34,45 @@ function samePage(left: ReaderPage | null, right: ReaderPage | null): boolean {
 
 function settledOriginal(frame: ReaderPagedFrame): boolean {
   const asset = frame.asset
-  return !frame.cropPending && asset.phase === 'displayed' && asset.kind === 'original' &&
-    asset.assetRequestId > 0 && asset.requestId === asset.assetRequestId && asset.retainedUri.length === 0 &&
+  return plainOriginal(frame) && asset.phase === 'displayed' &&
+    asset.assetRequestId > 0 && asset.requestId === asset.assetRequestId
+}
+
+function plainOriginal(frame: ReaderPagedFrame): boolean {
+  const asset = frame.asset
+  return !frame.cropPending && asset.kind === 'original' && asset.retainedUri.length === 0 &&
     asset.retainedAssetRequestId === 0 && asset.failure === null && asset.notice === null && asset.error.length === 0
 }
 
+function loadingOriginal(frame: ReaderPagedFrame): boolean {
+  const asset = frame.asset
+  return plainOriginal(frame) && (asset.phase === 'asset' || asset.phase === 'decoding') && asset.presentedAnchor === null
+}
+
+function samePixelSize(left: ReaderImagePixelSize | null, right: ReaderImagePixelSize | null): boolean {
+  if (left === null || right === null) return left === right
+  return left.width === right.width && left.height === right.height
+}
+
 export function sameSettledOriginal(left: ReaderPagedFrame, right: ReaderPagedFrame): boolean {
-  if (!settledOriginal(left) || !settledOriginal(right)) return false
+  return settledOriginal(left) && settledOriginal(right) && sameOriginalInputs(left, right)
+}
+
+function sameContinuousOriginal(left: ReaderPagedFrame, right: ReaderPagedFrame): boolean {
+  return sameSettledOriginal(left, right) ||
+    (loadingOriginal(left) && loadingOriginal(right) && sameOriginalInputs(left, right))
+}
+
+function sameOriginalInputs(left: ReaderPagedFrame, right: ReaderPagedFrame): boolean {
   const a = left.asset
   const b = right.asset
   return left.slotId === right.slotId && left.part.unit.equals(right.part.unit) &&
     left.part.pageKey === right.part.pageKey && left.part.sourceIndex === right.part.sourceIndex &&
     left.part.fragment === right.part.fragment && left.crop.left === right.crop.left &&
     left.crop.top === right.crop.top && left.crop.right === right.crop.right && left.crop.bottom === right.crop.bottom &&
-    a.sourceIndex === b.sourceIndex && a.requestId === b.requestId && a.assetRequestId === b.assetRequestId &&
+    a.phase === b.phase && a.sourceIndex === b.sourceIndex &&
+    a.requestId === b.requestId && a.assetRequestId === b.assetRequestId && a.presentedRequestId === b.presentedRequestId &&
+    samePixelSize(a.pixelSize, b.pixelSize) &&
     a.uri === b.uri && a.saveUri === b.saveUri && a.variant === b.variant && a.variantIdentity === b.variantIdentity &&
     a.visualRevision === b.visualRevision && a.originalAvailable === b.originalAvailable &&
     a.informationAvailable === b.informationAvailable && a.loadProgressLoaded === b.loadProgressLoaded &&
@@ -73,9 +98,10 @@ export class ReaderContinuousCellSnapshots {
     if (allowReuse && previous !== undefined && previous.topologyRevision === snapshot.topologyRevision &&
       previous.navigationRevision === snapshot.navigationRevision && previous.displayIndex === snapshot.displayKeys.indexOf(key) &&
       ((previous.frames.length === 0 && frames.length === 0) ||
-      (previous.frames.length === 1 && frames.length === 1 && sameSettledOriginal(previous.frames[0], frames[0])))) return previous
-    // Pending entry/loading/replacement/failure inputs always keep their current
-    // snapshot. Reuse cannot retire feedback or revive an earlier request.
+      (previous.frames.length === 1 && frames.length === 1 && sameContinuousOriginal(previous.frames[0], frames[0])))) return previous
+    // Keep an unchanged loading row independent of downloads in other rows.
+    // A changed epoch, byte count, geometry or decoded asset gets a new input.
+    // Entry handoff and retained replacements/failures still consume every receipt.
     const value = new ReaderContinuousCellSnapshot(snapshot, key, frames)
     this.values.set(key, value)
     return value
