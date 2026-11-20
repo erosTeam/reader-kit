@@ -43,10 +43,11 @@ async function releaseHdrPage(page: image.PixelMap): Promise<void> {
 interface ReaderHdrPage {
   readonly pixels: image.PixelMap
   readonly reduced: boolean
+  readonly overBudget: boolean
 }
 
 async function decodeReaderHdrPage(path: string, preserveSourceResolution: boolean,
-  current: () => boolean): Promise<ReaderHdrPage | undefined> {
+  continuousPreviewScale: number, current: () => boolean): Promise<ReaderHdrPage | undefined> {
   let source: image.ImageSource | undefined
   let page: image.PixelMap | undefined
   try {
@@ -55,14 +56,16 @@ async function decodeReaderHdrPage(path: string, preserveSourceResolution: boole
     const size = info.size
     if (!current() || info.isHdr || size.width <= 0 || size.height <= 0) return
     const pixels = size.width * size.height
-    const reduced = pixels > MAX_HDR_PAGE_PIXELS
-    // A super-resolution result can exceed the HDR budget even for a normal
-    // page. Use a bounded HDR preview at reading scale and keep the native
-    // full-resolution image when the reader requests original pixels for zoom.
-    if ((reduced && preserveSourceResolution) || await source.getFrameCount() !== 1 || !current()) return
+    const overBudget = pixels > MAX_HDR_PAGE_PIXELS
+    if ((overBudget && preserveSourceResolution) || await source.getFrameCount() !== 1 || !current()) return
     const options: image.DecodingOptions = { desiredDynamicRange: image.DecodingDynamicRange.HDR }
+    // A fitted enhanced webtoon row already has a decode tier for its visible
+    // pixels. Use the same tier for the HDR overlay to bound both buffers.
+    // Zoom keeps the original resolution or uses the existing native fallback.
+    const budgetScale = overBudget ? Math.sqrt(MAX_HDR_PAGE_PIXELS / pixels) : 1
+    const scale = preserveSourceResolution ? 1 : Math.min(budgetScale, continuousPreviewScale)
+    const reduced = scale < 1
     if (reduced) {
-      const scale = Math.sqrt(MAX_HDR_PAGE_PIXELS / pixels)
       options.desiredSize = {
         width: Math.max(1, Math.floor(size.width * scale)),
         height: Math.max(1, Math.floor(size.height * scale)),
@@ -71,7 +74,7 @@ async function decodeReaderHdrPage(path: string, preserveSourceResolution: boole
     page = await source.createPixelMap(options)
     const decoded = page.getImageInfoSync()
     if (!decoded.isHdr || decoded.size.width * decoded.size.height > MAX_HDR_PAGE_PIXELS || !current()) return
-    const result: ReaderHdrPage = { pixels: page, reduced }
+    const result: ReaderHdrPage = { pixels: page, reduced, overBudget }
     page = undefined
     return result
   } catch (_) {
@@ -89,6 +92,7 @@ export struct ReaderHdrImage {
   @Require @Param identity: string
   @Require @Param logicalPageKey: string
   @Param preserveSourceResolution: boolean = false
+  @Param continuousPreviewScale: number = 1
   @Param imageFit: ImageFit = ImageFit.Contain
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
   @Event onReady: (identity: string) => void = () => {}
@@ -99,6 +103,8 @@ export struct ReaderHdrImage {
   private acceptedAssetIdentity: string = ''
   private retiredPixels?: image.PixelMap = undefined
   private pageReduced: boolean = false
+  private pageOverBudget: boolean = false
+  private acceptedPreviewScale: number = 1
   private generation: number = 0
   private mounted: boolean = false
   @Local private blendOpacity: number = 0
@@ -117,10 +123,10 @@ export struct ReaderHdrImage {
     this.clear()
   }
 
-  @Monitor('logicalPageKey', 'identity', 'preserveSourceResolution')
+  @Monitor('logicalPageKey', 'identity', 'preserveSourceResolution', 'continuousPreviewScale')
   onOriginalChanged(): void {
     if (this.page !== undefined && this.displayedPageKey === this.logicalPageKey && this.acceptedAssetIdentity === this.identity &&
-      (!this.preserveSourceResolution || !this.pageReduced)) return
+      (!this.pageReduced || (!this.preserveSourceResolution && this.continuousPreviewScale <= this.acceptedPreviewScale))) return
     this.prepare()
   }
 
@@ -131,6 +137,7 @@ export struct ReaderHdrImage {
     this.displayedPageKey = ''
     this.acceptedAssetIdentity = ''
     this.pageReduced = false
+    this.pageOverBudget = false
     this.rampEpoch++
     this.rampStarted = false
     this.blendOpacity = 0
@@ -171,7 +178,10 @@ export struct ReaderHdrImage {
     const generation = ++this.generation
     const key = this.logicalPageKey
     const preserveSourceResolution = this.preserveSourceResolution
-    if (key !== this.displayedPageKey || (preserveSourceResolution && this.pageReduced)) this.clear()
+    const previewScale = this.continuousPreviewScale
+    // Keep the current HDR blend while a fitted page requests full pixels.
+    // Oversized sources still hand zoom back to the full-resolution native image.
+    if (key !== this.displayedPageKey || (preserveSourceResolution && this.pageOverBudget)) this.clear()
     if (!this.mounted || !this.uri.startsWith('file:///')) {
       this.clear()
       return
@@ -179,7 +189,8 @@ export struct ReaderHdrImage {
     const path = this.uri.slice('file://'.length)
     const identity = this.identity
     const current = (): boolean => this.mounted && this.generation === generation && this.identity === identity &&
-      this.logicalPageKey === key && this.preserveSourceResolution === preserveSourceResolution
+      this.logicalPageKey === key && this.preserveSourceResolution === preserveSourceResolution &&
+      this.continuousPreviewScale === previewScale
     try {
       this.filter = readerHdrBrightnessFilter()
     } catch (_) {
@@ -187,7 +198,7 @@ export struct ReaderHdrImage {
     }
     hdrDecodeTail = hdrDecodeTail.then(async (): Promise<void> => {
       if (!current()) return
-      const result = await decodeReaderHdrPage(path, preserveSourceResolution, current)
+      const result = await decodeReaderHdrPage(path, preserveSourceResolution, previewScale, current)
       if (result === undefined) {
         if (current()) this.clear()
         return
@@ -201,6 +212,8 @@ export struct ReaderHdrImage {
       this.displayedPageKey = key
       this.acceptedAssetIdentity = identity
       this.pageReduced = result.reduced
+      this.pageOverBudget = result.overBudget
+      this.acceptedPreviewScale = previewScale
       this.page = result.pixels
     })
   }

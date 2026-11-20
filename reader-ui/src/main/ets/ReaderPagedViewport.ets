@@ -849,9 +849,13 @@ class ReaderImageDecodeModifier implements AttributeModifier<ImageAttribute> {
   private readonly mode: ReaderPagedDecode
   private readonly sourceSize: ImageSourceSize
 
-  constructor(mode: ReaderPagedDecode, width: number = 0, height: number = 0) {
+  readonly continuousPreviewScale: number
+
+  constructor(mode: ReaderPagedDecode, width: number = 0, height: number = 0,
+    continuousPreviewScale: number = 1) {
     this.mode = mode
     this.sourceSize = { width, height }
+    this.continuousPreviewScale = continuousPreviewScale
   }
 
   applyNormalAttribute(attribute: ImageAttribute): void {
@@ -1407,7 +1411,8 @@ export struct ReaderPagedImage {
     // density instead of falling back to full-size just above half resolution.
     let level = fitScale > 0.5 ? Math.ceil(fitScale * 8) / 8 : 0.5
     while (level / 2 >= fitScale) level /= 2
-    return new ReaderImageDecodeModifier('fit', size.width * level * pixelUnit, size.height * level * pixelUnit)
+    return new ReaderImageDecodeModifier('fit', size.width * level * pixelUnit, size.height * level * pixelUnit,
+      continuous ? level : 1)
   }
 
   build() {
@@ -1468,6 +1473,7 @@ export struct ReaderPagedImage {
               ReaderHdrImage({
                 uri: this.frame.asset.uri, identity: this.drawableIdentity(), logicalPageKey: this.hdrContentKey(),
                 preserveSourceResolution: this.pagedDecode === 'original' || this.hdrPreserveSourceResolution,
+                continuousPreviewScale: this.decodeModifier.continuousPreviewScale,
                 imageFit: this.frame.part.fragment !== 'whole' || this.frame.crop.applied() ? ImageFit.Fill : ImageFit.Contain,
                 imageInterpolation: this.imageInterpolation,
                 onReady: (identity: string): void => {

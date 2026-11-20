@@ -155,7 +155,9 @@ The following are existing preservation requirements, not new feature work:
   this metadata does not retain distant native images or processing leases.
   At normal zoom, an enhanced row chooses its decode size from the measured
   List width and allocated row height, with enough source pixels for the
-  visible image. The same native image can request full resolution for zoom.
+  visible image. The HDR overlay uses that same decode tier at reading scale.
+  Zoom requests full resolution and keeps the native image as fallback when
+  the full HDR overlay exceeds its existing pixel budget.
   Webtoon position follows measured page ends (falling back to the tall page
   crossing the viewport top); native decoded-pixel receipts still gate progress.
   An explicit seek retains its selected visible page until user scrolling takes over.
