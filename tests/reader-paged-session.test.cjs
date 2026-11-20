@@ -1991,6 +1991,58 @@ test('a continuous edge swipe survives a pending catalog and moves before the ne
 })
 
 
+test('a continuous tail reserves the next first row without selecting or loading a fictitious page', async () => {
+  const { session, key, catalog, calls } = setup({ count: 5 })
+  const open = catalog.open
+  const successor = new ReaderUnitKey('source', 'work', 'B')
+  const successorRow = JSON.stringify(['source', 'work', 'B', 0])
+  let fail, finish, attempts = 0
+  catalog.open = (target) => {
+    if (!target.equals(successor)) return open(target)
+    attempts++
+    return new Promise((resolve, reject) => {
+      fail = () => reject(new Error('sample catalog failure'))
+      finish = () => resolve(new ReaderUnit(successor, 'B', 5))
+    })
+  }
+  session.setPolicy(policy({ layout: 'continuous' }))
+  await session.open(key); await tick()
+  let state = session.snapshot()
+  const { topologyRevision: topology, navigationRevision: navigation } = state
+  assert.equal(state.continuousContinuationKey, successorRow)
+  assert.equal(state.displayKeys.length, 5)
+  assert.equal(attempts, 0, 'the reserved row does not start a far-away catalog request')
+  assert.equal(session.setContinuousRange(3, 5, topology, navigation), false, 'the reserved row is not observable')
+  const adjacent = catalog.adjacent
+  catalog.adjacent = () => null
+  session.refreshAdjacency()
+  assert.equal(session.setContinuousRange(3, 4, topology, navigation), true)
+  assert.equal(attempts, 0)
+  catalog.adjacent = adjacent
+  session.refreshAdjacency()
+  await tick()
+  assert.equal(attempts, 1)
+  assert.equal(calls.load.some(call => call[0].startsWith('B-')), false)
+  fail(); await tick()
+  state = session.snapshot()
+  assert.equal(state.continuousContinuationKey, successorRow)
+  assert.equal(state.continuousContinuationFailed, true)
+  session.retryContinuousContinuation(successorRow, topology, navigation - 1)
+  assert.equal(attempts, 1)
+  session.retryContinuousContinuation(successorRow, topology, navigation)
+  assert.equal(attempts, 2)
+  assert.equal(session.snapshot().continuousContinuationFailed, false)
+  finish(); await tick()
+  state = session.snapshot()
+  assert.equal(state.continuousContinuationKey, '', 'there is no reserved row at the true end')
+  assert.equal(state.displayKeys[5], successorRow, 'the native row key survives its replacement')
+  assert.equal(state.navigationRevision, navigation, 'the catalog cannot jump the scroller')
+  assert.equal(state.unit.key.unit, 'A')
+  assert.equal(state.observedPosition(), null)
+  session.close()
+})
+
+
 test('continuous file processing spans five single-page units while native leases stay near the viewport', async () => {
   const { ReaderProcessingPolicy } = load('ReaderProcessingCoordinator')
   const { ReaderVariantPreference } = load('ReaderSession')

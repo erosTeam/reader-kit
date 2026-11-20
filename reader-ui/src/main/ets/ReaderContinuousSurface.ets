@@ -32,11 +32,14 @@ class ReaderContinuousIndexSource implements IDataSource {
   unregisterDataChangeListener(listener: DataChangeListener): void {
     this.listeners = this.listeners.filter((value: DataChangeListener): boolean => value !== listener)
   }
-  update(keys: string[]): void {
+  update(pages: string[], continuation: string): void {
     // Chapter extension changes only the ends. Never reload/remount the List;
     // ArkUI preserves its visible key/offset with add/delete notifications.
-    if (keys.length === this.keys.length && keys.every((key: string, index: number): boolean =>
+    const count = pages.length + (continuation.length > 0 ? 1 : 0)
+    if (count === this.keys.length && (continuation.length === 0 || this.keys[pages.length] === continuation) &&
+      pages.every((key: string, index: number): boolean =>
       key === this.keys[index])) return
+    const keys = continuation.length > 0 ? pages.concat(continuation) : pages
     const wanted = new Set<string>(keys)
     for (let index = this.keys.length - 1; index >= 0; index--) {
       if (wanted.has(this.keys[index])) continue
@@ -86,6 +89,7 @@ export struct ReaderContinuousSurface {
     async (_topology: number, _navigation: number, _key: string, _slot: number,
       _request: number, _noticeId: string): Promise<boolean> => false
   @Event onBoundary: ReaderContinuousBoundaryHandler = () => {}
+  @Event onContinuationRetry: (key: string, topology: number, navigation: number) => void = () => {}
 
   @Local private measuredViewportWidth: number = 0
 
@@ -107,6 +111,7 @@ export struct ReaderContinuousSurface {
               onInputLockChange: this.onInputLockChange,
               onZoomedChange: this.onZoomedChange,
               onBoundary: this.onBoundary,
+              onContinuationRetry: this.onContinuationRetry,
               onRange: this.onRange, onDecodedOriginal: this.onDecodedOriginal,
               onPresented: this.onPresented, onVisible: this.onVisible, onFailed: this.onFailed,
               onRetry: this.onRetry, onNoticeAction: this.onNoticeAction,
@@ -156,6 +161,7 @@ struct ReaderContinuousList {
     async (_topology: number, _navigation: number, _key: string, _slot: number,
       _request: number, _noticeId: string): Promise<boolean> => false
   @Event onBoundary: ReaderContinuousBoundaryHandler = () => {}
+  @Event onContinuationRetry: (key: string, topology: number, navigation: number) => void = () => {}
   private inputConnection: number = 0
   private source: ReaderContinuousIndexSource = new ReaderContinuousIndexSource([])
   private cellSnapshots: ReaderContinuousCellSnapshots = new ReaderContinuousCellSnapshots()
@@ -163,7 +169,7 @@ struct ReaderContinuousList {
   private nativeReady: Map<string, string> = new Map()
   @Local private viewWidth: number = 1
   @Local private entryAnchorKey: string = ''
-  private viewHeight: number = 1
+  @Local private viewHeight: number = 1
   @Local private fullyVisible: boolean = false
   private lastNavigation: number = -1
   @Local private pendingPosition: boolean = true
@@ -190,6 +196,8 @@ struct ReaderContinuousList {
   private boundaryTopology: number = -1
   private boundaryNavigation: number = -1
   private boundaryIntent: number = 0
+  private continuationAnchorKey: string = ''
+  private continuationAnchorTop: number = 0
 
   private handleBoundaryTouch(event: TouchEvent): void {
     if (!this.active || this.snapshot.phase !== 'ready' || event.touches.length > 1 ||
@@ -200,6 +208,7 @@ struct ReaderContinuousList {
     const point = event.changedTouches[0]
     if (event.type === TouchType.Down) {
       this.boundaryIntent += 1
+      if (this.continuationAnchorKey.length > 0) this.releasePosition()
       if (this.pendingPosition || this.positionInFlight || this.moving || this.lockedKey.length > 0) {
         this.boundarySwipe.cancel()
         return
@@ -208,7 +217,7 @@ struct ReaderContinuousList {
       let atEnd = false
       try {
         atStart = this.first === 0 && this.scroller.currentOffset().yOffset <= 0.5
-        atEnd = this.last + 1 >= this.snapshot.displayKeys.length && this.scroller.isAtEnd()
+        atEnd = this.last + 1 >= this.source.totalCount() && this.scroller.isAtEnd()
       } catch (_) {
         this.boundarySwipe.cancel()
         return
@@ -232,6 +241,7 @@ struct ReaderContinuousList {
   }
 
   private requestBoundary(direction: ReaderBoundaryDirection): void {
+    if (direction === 'next' && this.snapshot.continuousContinuationKey.length > 0) return
     const topology = this.createdRevision
     const navigation = this.snapshot.navigationRevision
     const intent = ++this.boundaryIntent
@@ -256,7 +266,7 @@ struct ReaderContinuousList {
     this.viewWidth = this.initialViewportWidth
 
     this.inputConnection = this.input?.connect((intent: ReaderMoveIntent): boolean => this.moveViewport(intent)) ?? 0
-    this.source = new ReaderContinuousIndexSource(this.snapshot.displayKeys)
+    this.source = new ReaderContinuousIndexSource(this.nativeKeys())
     this.lastNavigation = this.snapshot.navigationRevision
     this.first = this.snapshot.continuousIndex
     this.last = this.first
@@ -285,8 +295,21 @@ struct ReaderContinuousList {
   @Monitor('snapshot', 'active')
   onSnapshotChanged(): void {
     const positionedKey = this.positionTarget >= 0 ? this.source.getData(this.positionTarget) : ''
-    this.source.update(this.snapshot.displayKeys)
+    this.source.update(this.snapshot.displayKeys, this.snapshot.continuousContinuationKey)
     if (positionedKey.length > 0) this.positionTarget = this.snapshot.displayKeys.indexOf(positionedKey)
+    if (this.continuationAnchorKey.length > 0 && this.lastNavigation === this.snapshot.navigationRevision) {
+      const continued = this.snapshot.displayKeys.indexOf(this.continuationAnchorKey)
+      if (continued >= 0 && positionedKey !== this.continuationAnchorKey) {
+        // The fling has already landed here. Keep that physical row anchored
+        // while the catalog and late image dimensions replace estimates.
+        this.positionTarget = continued
+        this.positionX = 0.5
+        this.positionY = 0
+        this.invalidatePosition()
+      } else if (continued < 0 && this.continuationAnchorKey !== this.snapshot.continuousContinuationKey) {
+        this.continuationAnchorKey = ''
+      }
+    }
     const entryFrame = this.snapshot.frames.find((frame: ReaderPagedFrame): boolean =>
       this.entryTransition?.matches(frame.part) === true)
     if (entryFrame?.asset.phase === 'failed') this.entryTransition?.cancel()
@@ -343,6 +366,7 @@ struct ReaderContinuousList {
     if (this.lastNavigation !== this.snapshot.navigationRevision) {
       this.lastNavigation = this.snapshot.navigationRevision
       this.entryAnchorKey = ''
+      this.continuationAnchorKey = ''
       this.positionTarget = -1
       this.rowGeometry.clear()
       this.boundarySwipe.cancel()
@@ -378,7 +402,7 @@ struct ReaderContinuousList {
       this.createdRevision !== this.snapshot.topologyRevision || this.entryTransition?.blocksInput() ||
       !Number.isFinite(windowX) || !Number.isFinite(windowY)) return
     const frame = this.snapshot.forItem(key).frames[0]
-    if (frame === undefined) return
+    if (frame === undefined && key !== this.snapshot.continuousContinuationKey) return
     const navigation = this.snapshot.navigationRevision
     try {
       const context = this.getUIContext()
@@ -410,7 +434,7 @@ struct ReaderContinuousList {
       const previous = intent === 'previous'
       this.releasePosition()
       if ((previous && this.first === 0 && offset <= 0.5) ||
-        (!previous && this.last + 1 >= this.snapshot.displayKeys.length && this.scroller.isAtEnd())) {
+        (!previous && this.last + 1 >= this.source.totalCount() && this.scroller.isAtEnd())) {
         this.requestBoundary(intent)
       } else if (this.pageTurnAnimation) {
         this.scroller.scrollTo({ xOffset: 0,
@@ -564,6 +588,7 @@ struct ReaderContinuousList {
 
   private releasePosition(): void {
     this.entryAnchorKey = ''
+    this.continuationAnchorKey = ''
     this.positionTarget = -1
     this.positionEpoch += 1
     if (this.positionTimer !== 0) clearTimeout(this.positionTimer)
@@ -601,7 +626,8 @@ struct ReaderContinuousList {
       const width = this.viewWidth
       const height = this.imageHeight(index)
       const rowHeight = this.rowHeight(index)
-      const inset = (rowHeight - height) / 2
+      const anchorTop = this.continuationAnchorKey === this.snapshot.displayKeys[index] ? this.continuationAnchorTop : 0
+      const inset = (rowHeight - height) / 2 - anchorTop
       this.positionInFlight = true
       this.scroller.scrollToIndex(index, false, ScrollAlign.START,
         { extraOffset: LengthMetrics.vp(inset + height * y) })
@@ -652,7 +678,19 @@ struct ReaderContinuousList {
       if (hit >= 0) this.first = hit
       const endHit = this.scroller.getItemIndex(this.viewWidth / 2, Math.max(1, this.viewHeight - 1))
       if (endHit >= 0) this.last = endHit
-      const last = Math.max(this.first, this.last)
+      const continuation = this.snapshot.continuousContinuationKey
+      if (continuation.length > 0 && !this.moving && this.last === this.snapshot.displayKeys.length) {
+        const rect = this.scroller.getItemRect(this.last)
+        const center = this.viewHeight / 2
+        if (rect.height > 0 && rect.y <= center && rect.y + rect.height > center &&
+          this.continuationAnchorKey !== continuation) {
+          this.continuationAnchorKey = continuation
+          this.continuationAnchorTop = rect.y
+        }
+      }
+      // Only catalog-confirmed rows can select a page or report an observation.
+      const last = Math.min(Math.max(this.first, this.last), this.snapshot.displayKeys.length - 1)
+      if (this.first > last) return
       let first = this.measuredPosition(this.first, last)
       const target = this.positionTarget
       if (target >= this.first && target <= last) {
@@ -680,56 +718,87 @@ struct ReaderContinuousList {
     }, 0)
   }
 
+  private nativeKeys(): string[] {
+    const continuation = this.snapshot.continuousContinuationKey
+    return continuation.length > 0 ? this.snapshot.displayKeys.concat(continuation) : this.snapshot.displayKeys
+  }
+
+  @Builder
+  private Continuation(key: string) {
+    Stack() {
+      if (this.snapshot.continuousContinuationFailed) {
+        ReaderFailurePanel({
+          page: 1, catalog: true, compact: true, retryEnabled: this.active,
+          onRetry: (): void => {
+            this.onContinuationRetry(key, this.createdRevision, this.snapshot.navigationRevision)
+          },
+        })
+      } else {
+        ReaderLoadingStage({ label: $r('app.string.rkit_loading_resolving'), loadingInk: this.loadingInk })
+      }
+    // The trailing slot must be tall enough for the last real page to leave
+    // the viewport. A short slot would stop a fling with that page still on screen.
+    }.width('100%').height(Math.max(this.viewHeight, this.imageHeight(-1))).id('rkit-continuous-next-catalog')
+      .gesture(TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => {
+        const location = event?.tapLocation
+        if (location !== undefined) this.imageTap(key, location.windowX, location.windowY)
+      }))
+  }
+
   build() {
     List({ initialIndex: this.snapshot.continuousIndex, scroller: this.scroller,
       space: normalizedReaderPageGap(this.pageGap) }) {
       LazyForEach(this.source, (key: string) => {
         ListItem() {
-          ReaderContinuousCell({
-            imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects, loadingInk: this.loadingInk,
-            doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
-            snapshot: this.cellSnapshots.forItem(this.snapshot, key, this.entryTransition?.pending() !== true),
-            entryTransition: this.entryTransition,
-            entryPosition: this.entryPosition?.key === key ? this.entryPosition : null,
-            waitingForEntryAnchor: this.waitingForEntryAnchor(key),
-            active: this.active,
-            zoomResetCommand: this.zoomResetCommand?.topologyRevision === this.createdRevision ? this.zoomResetCommand : null,
-            onTap: (x: number, y: number): void => this.imageTap(key, x, y),
-            interactionAllowed: !this.pendingPosition && this.fullyVisible &&
-              (this.lockedKey.length === 0 || this.lockedKey === key),
-            onLock: (identity: string, locked: boolean): void => { this.onImageLock(key, identity, locked) },
-            onZoomedChange: (identity: string, zoomed: boolean): void => { this.onImageZoomed(key, identity, zoomed) },
-            imageWidth: this.viewWidth, imageHeight: this.imageHeight(this.snapshot.displayKeys.indexOf(key)),
-            rotateClockwise: this.rotates(this.snapshot.displayKeys.indexOf(key)),
-            onRetry: (slot: number, request: number): void => {
-              this.onRetry(this.createdRevision, key, slot, request)
-            },
-            onNoticeAction: (slot: number, request: number, noticeId: string): Promise<boolean> => {
-              return this.onNoticeAction(this.createdRevision, this.snapshot.navigationRevision,
-                key, slot, request, noticeId)
-            },
-            onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
-              const current = this.snapshot.window.find((item) => item.key === key)?.frames[0]
-              if (current === undefined || current.slotId !== slot || current.asset.assetRequestId !== request) return
-              if (!success) this.nativeReady.delete(key)
-              this.onPresented(slot, request, success, width, height)
-              this.scheduleMeasure()
-            },
-            onDecodedOriginal: (slot: number, request: number): void => {
-              const current = this.snapshot.window.find((item) => item.key === key)?.frames[0]
-              if (current === undefined || current.slotId !== slot || current.asset.assetRequestId !== request) return
-              this.onDecodedOriginal(slot, request)
-              this.nativeReady.set(key, `${slot}:${request}`)
-              this.scheduleMeasure()
-            },
-            onRetired: (slot: number, request: number): void => {
-              if (this.nativeReady.get(key) === `${slot}:${request}`) this.nativeReady.delete(key)
-            },
-            onFailed: (slot: number, request: number, fragment: ReaderFragment): void => {
-              if (this.nativeReady.get(key) === `${slot}:${request}`) this.nativeReady.delete(key)
-              this.onFailed(this.createdRevision, key, slot, request, fragment)
-            },
-          })
+          if (key === this.snapshot.continuousContinuationKey) {
+            this.Continuation(key)
+          } else {
+            ReaderContinuousCell({
+              imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects, loadingInk: this.loadingInk,
+              doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
+              snapshot: this.cellSnapshots.forItem(this.snapshot, key, this.entryTransition?.pending() !== true),
+              entryTransition: this.entryTransition,
+              entryPosition: this.entryPosition?.key === key ? this.entryPosition : null,
+              waitingForEntryAnchor: this.waitingForEntryAnchor(key),
+              active: this.active,
+              zoomResetCommand: this.zoomResetCommand?.topologyRevision === this.createdRevision ? this.zoomResetCommand : null,
+              onTap: (x: number, y: number): void => this.imageTap(key, x, y),
+              interactionAllowed: !this.pendingPosition && this.fullyVisible &&
+                (this.lockedKey.length === 0 || this.lockedKey === key),
+              onLock: (identity: string, locked: boolean): void => { this.onImageLock(key, identity, locked) },
+              onZoomedChange: (identity: string, zoomed: boolean): void => { this.onImageZoomed(key, identity, zoomed) },
+              imageWidth: this.viewWidth, imageHeight: this.imageHeight(this.snapshot.displayKeys.indexOf(key)),
+              rotateClockwise: this.rotates(this.snapshot.displayKeys.indexOf(key)),
+              onRetry: (slot: number, request: number): void => {
+                this.onRetry(this.createdRevision, key, slot, request)
+              },
+              onNoticeAction: (slot: number, request: number, noticeId: string): Promise<boolean> => {
+                return this.onNoticeAction(this.createdRevision, this.snapshot.navigationRevision,
+                  key, slot, request, noticeId)
+              },
+              onPresented: (slot: number, request: number, success: boolean, width: number, height: number): void => {
+                const current = this.snapshot.window.find((item) => item.key === key)?.frames[0]
+                if (current === undefined || current.slotId !== slot || current.asset.assetRequestId !== request) return
+                if (!success) this.nativeReady.delete(key)
+                this.onPresented(slot, request, success, width, height)
+                this.scheduleMeasure()
+              },
+              onDecodedOriginal: (slot: number, request: number): void => {
+                const current = this.snapshot.window.find((item) => item.key === key)?.frames[0]
+                if (current === undefined || current.slotId !== slot || current.asset.assetRequestId !== request) return
+                this.onDecodedOriginal(slot, request)
+                this.nativeReady.set(key, `${slot}:${request}`)
+                this.scheduleMeasure()
+              },
+              onRetired: (slot: number, request: number): void => {
+                if (this.nativeReady.get(key) === `${slot}:${request}`) this.nativeReady.delete(key)
+              },
+              onFailed: (slot: number, request: number, fragment: ReaderFragment): void => {
+                if (this.nativeReady.get(key) === `${slot}:${request}`) this.nativeReady.delete(key)
+                this.onFailed(this.createdRevision, key, slot, request, fragment)
+              },
+            })
+          }
         }
           .zIndex(this.lockedKey === key ? 1 : 0)
           .onAreaChange((_old: Area, area: Area): void => {
@@ -764,8 +833,8 @@ struct ReaderContinuousList {
       this.last = end
       this.scheduleMeasure()
     })
-    .onWillScroll((_offset: number, _state: ScrollState, _source: ScrollSource): void => {
-      this.releasePosition()
+    .onWillScroll((_offset: number, _state: ScrollState, source: ScrollSource): void => {
+      if (this.continuationAnchorKey.length === 0 || source !== ScrollSource.SCROLLER) this.releasePosition()
     })
     .onDidScroll((_offset: number, state: ScrollState): void => {
       if (!this.pendingPosition && !this.positionInFlight && state !== ScrollState.Idle) this.entryTransition?.cancel()

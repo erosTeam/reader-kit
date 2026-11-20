@@ -130,9 +130,12 @@ The following are existing preservation requirements, not new feature work:
   following unit's page list before the image budget crosses the boundary.
   A growing next-unit budget keeps its pending preparation alive. Only the
   configured page budget is spent on image warming.
-  In continuous reading, an explicit forward swipe at the native end can
-  continue when the adjacent catalog arrives if the viewport is still there.
-  The first row can show loading feedback. Only visible originals update progress.
+  In continuous reading the native list reserves one viewport of loading space
+  for a verified successor, even while its catalog is pending. It retains the first page's
+  key so catalog arrival can extend the list without a new gesture. After the
+  viewport settles in that row, its position survives late image measurements.
+  The reserved row never selects a page, leases an asset or updates progress.
+  Catalog failures can be retried in place.
   A host resolving legacy chapter chronology beside a readable page can call
   `refreshAdjacency()` to publish the resulting neighbors and resume lookahead;
   this must retain the current anchor, native topology and decoded images.

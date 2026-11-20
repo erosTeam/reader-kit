@@ -1084,6 +1084,9 @@ export struct ReaderSurface {
               edgeKey: string, stillAtEdge: () => boolean): void => {
               this.session.requestContinuousBoundary(topology, navigation, direction, edgeKey, stillAtEdge)
             },
+            onContinuationRetry: (key: string, topology: number, navigation: number): void => {
+              this.session.retryContinuousContinuation(key, topology, navigation)
+            },
             onTap: (x: number, y: number): ReaderTapAction => this.pageTap(x, y),
             onRange: (start: number, end: number, topology: number, navigation: number, position?: number): void => {
               this.session.setContinuousRange(start, end, topology, navigation, position)

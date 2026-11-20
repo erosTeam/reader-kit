@@ -154,6 +154,9 @@ export class ReaderPagedSnapshot {
   continuousIndex: number = 0
   continuousPages: Array<ReaderPage | null> = []
   continuousCrops: ReaderImageCropBounds[] = []
+  /** Native-only tail row. Its key becomes the real first page when the catalog arrives. */
+  continuousContinuationKey: string = ''
+  continuousContinuationFailed: boolean = false
 
   continuousPage(index: number): ReaderPage | null {
     return this.continuousPages[index]?.copy() ?? null
@@ -276,14 +279,17 @@ class ReaderWindowUnit {
   }
 }
 
+function readerContinuousRowKey(unit: ReaderUnitKey, index: number): string {
+  return JSON.stringify([unit.scope, unit.work, unit.unit, index])
+}
+
 class ReaderContinuousRow {
   context: ReaderWindowUnit
   index: number
   key: string
   constructor(context: ReaderWindowUnit, index: number) {
     this.context = context; this.index = index
-    const key = context.unit.key
-    this.key = JSON.stringify([key.scope, key.work, key.unit, index])
+    this.key = readerContinuousRowKey(context.unit.key, index)
   }
 }
 
@@ -331,6 +337,8 @@ export class ReaderPagedSession {
   private continuousProcessingUnits: ReaderWindowUnit[] = []
   private continuousCatalogTasks: Map<string, Promise<boolean>> = new Map()
   private continuousCatalogCancellation: ReaderCancellation = new ReaderCancellation()
+  private continuousContinuation: ReaderUnitKey | null = null
+  private continuousContinuationFailed: boolean = false
   private reconcileDepth: number = 0
   /** Requested native window plus at most one already-leased reverse edge. */
   private resourceWindowIndexes: number[] = []
@@ -723,6 +731,11 @@ export class ReaderPagedSession {
         this.continuousRowCrop(row))
     }
     if (this.state.policy.layout === 'continuous') {
+      const continuation = this.continuousContinuation
+      if (continuation !== null) {
+        value.continuousContinuationKey = readerContinuousRowKey(continuation, 0)
+        value.continuousContinuationFailed = this.continuousContinuationFailed
+      }
       value.frames = this.framesAt(value.continuousIndex)
       value.window = this.resourceWindowIndexes.map((index: number) =>
         new ReaderPagedItemSnapshot(this.displayKeys[index], index, this.framesAt(index)))
@@ -1486,6 +1499,10 @@ export class ReaderPagedSession {
     if (this.disposed || this.state.phase !== 'ready' || this.state.unit === null) return
     this.state.canPreviousUnit = this.catalog.adjacent(this.state.unit.copy(), 'previous') !== null
     this.state.canNextUnit = this.catalog.adjacent(this.state.unit.copy(), 'next') !== null
+    if (this.state.policy.layout === 'continuous') {
+      this.updateContinuousContinuation()
+      this.prepareWindowAdjacent()
+    }
     this.nextUnitPreloadCancellation.cancel()
     this.nextUnitPreloadSignature = ''
     this.nextUnitPreloadDepth = -1
@@ -2191,6 +2208,18 @@ export class ReaderPagedSession {
       .filter((index: number): boolean => index >= 0)
     if (previousStart !== undefined) this.continuousStart = this.displayKeys.indexOf(previousStart)
     if (previousEnd !== undefined) this.continuousEnd = this.displayKeys.indexOf(previousEnd)
+    this.updateContinuousContinuation()
+  }
+
+  private updateContinuousContinuation(): void {
+    const tail = this.windowUnits[this.windowUnits.length - 1]
+    const next = tail === undefined ? null : this.catalog.adjacent(tail.unit.copy(), 'next')
+    const continuation = next !== null &&
+      !this.windowUnits.some((context: ReaderWindowUnit): boolean => context.unit.key.equals(next)) ? next : null
+    if (continuation === null || this.continuousContinuation?.equals(continuation) !== true) {
+      this.continuousContinuationFailed = false
+    }
+    this.continuousContinuation = continuation
   }
 
   private appendWindowUnit(unit: ReaderUnit, before: boolean = false): void {
@@ -2326,6 +2355,16 @@ export class ReaderPagedSession {
     })
   }
 
+  retryContinuousContinuation(key: string, topology: number, navigation: number): void {
+    const continuation = this.continuousContinuation
+    if (!this.active || this.state.phase !== 'ready' || this.state.policy.layout !== 'continuous' ||
+      topology !== this.topologyRevision || navigation !== this.navigationRevision || continuation === null ||
+      key !== readerContinuousRowKey(continuation, 0) || !this.continuousContinuationFailed) return
+    this.continuousContinuationFailed = false
+    void this.prepareContinuousAdjacent(continuation, 'next')
+    this.emit()
+  }
+
   private prepareContinuousAdjacent(key: ReaderUnitKey, direction: 'previous' | 'next'): Promise<boolean> {
     if (this.windowUnits.some((context: ReaderWindowUnit): boolean => context.unit.key.equals(key))) {
       return Promise.resolve(true)
@@ -2336,10 +2375,22 @@ export class ReaderPagedSession {
     const cancellation = this.continuousCatalogCancellation
     const task = this.catalog.open(key.copy(), cancellation).then((unit: ReaderUnit): boolean => {
       if (cancellation.isCancelled() || this.disposed || !unit.key.equals(key) || unit.pageCount < 1) return false
+      if (direction === 'next' && this.state.policy.layout === 'continuous' &&
+        this.continuousContinuation?.equals(key) !== true) {
+        return this.windowUnits.some((context: ReaderWindowUnit): boolean => context.unit.key.equals(key))
+      }
       this.appendWindowUnit(unit, direction === 'previous')
       return true
-    }).catch((): boolean => false).finally((): void => {
-      if (this.continuousCatalogCancellation === cancellation) this.continuousCatalogTasks.delete(id)
+    }).catch((): boolean => false).then((ready: boolean): boolean => {
+      if (this.continuousCatalogCancellation === cancellation) {
+        this.continuousCatalogTasks.delete(id)
+        if (!ready && this.state.policy.layout === 'continuous' && direction === 'next' &&
+          this.continuousContinuation?.equals(key) === true) {
+          this.continuousContinuationFailed = true
+          this.emit()
+        }
+      }
+      return ready
     })
     this.continuousCatalogTasks.set(id, task)
     return task
@@ -2358,7 +2409,10 @@ export class ReaderPagedSession {
     const count = this.state.policy.layout === 'continuous' ? this.continuousRows.length : this.pagerRows.length
     const visibleEnd = Math.max(selected, this.continuousEnd)
     if (this.state.policy.layout === 'continuous' && count - visibleEnd <= Math.max(2, this.preloadDepth + 1)) {
-      prepare(this.windowUnits[this.windowUnits.length - 1], 'next')
+      const continuation = this.continuousContinuation
+      if (continuation !== null && !this.continuousContinuationFailed) {
+        void this.prepareContinuousAdjacent(continuation, 'next')
+      }
     }
   }
 
@@ -2409,6 +2463,8 @@ export class ReaderPagedSession {
     this.continuousCatalogCancellation.cancel()
     this.continuousCatalogCancellation = new ReaderCancellation()
     this.continuousCatalogTasks.clear()
+    this.continuousContinuation = null
+    this.continuousContinuationFailed = false
     this.windowUnits.forEach((context: ReaderWindowUnit): void => {
       if (context.processing !== this.processing && context.processing !== keep) context.processing.clear()
     })

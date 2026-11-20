@@ -45,6 +45,7 @@ const List = evaluate(`export class List { ${methods('ReaderContinuousSurface', 
 function listFixture(ListType = List) {
   const f = fixture(), list = new ListType(), frames = []
   Object.assign(list, { snapshot: f.state, entryTransition: f.transition, entryPosition: null, entryAnchorKey: '',
+    continuationAnchorKey: '', continuationAnchorTop: 0,
     // This harness extracts methods rather than constructing the ArkUI struct.
     // The single-chapter source still needs its List data interface.
     source: { getData: index => f.state.displayKeys[index], update() {} },

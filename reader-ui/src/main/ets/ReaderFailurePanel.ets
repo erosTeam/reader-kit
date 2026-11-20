@@ -6,6 +6,7 @@ export struct ReaderFailurePanel {
   @Require @Param page: number
   @Param failure: ReaderAssetFailure | null = null
   @Param compact: boolean = false
+  @Param catalog: boolean = false
   @Param retryEnabled: boolean = true
   @Event onRetry: () => void = () => {}
 
@@ -15,16 +16,18 @@ export struct ReaderFailurePanel {
         .fontSize(this.compact ? 28 : 36)
         .fontColor([$r('sys.color.font_primary')])
       Text(this.failure !== null && this.failure.title.length > 0
-        ? this.failure.title : $r('app.string.rkit_image_failed'))
+        ? this.failure.title : this.catalog ? $r('app.string.rkit_catalog_failed') : $r('app.string.rkit_image_failed'))
         .fontSize(14).fontColor($r('sys.color.font_primary'))
         .fontWeight(FontWeight.Medium).textAlign(TextAlign.Center).maxLines(2)
-      Text(this.failure !== null && this.failure.hint.length > 0
-        ? this.failure.hint : $r('app.string.rkit_image_retry_hint'))
-        .fontSize(12).fontColor($r('sys.color.font_secondary'))
-        .textAlign(TextAlign.Center).maxLines(2)
-      Text(`P${this.page}`)
-        .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-        .textAlign(TextAlign.Center).maxLines(1)
+      if (!this.catalog) {
+        Text(this.failure !== null && this.failure.hint.length > 0
+          ? this.failure.hint : $r('app.string.rkit_image_retry_hint'))
+          .fontSize(12).fontColor($r('sys.color.font_secondary'))
+          .textAlign(TextAlign.Center).maxLines(2)
+        Text(`P${this.page}`)
+          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+          .textAlign(TextAlign.Center).maxLines(1)
+      }
       Button($r('app.string.rkit_retry'))
         .type(ButtonType.Capsule).height(40)
         .constraintSize({ minWidth: 120 })
