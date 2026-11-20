@@ -153,6 +153,9 @@ The following are existing preservation requirements, not new feature work:
   Discovered row identities and geometry stay for that reading session: deleting
   unmeasured rows before the viewport changes ArkUI's offset estimate. Retaining
   this metadata does not retain distant native images or processing leases.
+  At normal zoom, an enhanced row chooses its decode size from the measured
+  List width and allocated row height, with enough source pixels for the
+  visible image. The same native image can request full resolution for zoom.
   Webtoon position follows measured page ends (falling back to the tall page
   crossing the viewport top); native decoded-pixel receipts still gate progress.
   An explicit seek retains its selected visible page until user scrolling takes over.

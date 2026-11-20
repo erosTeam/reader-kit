@@ -673,7 +673,7 @@ struct ReaderContinuousList {
               (this.lockedKey.length === 0 || this.lockedKey === key),
             onLock: (identity: string, locked: boolean): void => { this.onImageLock(key, identity, locked) },
             onZoomedChange: (identity: string, zoomed: boolean): void => { this.onImageZoomed(key, identity, zoomed) },
-            imageHeight: this.imageHeight(this.snapshot.displayKeys.indexOf(key)),
+            imageWidth: this.viewWidth, imageHeight: this.imageHeight(this.snapshot.displayKeys.indexOf(key)),
             rotateClockwise: this.rotates(this.snapshot.displayKeys.indexOf(key)),
             onRetry: (slot: number, request: number): void => {
               this.onRetry(this.createdRevision, key, slot, request)
@@ -766,6 +766,7 @@ struct ReaderContinuousCell {
   @Param entryPosition: ReaderContinuousEntryPosition | null = null
   @Param waitingForEntryAnchor: boolean = false
   @Require @Param snapshot: ReaderContinuousCellSnapshot
+  @Require @Param imageWidth: number
   @Require @Param imageHeight: number
   @Param rotateClockwise: boolean = false
   @Require @Param active: boolean
@@ -901,7 +902,8 @@ struct ReaderContinuousCell {
             doubleTapEnabled: this.doubleTapEnabled, doubleTapIntervalMs: this.doubleTapIntervalMs,
             frame: this.snapshot.frames[0], navigation: this.snapshot.navigationRevision,
             entryTransition: this.entryTransition, entryPosition: this.entryPosition,
-            imageHeight: this.imageHeight, active: this.active, interactionAllowed: this.interactionAllowed,
+            imageWidth: this.imageWidth, imageHeight: this.imageHeight,
+            active: this.active, interactionAllowed: this.interactionAllowed,
             zoomResetCommand: this.zoomResetCommand,
             rotateClockwise: this.rotateClockwise,
             onLock: this.onLock,

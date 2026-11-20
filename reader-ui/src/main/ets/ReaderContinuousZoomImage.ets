@@ -19,6 +19,7 @@ export struct ReaderContinuousZoomImage {
   @Param entryPosition: ReaderContinuousEntryPosition | null = null
   @Require @Param frame: ReaderPagedFrame
   @Require @Param navigation: number
+  @Require @Param imageWidth: number
   @Require @Param imageHeight: number
   @Param rotateClockwise: boolean = false
   @Require @Param active: boolean
@@ -251,7 +252,7 @@ export struct ReaderContinuousZoomImage {
     Stack() {
       ReaderPagedImage({
         imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
-        pagedDecode: this.decodeMode(this.presentedFrame()), fitContinuousEnhancement: true,
+        pagedDecode: this.decodeMode(this.presentedFrame()), continuousDecodeWidth: this.imageWidth,
         hdrPreserveSourceResolution: this.imageTransform.zoomed(),
         frame: this.presentedFrame(), slotId: this.frame.slotId, assetRequestId: this.presentedFrame().asset.assetRequestId,
         allocatedWidth: this.componentWidth, allocatedHeight: this.imageHeight,
@@ -277,7 +278,7 @@ export struct ReaderContinuousZoomImage {
       if (this.retainedFrameValue !== null) {
         ReaderPagedImage({
           imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects,
-          pagedDecode: this.decodeMode(this.frame), fitContinuousEnhancement: true,
+          pagedDecode: this.decodeMode(this.frame), continuousDecodeWidth: this.imageWidth,
           hdrWaitForSelection: true,
           frame: this.frame, slotId: this.frame.slotId, assetRequestId: this.frame.asset.assetRequestId,
           allocatedWidth: this.componentWidth, allocatedHeight: this.imageHeight,

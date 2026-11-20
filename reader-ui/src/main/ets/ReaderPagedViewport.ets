@@ -871,7 +871,7 @@ export struct ReaderPagedImage {
   @Param hdrWaitForSelection: boolean = false
   @Param hdrMayStart: boolean = false
   @Param fitDecodeToContent: boolean = false
-  @Param fitContinuousEnhancement: boolean = false
+  @Param continuousDecodeWidth: number = 0
   @Param quarantineOriginal: boolean = false
   @Param guardUndecodedOriginal: boolean = false
   @Param alignGeometryBeforeVisible: boolean = false
@@ -1384,8 +1384,9 @@ export struct ReaderPagedImage {
     if (this.pagedDecode === 'original') return ReaderImageDecodeModifier.original
     const frame = this.frame
     const size = frame.asset.pixelSize
+    const continuous = this.continuousDecodeWidth > 0
     if (size === null || !Number.isFinite(size.width) || !Number.isFinite(size.height) ||
-      size.width <= 0 || size.height <= 0 || (!this.fitContinuousEnhancement &&
+      size.width <= 0 || size.height <= 0 || (!continuous &&
       (!this.fitDecodeToContent || this.rotateClockwise || frame.part.fragment !== 'whole' || frame.crop.applied()))) {
       return ReaderImageDecodeModifier.fit
     }
@@ -1393,14 +1394,18 @@ export struct ReaderPagedImage {
     // catalog geometry settles. Choose a decode level for the visible pixels,
     // using the actual asset size even on the first layout of an enhancement.
     const pixelUnit = this.getUIContext().px2vp(1)
-    // Fit the full image behind a cropped List row. renderWidth/renderHeight
-    // are already in the image's axes when that row is rotated.
+    // A continuous row is full-width. Use the List's measured width on its
+    // first decode so the Image's later area callback does not change the tier.
+    const rowWidth = this.continuousDecodeWidth > 1 ? this.continuousDecodeWidth : this.paintWidth()
+    const rowHeight = this.paintHeight()
     const region = frame.crop.region(frame.part)
-    const decodeWidth = this.renderWidth() / region.width
-    const decodeHeight = this.renderHeight() / region.height
+    const decodeWidth = (this.rotateClockwise ? rowHeight : rowWidth) / region.width
+    const decodeHeight = (this.rotateClockwise ? rowWidth : rowHeight) / region.height
     const fitScale = Math.min(decodeWidth / size.width, decodeHeight / size.height) / pixelUnit
-    if (fitScale <= 0 || fitScale > 0.5) return ReaderImageDecodeModifier.fit
-    let level = 0.5
+    if (fitScale <= 0 || fitScale > (continuous ? 7 / 8 : 0.5)) return ReaderImageDecodeModifier.fit
+    // JPEG supports eighth-size decode steps. Stay at or above the visible
+    // density instead of falling back to full-size just above half resolution.
+    let level = fitScale > 0.5 ? Math.ceil(fitScale * 8) / 8 : 0.5
     while (level / 2 >= fitScale) level /= 2
     return new ReaderImageDecodeModifier('fit', size.width * level * pixelUnit, size.height * level * pixelUnit)
   }
