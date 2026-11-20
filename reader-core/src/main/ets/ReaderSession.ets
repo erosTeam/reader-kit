@@ -191,8 +191,9 @@ export interface ReaderAssetProvider {
  */
 export interface ReaderPreloadHost {
   preload(page: ReaderPage, cancellation: ReaderCancellation): Promise<void>
-  /** Optional verified adjacency only. Warm up to depth source pages across later
-   * units without opening them in the live session or publishing reading progress. */
+  /** Optional verified adjacency only. A zero depth prepares only the first
+   * adjacent unit's page list. Positive depths warm up to that many source
+   * pages. Neither operation selects the unit or publishes reading progress. */
   preloadNextUnit?(unit: ReaderUnit, depth: number, cancellation: ReaderCancellation,
     onPrepared?: (unit: ReaderUnit, indexes: number[], precedingPages: number) => void): Promise<void>
 }

@@ -329,7 +329,7 @@ export class ReaderPagedSession {
   private continuousRows: ReaderContinuousRow[] = []
   private pagerRows: ReaderPagerRow[] = []
   private continuousProcessingUnits: ReaderWindowUnit[] = []
-  private continuousCatalogTasks: Set<string> = new Set()
+  private continuousCatalogTasks: Map<string, Promise<boolean>> = new Map()
   private continuousCatalogCancellation: ReaderCancellation = new ReaderCancellation()
   private reconcileDepth: number = 0
   /** Requested native window plus at most one already-leased reverse edge. */
@@ -344,6 +344,7 @@ export class ReaderPagedSession {
   private preloadSignature: string = ''
   private preloadCancellation: ReaderCancellation = new ReaderCancellation()
   private nextUnitPreloadSignature: string = ''
+  private nextUnitPreloadDepth: number = -1
   private nextUnitPreloadCancellation: ReaderCancellation = new ReaderCancellation()
   private autoReadSourcePreparations: Map<number, ReaderCancellation> = new Map()
   /** Retires source preparations even when navigation returns to the same target index. */
@@ -1042,39 +1043,42 @@ export class ReaderPagedSession {
     owner.update(unit, indexes, [], automaticIndex, futurePolicy, true, this.cropEnabled, this.processingCropRevision)
   }
 
-  /** Spend only the remaining page budget after this unit on verified later units.
-   * Hosts without verified multi-unit preparation keep their original behavior. */
+  /** Resolve the next chapter's page list in the tail window. Images still
+   * spend only the ordinary lookahead budget left after the visible chapter. */
   private scheduleNextUnitPreload(): void {
     const unit = this.state.unit
-    const endRow = this.continuousRows[this.continuousEnd]
-    const end = this.state.policy.layout === 'continuous' && endRow?.context.unit.key.equals(unit!.key) === true
-      ? endRow.index : this.state.displayIndex
-    const lastSource = (this.map?.item(end)?.parts ?? []).reduce(
-      (last: number, part: ReaderDisplayPart): number => Math.max(last, part.sourceIndex), -1)
-    const remainingHere = unit === null || lastSource < 0 ? this.preloadDepth :
-      Math.max(0, unit.pageCount - 1 - lastSource)
-    const nextDepth = Math.max(0, this.preloadDepth - remainingHere)
+    const endRow = this.state.policy.layout === 'continuous' ? this.continuousRows[this.continuousEnd] : undefined
+    // When the visible bottom has already entered a prepared neighbor, the
+    // current chapter has no more undisplayed pages ahead of that edge.
+    const lastSource = unit !== null && endRow !== undefined && !endRow.context.unit.key.equals(unit.key)
+      ? unit.pageCount - 1
+      : (this.map?.item(endRow?.index ?? this.state.displayIndex)?.parts ?? []).reduce(
+        (last: number, part: ReaderDisplayPart): number => Math.max(last, part.sourceIndex), -1)
+    const remaining = unit !== null && lastSource >= 0 ? unit.pageCount - 1 - lastSource : Infinity
+    const nextDepth = Math.max(0, this.preloadDepth - remaining)
     const eligible = !this.disposed && this.active && this.processingAllowed && this.state.phase === 'ready' &&
-      this.state.kind === 'original' && unit !== null && this.map !== null && this.map.count() > 0 &&
-      nextDepth > 0 && this.preloadHost?.preloadNextUnit !== undefined
+      this.state.kind === 'original' && unit !== null && this.preloadDepth > 0 &&
+      remaining <= Math.max(3, this.preloadDepth) && this.preloadHost?.preloadNextUnit !== undefined
     const signature = !eligible || unit === null ? '' :
-      JSON.stringify([unit.key.scope, unit.key.work, unit.key.unit, nextDepth,
+      JSON.stringify([unit.key.scope, unit.key.work, unit.key.unit, this.preloadDepth,
         this.processingPolicy?.revision ?? '', this.cropEnabled, this.processingCropRevision])
-    if (signature === this.nextUnitPreloadSignature) {
-      if (!eligible) this.retireFutureProcessing()
-      return
+    if (signature !== this.nextUnitPreloadSignature) {
+      this.nextUnitPreloadCancellation.cancel()
+      this.nextUnitPreloadCancellation = new ReaderCancellation()
+      this.nextUnitPreloadDepth = -1
+      this.nextUnitPreloadSignature = signature
     }
-    this.nextUnitPreloadCancellation.cancel()
-    this.nextUnitPreloadSignature = signature
     if (signature.length === 0 || unit === null) { this.retireFutureProcessing(); return }
-    const cancellation = new ReaderCancellation()
-    this.nextUnitPreloadCancellation = cancellation
+    if (nextDepth <= this.nextUnitPreloadDepth) return
+    // A growing budget must not retire the page-list or first-page request
+    // already in flight. The host shares preparation and files by unit/page.
+    this.nextUnitPreloadDepth = nextDepth
+    const cancellation = this.nextUnitPreloadCancellation
     const touched: Set<string> = new Set<string>()
-    console.info(`[ReaderPreload] next_unit depth=${nextDepth}`)
+    console.info(`[ReaderPreload] next_unit depth=${nextDepth} remaining=${remaining}`)
     const completed = (): void => {
-      if (!cancellation.isCancelled() && this.nextUnitPreloadCancellation === cancellation) {
-        this.retireFutureProcessing(touched)
-      }
+      if (!cancellation.isCancelled() && this.nextUnitPreloadCancellation === cancellation &&
+        this.nextUnitPreloadDepth === nextDepth) this.retireFutureProcessing(touched)
     }
     void this.preloadHost?.preloadNextUnit?.(unit.copy(), nextDepth, cancellation,
       (future: ReaderUnit, indexes: number[], precedingPages: number): void => {
@@ -1482,7 +1486,9 @@ export class ReaderPagedSession {
     if (this.disposed || this.state.phase !== 'ready' || this.state.unit === null) return
     this.state.canPreviousUnit = this.catalog.adjacent(this.state.unit.copy(), 'previous') !== null
     this.state.canNextUnit = this.catalog.adjacent(this.state.unit.copy(), 'next') !== null
+    this.nextUnitPreloadCancellation.cancel()
     this.nextUnitPreloadSignature = ''
+    this.nextUnitPreloadDepth = -1
     this.scheduleNextUnitPreload()
     this.emit()
   }
@@ -2294,10 +2300,49 @@ export class ReaderPagedSession {
     })
   }
 
-  requestContinuousBoundary(topology: number, navigation: number): void {
-    if (!this.active || this.state.policy.layout !== 'continuous' ||
+  requestContinuousBoundary(topology: number, navigation: number, direction: 'previous' | 'next' = 'previous',
+    edgeKey: string = '', stillAtEdge: () => boolean = (): boolean => false): void {
+    if (!this.active || this.state.phase !== 'ready' || this.state.policy.layout !== 'continuous' ||
       topology !== this.topologyRevision || navigation !== this.navigationRevision) return
-    this.prepareWindowAdjacent()
+    if (direction === 'previous') {
+      this.prepareWindowAdjacent()
+      return
+    }
+    const edge = this.continuousRows.find((row: ReaderContinuousRow): boolean => row.key === edgeKey)
+    if (edge === undefined || edge.index + 1 !== edge.context.unit.pageCount) return
+    const next = this.catalog.adjacent(edge.context.unit.copy(), 'next')
+    if (next === null) return
+    // Preserve a real edge swipe while the catalog is in flight. The first
+    // image can still be loading when the native list moves into its row.
+    void this.prepareContinuousAdjacent(next, 'next').then((ready: boolean): void => {
+      if (!ready || !this.active || this.state.phase !== 'ready' ||
+        topology !== this.topologyRevision || navigation !== this.navigationRevision ||
+        this.catalog.adjacent(edge.context.unit.copy(), 'next')?.equals(next) !== true || !stillAtEdge()) return
+      const index = this.displayKeys.indexOf(edgeKey) + 1
+      const row = this.continuousRows[index]
+      if (index < 1 || row?.index !== 0 || !row.context.unit.key.equals(next)) return
+      this.selectContinuousRow(index)
+      this.seekSource(0, next, navigation)
+    })
+  }
+
+  private prepareContinuousAdjacent(key: ReaderUnitKey, direction: 'previous' | 'next'): Promise<boolean> {
+    if (this.windowUnits.some((context: ReaderWindowUnit): boolean => context.unit.key.equals(key))) {
+      return Promise.resolve(true)
+    }
+    const id = this.processingUnitId(key)
+    const running = this.continuousCatalogTasks.get(id)
+    if (running !== undefined) return running
+    const cancellation = this.continuousCatalogCancellation
+    const task = this.catalog.open(key.copy(), cancellation).then((unit: ReaderUnit): boolean => {
+      if (cancellation.isCancelled() || this.disposed || !unit.key.equals(key) || unit.pageCount < 1) return false
+      this.appendWindowUnit(unit, direction === 'previous')
+      return true
+    }).catch((): boolean => false).finally((): void => {
+      if (this.continuousCatalogCancellation === cancellation) this.continuousCatalogTasks.delete(id)
+    })
+    this.continuousCatalogTasks.set(id, task)
+    return task
   }
 
   private prepareWindowAdjacent(): void {
@@ -2305,23 +2350,14 @@ export class ReaderPagedSession {
     const selected = this.state.policy.layout === 'continuous' ? this.continuousSelectedIndex() : this.pagerSelectedIndex()
     const prepare = (context: ReaderWindowUnit, direction: 'previous' | 'next'): void => {
       const key = this.catalog.adjacent(context.unit.copy(), direction)
-      if (key === null || this.windowUnits.some((value: ReaderWindowUnit): boolean => value.unit.key.equals(key))) return
-      const id = this.processingUnitId(key)
-      if (this.continuousCatalogTasks.has(id)) return
-      this.continuousCatalogTasks.add(id)
-      const cancellation = this.continuousCatalogCancellation
-      void this.catalog.open(key.copy(), cancellation).then((unit: ReaderUnit): void => {
-        if (cancellation.isCancelled() || this.disposed || !unit.key.equals(key)) return
-        this.appendWindowUnit(unit, direction === 'previous')
-      }).catch((): void => {}).finally((): void => {
-        if (this.continuousCatalogCancellation === cancellation) this.continuousCatalogTasks.delete(id)
-      })
+      if (key !== null) void this.prepareContinuousAdjacent(key, direction)
     }
     // One adjacent chapter remains available even when transport lookahead is off.
     const previousLead = Math.max(2, this.continuousEnd - this.continuousStart + 1)
     if (selected <= previousLead) prepare(this.windowUnits[0], 'previous')
     const count = this.state.policy.layout === 'continuous' ? this.continuousRows.length : this.pagerRows.length
-    if (this.state.policy.layout === 'continuous' && count - selected <= Math.max(2, this.preloadDepth + 1)) {
+    const visibleEnd = Math.max(selected, this.continuousEnd)
+    if (this.state.policy.layout === 'continuous' && count - visibleEnd <= Math.max(2, this.preloadDepth + 1)) {
       prepare(this.windowUnits[this.windowUnits.length - 1], 'next')
     }
   }

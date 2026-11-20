@@ -818,10 +818,7 @@ export struct ReaderSurface {
 
   private requestBoundaryChapter(direction: 'previous' | 'next', topology: number, navigation: number): void {
     const current = this.session.snapshot()
-    if (current.policy.layout === 'continuous') {
-      this.session.requestContinuousBoundary(topology, navigation)
-      return
-    }
+    if (current.policy.layout === 'continuous') return
     const available = direction === 'previous' ? current.canPreviousUnit : current.canNextUnit
     if (!available || topology !== current.topologyRevision || navigation !== current.navigationRevision ||
       current.unit === null) return
@@ -1083,8 +1080,9 @@ export struct ReaderSurface {
             onZoomedChange: (zoomed: boolean, topology: number, navigation: number): void => {
               this.reportZoomed(zoomed, topology, navigation)
             },
-            onBoundary: (direction: 'previous' | 'next', topology: number, navigation: number): void => {
-              this.requestBoundaryChapter(direction, topology, navigation)
+            onBoundary: (direction: 'previous' | 'next', topology: number, navigation: number,
+              edgeKey: string, stillAtEdge: () => boolean): void => {
+              this.session.requestContinuousBoundary(topology, navigation, direction, edgeKey, stillAtEdge)
             },
             onTap: (x: number, y: number): ReaderTapAction => this.pageTap(x, y),
             onRange: (start: number, end: number, topology: number, navigation: number, position?: number): void => {

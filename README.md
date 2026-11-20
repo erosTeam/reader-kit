@@ -126,6 +126,13 @@ The following are existing preservation requirements, not new feature work:
 - Preload demand rolls with navigation, range, policy and unit changes; an
   initial warm window is not continuous preload. Transport warming is not
   decode or visible presentation. Hosts retain their own bounded cache owners.
+  With next-unit warming enabled, the last few source pages can prepare the
+  following unit's page list before the image budget crosses the boundary.
+  A growing next-unit budget keeps its pending preparation alive. Only the
+  configured page budget is spent on image warming.
+  In continuous reading, an explicit forward swipe at the native end can
+  continue when the adjacent catalog arrives if the viewport is still there.
+  The first row can show loading feedback. Only visible originals update progress.
   A host resolving legacy chapter chronology beside a readable page can call
   `refreshAdjacency()` to publish the resulting neighbors and resume lookahead;
   this must retain the current anchor, native topology and decoded images.

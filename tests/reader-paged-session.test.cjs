@@ -1729,26 +1729,26 @@ test('background chronology refresh keeps the current image and anchor while ena
   session.close()
 })
 
-test('next-unit warming uses the remaining page budget without selecting or opening that unit', async () => {
-  // The user requested a page-count budget that continues across chapters:
-  // the one remaining page in this unit consumes one of two lookahead pages.
+test('next-unit metadata starts before the image budget and grows without cancelling the first page', async () => {
+  // Advance catalogue preparation as requested for the last few pages.
+  // Image warming still spends only the remaining lookahead budget.
   const { session, key, calls } = setup({ count: 10, nextUnitPreload: true })
   session.setPreloadDepth(2)
-  await session.open(key, 7); await tick()
+  await session.open(key, 5); await tick()
   assert.equal(calls.nextUnitPreload.length, 0)
+  session.seekSource(6, key, session.snapshot().navigationRevision); await tick()
+  assert.deepEqual(calls.nextUnitPreload.map(call => call.depth), [0])
   session.seekSource(8, key, session.snapshot().navigationRevision); await tick()
-  assert.equal(calls.nextUnitPreload.length, 1)
-  assert.equal(calls.nextUnitPreload[0].depth, 1)
-  assert.equal(calls.nextUnitPreload[0].unit.key.unit, 'A')
   session.seekSource(9, key, session.snapshot().navigationRevision); await tick()
-  assert.equal(calls.nextUnitPreload.length, 2)
-  assert.equal(calls.nextUnitPreload[0].cancellation.isCancelled(), true)
-  assert.equal(calls.nextUnitPreload[1].depth, 2)
+  assert.deepEqual(calls.nextUnitPreload.map(call => call.depth), [0, 1, 2])
+  const active = calls.nextUnitPreload[0].cancellation
+  assert.ok(calls.nextUnitPreload.every(call => call.unit.key.unit === 'A' && call.cancellation === active))
+  assert.equal(active.isCancelled(), false)
   assert.equal(calls.open.length, 1)
   assert.equal(session.snapshot().unit.key.unit, 'A')
   assert.equal(session.snapshot().anchor.sourceIndexHint, 9)
   session.seekSource(5, key, session.snapshot().navigationRevision); await tick()
-  assert.equal(calls.nextUnitPreload[1].cancellation.isCancelled(), true)
+  assert.equal(active.isCancelled(), true)
   session.close()
 })
 test('continuous next-unit lead follows visible end and still works with ordinary processing enabled', async () => {
@@ -1758,10 +1758,10 @@ test('continuous next-unit lead follows visible end and still works with ordinar
   session.setPolicy(policy({ layout: 'continuous' }))
   session.setProcessingPolicy(new ReaderProcessingPolicy('original', false, () => new ReaderVariantPreference()))
   session.setPreloadDepth(2)
-  await session.open(key, 6); await tick()
+  await session.open(key, 5); await tick()
   assert.equal(calls.nextUnitPreload.length, 0)
   const before = session.snapshot()
-  session.setContinuousRange(6, 8, before.topologyRevision, before.navigationRevision); await tick()
+  session.setContinuousRange(5, 8, before.topologyRevision, before.navigationRevision); await tick()
   assert.equal(calls.nextUnitPreload.length, 1)
   assert.equal(session.snapshot().unit.key.unit, 'A')
   session.close()
@@ -1920,6 +1920,74 @@ test('continuous adjacent chapters share one topology and advance only from real
   assert.equal(session.snapshot().unit.key.unit, 'A')
   session.close(); session.close()
   assert.deepEqual(calls.release.sort(), ['original:A-0', 'original:B-0'])
+})
+
+
+test('a continuous edge swipe survives a pending catalog and moves before the next original loads', async () => {
+  for (const atEdge of [true, false]) {
+    const a = new ReaderUnitKey('source', 'work', 'A')
+    const b = new ReaderUnitKey('source', 'work', 'B')
+    let finishCatalog, finishImage
+    let nextRequests = 0
+    const catalog = {
+      async open(key) {
+        if (a.equals(key)) return new ReaderUnit(a, 'A', 3)
+        nextRequests++
+        return new Promise(resolve => { finishCatalog = () => resolve(new ReaderUnit(b, 'B', 3)) })
+      },
+      async page(unit, index) { return new ReaderPage(unit.key, `${unit.key.unit}-${index}`, index) },
+      adjacent(unit, direction) {
+        return a.equals(unit.key) && direction === 'next' ? b : b.equals(unit.key) && direction === 'previous' ? a : null
+      },
+    }
+    const assets = {
+      cancellationMode: 'consumer-only',
+      async load(page) {
+        const asset = new ReaderAsset(page.key, () => {})
+        if (page.unit.equals(b) && page.sourceIndex === 0) {
+          return new Promise(resolve => { finishImage = () => resolve(asset) })
+        }
+        return asset
+      },
+    }
+    const session = new ReaderPagedSession(catalog, assets)
+    session.setViewportActive(true)
+    session.setPolicy(policy({ layout: 'continuous' }))
+    await session.open(a, 2); await tick()
+    let state = session.snapshot()
+    const { topologyRevision: topology, navigationRevision: navigation } = state
+    assert.equal(state.displayKeys.length, 3)
+    const last = state.frames[0]
+    decode(session, last)
+    session.setContinuousRange(2, 2, topology, navigation)
+    const edge = state.displayKeys[2]
+    assert.equal(session.reportContinuousVisible(topology, navigation, edge,
+      last.slotId, last.asset.assetRequestId, .5, .7), true)
+    session.requestContinuousBoundary(topology, navigation, 'next', edge, () => atEdge)
+    assert.equal(session.snapshot().unit.key.unit, 'A')
+    assert.equal(nextRequests, 1, 'the edge should join the running catalog request')
+    finishCatalog(); await tick()
+    state = session.snapshot()
+    assert.equal(state.topologyRevision, topology, 'keep the same continuous list')
+    if (atEdge) {
+      assert.equal(state.unit.key.unit, 'B')
+      assert.equal(state.continuousIndex, 3)
+      assert.equal(state.frames[0].asset.phase, 'asset')
+      assert.equal(state.observedPosition(), null, 'the loading page cannot commit reading progress')
+      finishImage(); await tick()
+      state = session.snapshot()
+      const first = state.frames[0]
+      decode(session, first)
+      session.setContinuousRange(3, 3, topology, state.navigationRevision)
+      assert.equal(session.reportContinuousVisible(topology, state.navigationRevision, state.displayKeys[3],
+        first.slotId, first.asset.assetRequestId, .5, 0), true)
+      assert.equal(session.snapshot().observedPosition().anchor.unit.unit, 'B')
+    } else {
+      assert.equal(state.unit.key.unit, 'A')
+      assert.equal(state.navigationRevision, navigation, 'an abandoned edge gesture cannot jump later')
+    }
+    session.close()
+  }
 })
 
 

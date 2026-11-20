@@ -17,6 +17,9 @@ import { ReaderZoomResetCommand } from './ReaderZoomResetCommand'
 import { readerElementKey } from './ReaderElementKey'
 import { ReaderContinuousCellSnapshot, ReaderContinuousCellSnapshots } from './ReaderContinuousCellSnapshot'
 
+type ReaderContinuousBoundaryHandler = (direction: ReaderBoundaryDirection, topology: number,
+  navigation: number, edgeKey: string, stillAtEdge: () => boolean) => void
+
 class ReaderContinuousIndexSource implements IDataSource {
   private keys: string[]
   private listeners: DataChangeListener[] = []
@@ -82,8 +85,7 @@ export struct ReaderContinuousSurface {
     request: number, noticeId: string) => Promise<boolean> =
     async (_topology: number, _navigation: number, _key: string, _slot: number,
       _request: number, _noticeId: string): Promise<boolean> => false
-  @Event onBoundary: (direction: ReaderBoundaryDirection, topologyRevision: number,
-    navigationRevision: number) => void = () => {}
+  @Event onBoundary: ReaderContinuousBoundaryHandler = () => {}
 
   @Local private measuredViewportWidth: number = 0
 
@@ -153,8 +155,7 @@ struct ReaderContinuousList {
     request: number, noticeId: string) => Promise<boolean> =
     async (_topology: number, _navigation: number, _key: string, _slot: number,
       _request: number, _noticeId: string): Promise<boolean> => false
-  @Event onBoundary: (direction: ReaderBoundaryDirection, topologyRevision: number,
-    navigationRevision: number) => void = () => {}
+  @Event onBoundary: ReaderContinuousBoundaryHandler = () => {}
   private inputConnection: number = 0
   private source: ReaderContinuousIndexSource = new ReaderContinuousIndexSource([])
   private cellSnapshots: ReaderContinuousCellSnapshots = new ReaderContinuousCellSnapshots()
@@ -188,6 +189,7 @@ struct ReaderContinuousList {
   private boundarySwipe: ReaderBoundarySwipe = new ReaderBoundarySwipe()
   private boundaryTopology: number = -1
   private boundaryNavigation: number = -1
+  private boundaryIntent: number = 0
 
   private handleBoundaryTouch(event: TouchEvent): void {
     if (!this.active || this.snapshot.phase !== 'ready' || event.touches.length > 1 ||
@@ -197,6 +199,7 @@ struct ReaderContinuousList {
     }
     const point = event.changedTouches[0]
     if (event.type === TouchType.Down) {
+      this.boundaryIntent += 1
       if (this.pendingPosition || this.positionInFlight || this.moving || this.lockedKey.length > 0) {
         this.boundarySwipe.cancel()
         return
@@ -224,8 +227,27 @@ struct ReaderContinuousList {
     if (direction !== null && this.active && this.snapshot.phase === 'ready' &&
       this.createdRevision === this.snapshot.topologyRevision && this.boundaryTopology === this.snapshot.topologyRevision &&
       this.boundaryNavigation === this.snapshot.navigationRevision) {
-      this.onBoundary(direction, this.boundaryTopology, this.boundaryNavigation)
+      this.requestBoundary(direction)
     }
+  }
+
+  private requestBoundary(direction: ReaderBoundaryDirection): void {
+    const topology = this.createdRevision
+    const navigation = this.snapshot.navigationRevision
+    const intent = ++this.boundaryIntent
+    const edge = this.snapshot.displayKeys[direction === 'next' ? this.snapshot.displayKeys.length - 1 : 0]
+    if (edge === undefined) return
+    try {
+      if (direction === 'next' && !this.scroller.isAtEnd()) return
+      const offset = this.scroller.currentOffset().yOffset
+      this.onBoundary(direction, topology, navigation, edge, (): boolean => {
+        if (this.disposed || !this.active || this.boundaryIntent !== intent || this.pendingPosition ||
+          this.lockedKey.length > 0 || topology !== this.snapshot.topologyRevision ||
+          navigation !== this.snapshot.navigationRevision) return false
+        try { return Math.abs(this.scroller.currentOffset().yOffset - offset) <= 0.5 }
+        catch (_) { return false }
+      })
+    } catch (_) { /* The native list has not laid out an edge yet. */ }
   }
 
   aboutToAppear(): void {
@@ -297,7 +319,10 @@ struct ReaderContinuousList {
     }
     // A host sheet/background suspends input, not the current explicit page.
     // User movement, a new navigation, failure or disposal still retires it.
-    if (!this.active) this.moving = false
+    if (!this.active) {
+      this.moving = false
+      this.boundaryIntent += 1
+    }
     if (this.lockedKey.length > 0) {
       const frame = this.snapshot.forItem(this.lockedKey).frames[0]
       if (frame === undefined || frame.asset.phase !== 'displayed' ||
@@ -380,12 +405,13 @@ struct ReaderContinuousList {
       this.createdRevision !== this.snapshot.topologyRevision || this.entryTransition?.blocksInput() ||
       this.viewHeight <= 1) return false
     try {
+      this.boundaryIntent += 1
       const offset = this.scroller.currentOffset().yOffset
       const previous = intent === 'previous'
       this.releasePosition()
       if ((previous && this.first === 0 && offset <= 0.5) ||
         (!previous && this.last + 1 >= this.snapshot.displayKeys.length && this.scroller.isAtEnd())) {
-        this.onBoundary(intent, this.createdRevision, this.snapshot.navigationRevision)
+        this.requestBoundary(intent)
       } else if (this.pageTurnAnimation) {
         this.scroller.scrollTo({ xOffset: 0,
           yOffset: Math.max(0, offset + (previous ? -1 : 1) * this.viewHeight * 0.75), animation: true })
