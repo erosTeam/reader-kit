@@ -7,9 +7,9 @@ import { ColorMetrics, FrameCallback } from '@kit.ArkUI'
  * radius 2, track alpha 0.2, slider ratio 0.3, progress anim
  * 220ms EaseOut, indeterminate step 900ms, stage spacing 8, label font 14,
  * padding 24): the shared cell reuses the existing product presentation
- * instead of inventing new geometry. A real received/total byte pair renders
- * the determinate bar plus percent; otherwise the indeterminate bar plus the
- * stage label. Unknown totals never fabricate a percentage.
+ * instead of inventing new geometry. Real byte counts show a percentage while
+ * receiving data. Unknown lengths and completed transfers with pixels still
+ * pending use the indeterminate bar and the current stage label.
  */
 const LOADING_PROGRESS_ANIM_DURATION: number = 220
 const LOADING_INDETERMINATE_ANIM_DURATION: number = 900
@@ -173,25 +173,16 @@ export struct ReaderLoadingStage {
   }
 
   private hasProgress(): boolean {
-    return this.total > 0
+    return this.total > 0 && this.loaded < this.total
   }
 
   private progressRatio(): number {
-    if (!this.hasProgress()) {
-      return 0
-    }
-    const ratio = this.loaded / this.total
-    if (ratio < 0) {
-      return 0
-    }
-    if (ratio > 1) {
-      return 1
-    }
-    return ratio
+    return this.hasProgress() ? Math.max(0, this.loaded / this.total) : 0
   }
 
   private progressPercent(): string {
-    return `${Math.round(this.progressRatio() * 100)}%`
+    // Rounding must not announce completion before receiving the last bytes.
+    return `${Math.min(99, Math.round(this.progressRatio() * 100))}%`
   }
 
   @Builder

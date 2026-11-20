@@ -65,6 +65,9 @@ The following are existing preservation requirements, not new feature work:
   the current thumbnail/image and its loading backdrop while the same request
   is pending; canceling motion does not mean decode/presentation is complete.
   Loading feedback belongs to current request identity, not a retired callback.
+  Real byte counts drive the percentage during transfer. When all bytes have
+  arrived, the existing stage label and indeterminate bar describe the wait for
+  preparation and decode. The image owner still ends feedback at presentation.
   A low-resolution opening thumbnail is a preview, not a readable original: it
   retains the existing loading indicator/backdrop until this original is ready.
   A matching decode is insufficient while the entry still hides that original.
