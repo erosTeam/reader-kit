@@ -4,6 +4,7 @@ const load = require('./load-core.cjs')
 const { ReaderPagedSession } = load('ReaderPagedSession')
 const { ReaderUnitKey, ReaderUnit, ReaderPage, ReaderAsset, ReaderVariantPreference } = load('ReaderSession')
 const { ReaderProcessingPolicy } = load('ReaderProcessingCoordinator')
+const { ReaderTemporaryVariantOverride, ReaderTemporaryVariantScope } = load('ReaderTemporaryVariantOverride')
 const tick = () => new Promise(resolve => setImmediate(resolve))
 function scenario({ deferred = false, translation = false } = {}) {
   const key = new ReaderUnitKey('source', 'work', 'A')
@@ -71,11 +72,43 @@ test('current joins the exact future task and promotes it without a second proce
   assert.equal(prepared[3].priority, 'prefetch')
   session.move('next'); session.move('next'); await tick()
   assert.equal(prepared[3].priority, 'current')
+  assert.equal(calls.prepared.find(c => c[0] === 0)[3].priority, 'prefetch')
   assert.equal(calls.prepared.filter(c => c[0] === 2).length, 1)
   assert.equal(prepared[3].isCancelled(), false)
   calls.pending.get('2:v1')(); await tick(); await tick()
   assert.equal(session.snapshot().frames[0].asset.variant, 'enhanced')
   session.close()
+})
+
+test('temporary enhancement toggles reuse the prepared file and the default asset without a processing indicator', async () => {
+  const { key, session, calls } = scenario({ deferred: true })
+  await session.open(key); await tick()
+  const initial = session.snapshot()
+  const original = initial.frames[0]
+  present(session, original)
+  calls.pending.get('0:v1')(); await tick()
+  const enhanced = session.snapshot().frames[0]
+  present(session, enhanced)
+  const scope = ReaderTemporaryVariantScope.fromPages(key, initial.navigationRevision, [original.asset.page])
+  const override = new ReaderTemporaryVariantOverride()
+
+  for (let i = 0; i < 4; i += 1) {
+    const enabled = override.toggle(scope)
+    session.setProcessingPolicy(new ReaderProcessingPolicy(String(override.revision), false, page =>
+      override.preference(scope, page.sourceIndex, page.key, new ReaderVariantPreference('enhanced', 'v1'), true)))
+    await tick()
+    const state = session.snapshot()
+    const frame = state.frames[0]
+    assert.equal(frame.asset.uri, enabled ? enhanced.asset.uri : original.asset.uri)
+    assert.equal(frame.asset.needsImagePlaceholder(), false)
+    assert.equal(state.isPreparingVariant(0, 'enhanced'), false)
+    present(session, frame)
+  }
+  assert.equal(calls.raw.filter(index => index === 0).length, 1)
+  assert.equal(calls.prepared.filter(call => call[0] === 0).length, 1)
+  assert.equal(calls.release.filter(call => call[0] === 0).length, 0)
+  session.close()
+  assert.equal(calls.release.filter(call => call[0] === 0).length, 1)
 })
 
 test('late old configuration and unit cannot publish or keep a processor lease', async () => {

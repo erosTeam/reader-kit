@@ -7,22 +7,31 @@ export type ReaderProcessingPriority = 'current' | 'prefetch'
 export type ReaderProcessingPhase = 'preparing' | 'ready' | 'unavailable'
 export type ReaderProcessingResult = 'changed' | 'unchanged' | 'unavailable' | 'stale'
 
-/** A task's priority can advance without cancelling or duplicating its processing request. */
+/** A visible page can take ownership of an in-flight lookahead without a duplicate request. */
 export class ReaderProcessingCancellation extends ReaderCancellation {
   priority: ReaderProcessingPriority
-  private promotions: Array<() => void> = []
+  prefetchSuperseded: boolean = false
+  private priorityListeners: Array<(priority: ReaderProcessingPriority) => void> = []
   constructor(priority: ReaderProcessingPriority) { super(); this.priority = priority }
   promote(): void {
-    if (this.priority === 'current' || this.isCancelled()) return
-    this.priority = 'current'
-    this.promotions.forEach((listener: () => void): void => listener())
+    this.setPriority('current')
   }
   onPromotion(listener: () => void): () => void {
-    if (this.priority === 'current') listener()
-    this.promotions.push(listener)
+    return this.onPriorityChange((priority: ReaderProcessingPriority): void => {
+      if (priority === 'current') listener()
+    })
+  }
+  setPriority(priority: ReaderProcessingPriority): void {
+    if (priority === this.priority || this.isCancelled()) return
+    this.priority = priority
+    this.priorityListeners.forEach((listener: (value: ReaderProcessingPriority) => void): void => listener(priority))
+  }
+  onPriorityChange(listener: (priority: ReaderProcessingPriority) => void): () => void {
+    listener(this.priority)
+    this.priorityListeners.push(listener)
     return (): void => {
-      const index = this.promotions.indexOf(listener)
-      if (index >= 0) this.promotions.splice(index, 1)
+      const index = this.priorityListeners.indexOf(listener)
+      if (index >= 0) this.priorityListeners.splice(index, 1)
     }
   }
 }
@@ -44,7 +53,7 @@ export class ReaderProcessingPolicy {
   }
   preference(page: ReaderPage, automatic: boolean): ReaderVariantPreference {
     const value = this.resolve(page.copy(), automatic)
-    return new ReaderVariantPreference(value.variant, value.identity)
+    return new ReaderVariantPreference(value.variant, value.identity, value.temporarilyDisabled)
   }
   completed(index: number, preference: ReaderVariantPreference, result: ReaderProcessingResult): void {
     this.complete(index, new ReaderVariantPreference(preference.variant, preference.identity), result)
@@ -55,10 +64,12 @@ export class ReaderProcessingState {
   sourceIndex: number
   preference: ReaderVariantPreference
   phase: ReaderProcessingPhase
-  constructor(index: number, preference: ReaderVariantPreference, phase: ReaderProcessingPhase) {
+  reused: boolean
+  constructor(index: number, preference: ReaderVariantPreference, phase: ReaderProcessingPhase, reused: boolean = false) {
     this.sourceIndex = index
     this.preference = new ReaderVariantPreference(preference.variant, preference.identity)
     this.phase = phase
+    this.reused = reused
   }
 }
 
@@ -108,6 +119,7 @@ class ReaderProcessingEntry {
   preference: ReaderVariantPreference = new ReaderVariantPreference()
   signature: string = ''
   phase: ReaderProcessingPhase = 'preparing'
+  reused: boolean = false
   cancellation: ReaderProcessingCancellation
   plan: ReaderPreparedVariantPlan | null = null
   constructor(index: number, priority: ReaderProcessingPriority) {
@@ -157,10 +169,20 @@ export class ReaderProcessingCoordinator {
       const priority: ReaderProcessingPriority = current.includes(index) ? 'current' : 'prefetch'
       const existing = this.entries.get(index)
       if (existing !== undefined) {
-        if (priority === 'current') existing.cancellation.promote()
-        if (existing.page === null) return
-        const preference = this.preference(existing.page)
-        if (existing.signature === this.signature(existing.page, preference)) return
+        if (existing.page === null) { existing.cancellation.setPriority(priority); return }
+        const next = this.preference(existing.page)
+        const wasDisabled = existing.preference.temporarilyDisabled
+        const retryVisible = priority === 'current' && existing.phase === 'unavailable' &&
+          existing.cancellation.prefetchSuperseded
+        if (existing.signature === this.signature(existing.page, next) &&
+          !retryVisible && (wasDisabled === next.temporarilyDisabled || existing.plan !== null)) {
+          // Temporary display suppression keeps a finished derivative. It
+          // still cancels unfinished work and never publishes a hidden plan.
+          if (wasDisabled && !next.temporarilyDisabled) existing.reused = true
+          existing.preference = next
+          existing.cancellation.setPriority(priority)
+          return
+        }
         this.entries.delete(index); existing.release()
       }
       const entry = new ReaderProcessingEntry(index, priority)
@@ -168,12 +190,16 @@ export class ReaderProcessingCoordinator {
       void this.prepare(entry, unit.copy())
     })
   }
-  plan(index: number): ReaderVariantAssetPlan | null { return this.entries.get(index)?.plan ?? null }
+  plan(index: number): ReaderVariantAssetPlan | null {
+    const entry = this.entries.get(index)
+    return entry?.preference.temporarilyDisabled === false ? entry.plan : null
+  }
   states(): ReaderProcessingState[] {
     const result: ReaderProcessingState[] = []
     this.entries.forEach((entry: ReaderProcessingEntry): void => {
-      if (entry.preference.variant !== 'default') result.push(new ReaderProcessingState(entry.index,
-        entry.preference, entry.phase))
+      if (entry.preference.variant !== 'default' && !entry.preference.temporarilyDisabled) {
+        result.push(new ReaderProcessingState(entry.index, entry.preference, entry.phase, entry.reused))
+      }
     })
     return result
   }
@@ -208,6 +234,10 @@ export class ReaderProcessingCoordinator {
       if (!this.currentEntry(entry, unit) || !page.unit.equals(unit.key) || page.sourceIndex !== entry.index) return
       entry.page = page.copy(); entry.preference = this.preference(page)
       entry.signature = this.signature(page, entry.preference)
+      if (entry.preference.temporarilyDisabled) {
+        entry.phase = 'ready'
+        return
+      }
       if (entry.preference.variant === 'default') {
         if (!this.current.includes(entry.index)) await this.preload?.preload(page.copy(), entry.cancellation)
         entry.phase = 'ready'

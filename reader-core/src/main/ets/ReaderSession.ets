@@ -14,10 +14,13 @@ export type ReaderProcessedAssetVariant = 'enhanced' | 'translated'
 export class ReaderVariantPreference {
   variant: ReaderProcessedAssetVariant | 'default'
   identity: string
+  temporarilyDisabled: boolean
 
-  constructor(variant: ReaderProcessedAssetVariant | 'default' = 'default', identity: string = '') {
+  constructor(variant: ReaderProcessedAssetVariant | 'default' = 'default', identity: string = '',
+    temporarilyDisabled: boolean = false) {
     this.variant = variant
     this.identity = variant === 'default' ? '' : identity
+    this.temporarilyDisabled = temporarilyDisabled
   }
 }
 export type ReaderPhase = 'idle' | 'catalog' | 'asset' | 'decoding' | 'displayed' | 'suppressed' | 'failed' | 'closed'
@@ -328,6 +331,7 @@ export class ReaderSession {
   private cancellation: ReaderCancellation = new ReaderCancellation()
   private asset: ReaderAsset | null = null
   private retiredAsset: ReaderAsset | null = null
+  private reusableDefaultAsset: ReaderAsset | null = null
   private decodedAssetRequestId: number = 0
   private originalPlan: ReaderResolvedAssetPlan | null = null
   private epoch: number = 0
@@ -548,6 +552,7 @@ export class ReaderSession {
     const variant: ReaderAssetVariant = this.originalPlan?.variant ?? (this.originalPlan === null ? 'default' : 'original')
     const variantIdentity: string = this.originalPlan?.variant === 'enhanced' || this.originalPlan?.variant === 'translated'
       ? this.originalPlan.identity : ''
+    if (forceReload || !retainDisplayed || (variant !== 'enhanced' && variant !== 'default')) this.clearReusableDefault()
     if (!retainDisplayed) {
       this.state.phase = 'asset'
       this.state.loadProgressLoaded = 0
@@ -596,8 +601,14 @@ export class ReaderSession {
       const plan = this.originalPlan
       if (plan !== null && (!plan.page.unit.equals(page.unit) || plan.page.key !== page.key ||
         plan.page.sourceIndex !== page.sourceIndex)) throw new Error('reader_original_plan_identity_mismatch')
-      const asset = plan === null ? await this.assets.load(page.copy(), kind, cancellation, forceReload, reportProgress) :
-        await plan.load(cancellation, forceReload, reportProgress)
+      const samePage = retainDisplayed && this.state.page?.key === page.key
+      if (!samePage) this.clearReusableDefault()
+      // Keep one source-file lease in this native slot for temporary enhancement
+      // switches. The existing decode and composed-frame handoff still owns pixels.
+      const reusable = plan === null && this.reusableDefaultAsset !== this.asset &&
+        this.reusableDefaultAsset !== this.retiredAsset ? this.reusableDefaultAsset : null
+      const asset = reusable ?? (plan === null ? await this.assets.load(page.copy(), kind, cancellation, forceReload, reportProgress) :
+        await plan.load(cancellation, forceReload, reportProgress))
       if (!this.current(epoch)) {
         asset.release()
         return
@@ -607,6 +618,11 @@ export class ReaderSession {
         throw new Error('reader_empty_asset')
       }
       if (retainDisplayed) {
+        if (!forceReload && samePage && !retainingReplacement && variant === 'enhanced' &&
+          this.state.variant === 'default' && this.state.phase === 'displayed') {
+          this.clearReusableDefault()
+          this.reusableDefaultAsset = this.asset
+        }
         // Double-buffer against the most recently displayed native source. A
         // consecutive replacement must retain the source that actually owned
         // the immediately preceding frame, not an older fallback whose Image
@@ -730,13 +746,19 @@ export class ReaderSession {
   }
 
   private releaseAsset(): void {
-    if (this.asset !== null) this.asset.release()
+    if (this.asset !== this.reusableDefaultAsset) this.asset?.release()
     this.asset = null
   }
 
   private releaseRetiredAsset(): void {
-    if (this.retiredAsset !== null) this.retiredAsset.release()
+    if (this.retiredAsset !== this.reusableDefaultAsset) this.retiredAsset?.release()
     this.retiredAsset = null
+  }
+
+  private clearReusableDefault(): void {
+    const cached = this.reusableDefaultAsset
+    this.reusableDefaultAsset = null
+    if (cached !== this.asset && cached !== this.retiredAsset) cached?.release()
   }
 
   close(): void {
@@ -745,6 +767,7 @@ export class ReaderSession {
     this.viewportActive = false
     this.cancellation.cancel()
     this.epoch += 1
+    this.clearReusableDefault()
     this.releaseRetiredAsset()
     this.releaseAsset()
     this.originalPlan = null

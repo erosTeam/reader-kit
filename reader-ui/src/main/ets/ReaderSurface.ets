@@ -230,7 +230,7 @@ export struct ReaderSurface {
     this.session.setProcessingPolicy(new ReaderProcessingPolicy(signature, policy.automaticNext,
       (page: ReaderPage, automatic: boolean): ReaderVariantPreference =>
         this.temporaryVariantOverride.preference(scope?.unit.equals(page.unit) === true ? scope : null,
-          page.sourceIndex, page.key, policy.processingPreference(page, automatic)),
+          page.sourceIndex, page.key, policy.processingPreference(page, automatic), true),
       (index: number, preference: ReaderVariantPreference, result: ReaderProcessingResult): void =>
         policy.selectionCompleted(index, preference, result)), this.cropPolicy?.sourceRevision ?? '')
   }

@@ -59,9 +59,12 @@ export class ReaderTemporaryVariantOverride {
     this.disabledScope = null; this.revision += 1
   }
   preference(scope: ReaderTemporaryVariantScope | null, sourceIndex: number, pageKey: string,
-    fallback: ReaderVariantPreference): ReaderVariantPreference {
+    fallback: ReaderVariantPreference, keepPrepared: boolean = false): ReaderVariantPreference {
     if (this.isDisabled(scope) && this.disabledScope?.contains(sourceIndex, pageKey) === true &&
-      fallback.variant === 'enhanced') return new ReaderVariantPreference()
+      fallback.variant === 'enhanced') {
+      return keepPrepared ? new ReaderVariantPreference(fallback.variant, fallback.identity, true) :
+        new ReaderVariantPreference()
+    }
     return new ReaderVariantPreference(fallback.variant, fallback.identity)
   }
 }

@@ -177,7 +177,7 @@ export class ReaderPagedSnapshot {
     }
     const processing = this.processingStates.find((value: ReaderProcessingState): boolean =>
       value.sourceIndex === sourceIndex && value.preference.variant === variant)
-    if (processing === undefined || processing.phase === 'unavailable') return false
+    if (processing === undefined || processing.phase === 'unavailable' || processing.reused) return false
     return processing.phase === 'preparing' || !this.frames.some((frame: ReaderPagedFrame): boolean =>
       frame.part.sourceIndex === sourceIndex && frame.asset.phase === 'displayed' &&
       frame.asset.variant === variant && frame.asset.variantIdentity === processing.preference.identity)

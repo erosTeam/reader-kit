@@ -27,6 +27,12 @@ crop caching belong to `ReaderFileCropService` in reader-ui; strength-aware pure
 detection and source-size bounds belong to reader-core. Hosts provide retained
 files/asset identities and their existing strength preference. The host crop model
 and service exports are compatibility names only, including retained Legacy paths.
+
+Temporarily hiding an enhanced image keeps its completed recipe within the
+current resource window. Restoring that recipe does not restart enhancement.
+The native slot can reuse the same page's previously displayed default file
+until a reload or an identity change invalidates it. Current preparation
+priority follows the selected page as the user navigates.
 The original `ReaderFileCropSource` API retains its prior conservative policy;
 explicit host strengths retain their existing thresholds and 1-based Legacy seam
 semantics. Pixel buffer rows use `width * 4`, never native allocation stride.
