@@ -83,6 +83,10 @@ The following are existing preservation requirements, not new feature work:
   retains the existing loading indicator/backdrop until this original is ready.
   A matching decode is insufficient while the entry still hides that original.
   Its existing reveal commit exposes the original and retires feedback together.
+  When native dimensions are published before a continuous row receives them,
+  its matching later metadata must complete the pending decode even if physical
+  rounding leaves the row geometry unchanged. Presentation deduplication must
+  not strand that native receipt or manufacture a new decode from a URI alone.
   Core may retain a displayed resource across a mode switch; a new native
   viewport still waits for its own matching decode before ending this feedback.
   The retained in-place replacement branch keeps already readable pixels.

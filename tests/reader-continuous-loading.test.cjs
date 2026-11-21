@@ -119,3 +119,27 @@ test('mode switch keeps displayed asset without completing a new native cell', a
     }
   } finally { session.close() }
 })
+
+// Execute the native receipt reconciliation used after Core publishes dimensions.
+test('continuous metadata catching up finishes a real pending decode without a second layout', () => {
+  const viewport = fs.readFileSync(path.join(__dirname, '../reader-ui/src/main/ets/ReaderPagedViewport.ets'), 'utf8')
+  const method = viewport.slice(viewport.indexOf('  private publishPendingDecoded()'), viewport.indexOf('  /** Revalidate layout'))
+  const module = {}
+  vm.runInNewContext(ts.transpileModule(`export class Receipt { ${method} }`, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports: module })
+  const value = new module.Receipt()
+  Object.assign(value, { pendingDecodedIdentity: 'native-7', entryMounted: true, decoded: true,
+    decodedRequestId: 7, assetRequestId: 7, decodedWidth: 3880, decodedHeight: 5172,
+    frame: { asset: { kind: 'original', phase: 'displayed', page: { width: 1200, height: 1600 } } },
+    drawableIdentity: () => 'native-7', originalGeometryReady: () => true })
+  const receipts = []
+  value.onDecodedOriginal = identity => receipts.push(identity)
+  value.publishPendingDecoded()
+  assert.deepEqual(receipts, [])
+  value.frame.asset.page = { width: 3880, height: 5172 }
+  value.publishPendingDecoded()
+  value.publishPendingDecoded()
+  assert.deepEqual(receipts, ['native-7'])
+  value.pendingDecodedIdentity = 'retired-native'
+  value.publishPendingDecoded()
+  assert.deepEqual(receipts, ['native-7'])
+})

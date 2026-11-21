@@ -992,6 +992,7 @@ export struct ReaderPagedImage {
 
   @Monitor('frame', 'entryTransition', 'entryLayoutWidth', 'entryLayoutHeight', 'topologyRevision', 'navigationRevision', 'continuousEntry')
   onEntryLayoutChanged(): void {
+    this.publishPendingDecoded()
     this.schedulePresentation()
     this.publishEntryTarget()
     this.scheduleNativeStability()
@@ -1300,6 +1301,21 @@ export struct ReaderPagedImage {
     this.reportInvalidDecodedMetrics()
     this.publishEntryTarget()
     this.schedulePresentation()
+  }
+
+  /** Metadata can catch up without changing the rounded native layout. A prior
+   * composed-frame receipt must still finish the same native decode in that case;
+   * presentation deduplication is not permission to leave its placeholder pending. */
+  private publishPendingDecoded(): void {
+    const identity = this.pendingDecodedIdentity
+    const page = this.frame.asset.page
+    if (identity.length === 0 || !this.entryMounted || !this.decoded ||
+      this.frame.asset.kind !== 'original' || this.frame.asset.phase !== 'displayed' ||
+      this.decodedRequestId !== this.assetRequestId || identity !== this.drawableIdentity() ||
+      !this.originalGeometryReady() || page === null || page.width <= 0 || page.height <= 0 ||
+      Math.abs(page.width / page.height - this.decodedWidth / this.decodedHeight) > 0.000001) return
+    this.pendingDecodedIdentity = ''
+    this.onDecodedOriginal(identity)
   }
 
   /** Revalidate layout on the same decoded native Image; resizing is not a new load. */
