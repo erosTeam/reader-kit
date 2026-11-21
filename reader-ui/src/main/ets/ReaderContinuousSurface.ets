@@ -500,12 +500,6 @@ struct ReaderContinuousList {
       this.viewWidth / this.imageAspectRatio(index)))))
   }
 
-  private rowHeight(index: number): number {
-    // Failure and retry reuse the loading row height. Shrinking only the error
-    // state makes the list jump when the user retries the same page.
-    return Math.max(220, this.imageHeight(index))
-  }
-
   private imageIdentity(key: string, frame: ReaderPagedFrame): string {
     return `${this.snapshot.navigationRevision}:${frame.slotId}:${frame.asset.assetRequestId}:` +
       `${this.rotates(this.snapshot.displayKeys.indexOf(key))}`
@@ -635,17 +629,17 @@ struct ReaderContinuousList {
       const geometryRevision = this.geometryRevision
       const width = this.viewWidth
       const height = this.imageHeight(index)
-      const rowHeight = this.rowHeight(index)
       const anchorTop = this.continuationAnchorKey === this.snapshot.displayKeys[index] ? this.continuationAnchorTop : 0
-      const inset = (rowHeight - height) / 2 - anchorTop
+      // Every cell state allocates imageHeight. A minimum-height inset would
+      // scroll past the body of a sufficiently short page.
       this.positionInFlight = true
       this.scroller.scrollToIndex(index, false, ScrollAlign.START,
-        { extraOffset: LengthMetrics.vp(inset + height * y) })
+        { extraOffset: LengthMetrics.vp(height * y - anchorTop) })
       // scrollToIndex schedules native layout; old getItemRect data is not the
       // requested position. Keep input/observations gated until a frame finishes.
       this.getUIContext().postFrameCallback(new ReaderContinuousAfterLayout((): void => {
         if (this.disposed || epoch !== this.positionEpoch || navigation !== this.snapshot.navigationRevision) return
-        if (geometryRevision !== this.geometryRevision || width !== this.viewWidth || height !== this.imageHeight(index) || rowHeight !== this.rowHeight(index)) {
+        if (geometryRevision !== this.geometryRevision || width !== this.viewWidth || height !== this.imageHeight(index)) {
           this.invalidatePosition()
           this.schedulePosition()
           return

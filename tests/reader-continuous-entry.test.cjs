@@ -52,7 +52,7 @@ function listFixture(ListType = List) {
     active: true, disposed: false, pendingPosition: false, positionInFlight: false, moving: false,
     positionTarget: -1, positionX: 0.5, positionY: 0, rowGeometry: new Map(), geometryRevision: 0, positionEpoch: 1, viewWidth: 400, viewHeight: 800, positionTimer: 0, measureTimer: 0,
     lockedKey: '', lockedIdentity: '', zoomedKey: '', zoomedIdentity: '', cropRegions: new Map(), lastNavigation: f.state.navigationRevision,
-    imageHeight: () => 2400, rowHeight: () => 2400, scheduleMeasure() {},
+    imageHeight: () => 2400, scheduleMeasure() {},
     scroller: { scrollToIndex() {} }, getUIContext: () => ({ postFrameCallback: value => frames.push(value.action) }),
   })
   f.state.continuousCrop = () => ({ top: 0, bottom: 0 })
@@ -80,12 +80,13 @@ test('disappearance invalidates pending token and cancels the hidden entry', () 
 test('metadata refinement during seek rejects old offset and positions again before granting a token', () => {
   const f = listFixture(), offsets = []; let height = 100
   f.state.kind = 'original'; f.state.anchor = { y: 0.5 }
-  f.list.imageHeight = () => height; f.list.rowHeight = () => Math.max(220, height)
+  f.list.imageHeight = () => height
   f.list.scroller.scrollToIndex = (_index, _animate, _align, options) => offsets.push(options.extraOffset)
   f.list.pendingPosition = true; f.list.schedulePosition()
-  assert.equal(offsets[0], 110); assert.equal(f.list.entryPosition, null)
+  // A short native reader row allocates the actual image height with no inset.
+  assert.equal(offsets[0], 50); assert.equal(f.list.entryPosition, null)
   height = 400; f.list.positionTimer = 0; f.frames.shift()()
-  assert.deepEqual(offsets, [110, 200]); assert.equal(f.list.pendingPosition, true)
+  assert.deepEqual(offsets, [50, 200]); assert.equal(f.list.pendingPosition, true)
   assert.equal(f.list.entryPosition, null); f.frames.shift()()
   assert.equal(f.list.pendingPosition, false); assert.equal(f.list.entryPosition.height, 400)
 })
@@ -558,7 +559,6 @@ test('opening and closing a host sheet preserves explicit continuous page select
   f.list.scroller.getItemRect = index => index === 1
     ? { y: 200, height: 600 } : { y: -1600, height: 1800 }
   f.list.imageHeight = index => f.list.scroller.getItemRect(index).height
-  f.list.rowHeight = f.list.imageHeight
   f.list.pendingPosition = true
   f.list.schedulePosition(); f.frames.shift()(); f.list.positionTimer = 0
   assert.equal(observed.at(-1), 1)
