@@ -66,10 +66,13 @@ test('stable paged zoom preserves menu and existing navigation; resolver cannot 
 })
 function list() {
   const h = method('ReaderContinuousSurface', 'ReaderContinuousList', 'imageTap'), calls = [], scrolls = []
+  h.moveViewport = method('ReaderContinuousSurface', 'ReaderContinuousList', 'moveViewport').moveViewport
   Object.assign(h, { active: true, fullyVisible: true, lockedKey: '', createdRevision: 2,
+    viewHeight: 600, releasePosition() {}, source: { totalCount: () => 1 },
+    requestBoundary: intent => h.onBoundary(intent, 2, 3),
     snapshot: { phase: 'ready', topologyRevision: 2, navigationRevision: 3, forItem: () => ({ frames: [{ asset: { phase: 'displayed' } }] }) },
     getUIContext: () => ({ px2vp: x => x / 2, getComponentUtils: () => ({ getRectangleById: () => ({ windowOffset: { x: 100, y: 200 }, size: { width: 800, height: 1200 } }) }) }),
-    onTap: (x, y) => { calls.push([x, y]); return 'next' }, scroller: { scrollBy: (x, y) => scrolls.push([x, y]) } })
+    onTap: (x, y) => { calls.push([x, y]); return 'next' }, scroller: { currentOffset: () => ({yOffset: 100}), isAtEnd: () => false, scrollBy: (x, y) => scrolls.push([x, y]) } })
   return { h, calls, scrolls }
 }
 test('real List uses window viewport, not long image height, and scrolls 75 percent', () => {
@@ -138,4 +141,18 @@ test('configurable double tap interval preserves immediate singles when zoom is 
   assert.deepEqual(events, ['single:10', 'double:21', 'single:30'])
   arbiter.tap(point(40), true, 200); arbiter.down(40, 0); arbiter.cancel(); advance(300)
   assert.equal(events.length, 3, 'a second gesture that becomes a drag must not turn the page')
+})
+
+test('catalog and image loading route chrome and navigation intents without pixel or geometry readiness', () => {
+  for (const phase of ['catalog', 'ready']) {
+    const f = surface()
+    f.host.state.phase = phase
+    f.host.inputTopology = -1
+    f.host.entryTransition = { phase: 'layout', blocksInput: () => true, cancel() { this.phase = 'cancelled' } }
+    assert.equal(f.host.pageTap(.5, .5), 'menu')
+    assert.deepEqual(f.moves, ['menu'])
+    assert.equal(f.host.pageTap(.9, .5), 'right')
+    assert.deepEqual(f.moves, ['menu', 'next'])
+    assert.equal(f.host.entryTransition.phase, 'cancelled')
+  }
 })

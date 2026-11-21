@@ -185,7 +185,7 @@ export struct ReaderSurface {
   private informationNavigation: number = -1
   private shareController: ReaderImageShareController = new ReaderImageShareController()
   private inputConnection: number = 0
-  private inputLocked: boolean = true
+  private inputLocked: boolean = false
   private inputTopology: number = -1
   private touching: boolean = false
   private menuVisible: boolean = false
@@ -880,9 +880,8 @@ export struct ReaderSurface {
 
   private pageTap(x: number, y: number): ReaderTapAction {
     if (!this.active || this.closing || this.chromeDisposed || this.chromeCloseRequested ||
-      this.entryTransition?.blocksInput() || this.state.phase !== 'ready' || this.menuVisible ||
+      this.menuVisible ||
       this.shareBusy || this.saveBusy || this.informationBusy || this.tapZonePreviewVisible || this.previewIndex >= 0 ||
-      this.inputTopology !== this.state.topologyRevision ||
       !Number.isFinite(x) || !Number.isFinite(y)) return 'none'
     const continuous = this.state.policy.layout === 'continuous'
     const session = this.session
@@ -897,7 +896,11 @@ export struct ReaderSurface {
       this.session !== session || this.state.topologyRevision !== topology ||
       this.state.navigationRevision !== navigation || session.snapshot().navigationRevision !== sessionNavigation) return 'none'
     if (action === 'menu') { this.toggleChrome(); return 'menu' }
-    if (continuous || action === 'none') return action
+    if (action === 'none') return action
+    // A pending original/entry geometry cannot veto a navigation intent.
+    // The session owns whether the requested page exists; zoom owns pixels.
+    if (this.entryTransition?.phase === 'layout') this.entryTransition.cancel()
+    if (continuous) return action
     const previous = action === 'previous' ||
       (action === 'left' && this.state.policy.direction === 'ltr') ||
       (action === 'right' && this.state.policy.direction === 'rtl')
@@ -925,10 +928,11 @@ export struct ReaderSurface {
   }
 
   private externalMove(intent: ReaderMoveIntent, continuousViewport: boolean = true): boolean {
-    if (this.entryTransition?.phase === 'layout' || !this.active || this.state.phase !== 'ready' ||
+    if (!this.active || this.closing || this.chromeDisposed || this.chromeCloseRequested ||
       this.touching || this.menuVisible || this.shareBusy || this.saveBusy || this.informationBusy ||
       this.tapZonePreviewVisible || this.previewIndex >= 0 ||
-      this.inputTopology !== this.state.topologyRevision || this.inputLocked) return false
+      this.inputLocked) return false
+    if (this.entryTransition?.phase === 'layout') this.entryTransition.cancel()
     return this.requestMove(intent, continuousViewport)
   }
 

@@ -58,6 +58,11 @@ Only visible-position observation advances reading progress. Its chapter/policy
 check can use `displayPolicyForUnit` without rebuilding the render window.
 Continuous zoom starts an animation transaction only on double tap. Loading
 and direct gesture transforms apply without opening a layout transaction.
+Loading feedback is display-only and never owns input. The catalog canvas
+routes taps before pages exist; chrome does not wait for a catalog, decoded
+image, or page geometry. With a page map, navigation can leave a pending or
+failed image; only zoom requires displayed pixels. An explicit navigation
+intent cancels a pending entry-geometry wait.
 A catalog failure still exposes reader chrome from its own surface. Retry
 stays a separate action, and host settings remain accessible without pages.
 

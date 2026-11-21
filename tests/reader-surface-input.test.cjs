@@ -16,6 +16,9 @@ function evaluate(source) {
   }).outputText, {
     exports, require: name => {
       if (name === '@reader-kit/core') return core
+      if (['./ReaderPageStatus','./ReaderThumbnailRail','./ReaderChrome'].includes(name)) return {}
+      if (name === './ReaderEntryTransition') return { ReaderEntryTransition }
+      if (name === './ReaderImageEffects') return evaluate(fs.readFileSync(path.join(uiPath, 'ReaderImageEffects.ets'), 'utf8').split('interface ReaderImageEffectOverlayParams')[0])
       if (name === './ReaderChromeAppearance') return evaluate(fs.readFileSync(path.join(uiPath, 'ReaderChromeAppearance.ets'), 'utf8'))
       if (name === './ReaderPagerSurface') return { ReaderPagerCommand: class ReaderPagerCommand {
         constructor(serial, targetIndex, topologyRevision, navigationRevision) {
@@ -39,7 +42,7 @@ function evaluate(source) {
     Builder() {}, Trace() {}, Param() {}, Require() {}, Event() {}, Local() {}, Computed() {}, BuilderParam() {}, Monitor: () => () => {},
     ImageInterpolation: { Low: 'low', Medium: 'medium', High: 'high' },
     Curve: { FastOutSlowIn: 'curve' },
-    Color: { Black: '#000000', White: '#FFFFFF' },
+    Color: { Black: '#000000', White: '#FFFFFF', Transparent: '#00000000' }, BlendMode: {SRC_OVER: 0},
     console: { info() {} },
   })
   return exports
@@ -65,11 +68,13 @@ function scenario(phase = null) {
   const surface = new ReaderSurface()
   surface.active = true; surface.state.phase = 'ready'; surface.state.topologyRevision = 7
   surface.inputTopology = 7; surface.inputLocked = false
+  surface.state.pagerKeys = ['previous', 'current', 'next']; surface.state.pagerIndex = 1
   const moves = []; let navigation = 10; let reads = 0
   surface.session = {
-    cancelOriginalPreparations() {},
-    snapshot() { reads++; const state = new core.ReaderPagedSnapshot(); state.navigationRevision = navigation; return state },
+    cancelOriginalPreparations() {}, setAutomaticPagingBusy() {},
+    snapshot() { reads++; const state = new core.ReaderPagedSnapshot(); state.navigationRevision = navigation; state.pagerKeys = ['previous','current','next']; state.pagerIndex = 1; return state },
     move(intent) { moves.push(intent); navigation++ },
+    selectPagerIndex(index) { this.move(index > 1 ? 'next' : 'previous') },
   }
   const part = new core.ReaderDisplayPart(new core.ReaderUnitKey('eh', 'work', 'work'), null, 0)
   if (phase !== null) {
@@ -81,22 +86,15 @@ function scenario(phase = null) {
   return { surface, input, moves, reads: () => reads }
 }
 
-test('actual externalMove rejects layout before touching the session, including already queued input', () => {
-  const value = scenario('moving')
-  const queued = () => value.input.move('next')
-  value.surface.entryTransition.phase = 'layout'
-  assert.equal(queued(), false)
-  assert.equal(value.input.move('previous'), false)
-  assert.deepEqual(value.moves, []); assert.equal(value.reads(), 0)
-  assert.equal(value.surface.entryTransition.phase, 'layout')
-})
-
-test('leaving layout restores the existing move path without changing active or replacing the input owner', () => {
+// User contract: explicit navigation cancels a pending entry layout; decoded
+// pixels are required for zoom, never for leaving an existing mapped page.
+test('explicit navigation cancels pending layout and reaches the existing page map', () => {
   const value = scenario('layout')
-  assert.equal(value.input.move('next'), false)
-  value.surface.entryTransition.phase = 'moving'
   assert.equal(value.input.move('next'), true)
-  assert.equal(value.surface.active, true); assert.deepEqual(value.moves, ['next'])
+  assert.deepEqual(value.moves, ['next'])
+  assert.equal(value.surface.entryTransition.phase, 'cancelled')
+  assert.equal(value.input.move('previous'), true)
+  assert.deepEqual(value.moves, ['next', 'previous'])
 })
 
 test('null, moving, waiting, revealing and terminal entries retain the existing logical input semantics', () => {
@@ -170,7 +168,7 @@ test('enabled page-turn animation emits one adjacent native pager command before
   assert.equal(value.surface.pagerCommand.topologyRevision, 7)
   assert.equal(value.surface.pagerCommand.navigationRevision, 10)
 
-  value.surface.state.displayIndex = 0
+  value.surface.state.displayIndex = 0; value.surface.state.pagerIndex = 0
   assert.equal(value.input.move('previous'), false)
   assert.equal(value.surface.pagerCommand.serial, 1)
 })
@@ -275,12 +273,12 @@ test('temporary enhancement override survives an operational pause, changes only
     cancelRetainedProcessedVariantReplacements: indexes => cancels.push(indexes),
     cancelProcessedVariantPreparations: indexes => preparationCancels.push(Array.from(indexes)),
     selectVariant: (...args) => { selects.push(args); return Promise.resolve('changed') },
-    setViewportActive() {},
+    setViewportActive() {}, setAutomaticPagingBusy() {},
   }
   // Exercise the real active monitor while keeping unrelated share/save UI
   // presenters out of this state-contract fixture.
-  surface.shareController = { update() {} }
-  surface.saveController = { update() {} }
+  surface.shareController = { update() {}, busy: () => false }
+  surface.saveController = { update() {}, busy: () => false }
 
   surface.toggleTemporaryVariant()
   let scope = surface.temporaryVariantScope(state)
@@ -324,7 +322,7 @@ test('temporary enhancement override survives an operational pause, changes only
 test('host interaction signal is edge-triggered and clears after the gesture', () => {
   const surface = new ReaderSurface(), events = []
   Object.assign(surface, { active: true, closing: false, chromeDisposed: false, inputLocked: false,
-    activitySink: { interactionBusyChanged: busy => events.push(busy) } })
+    session: {setAutomaticPagingBusy() {}}, activitySink: { interactionBusyChanged: busy => events.push(busy) } })
   surface.reportInteractionBusy()
   surface.touching = true; surface.reportInteractionBusy(); surface.reportInteractionBusy()
   surface.touching = false; surface.reportInteractionBusy()
@@ -333,15 +331,16 @@ test('host interaction signal is edge-triggered and clears after the gesture', (
   assert.deepEqual(events, [true, false, true, false])
 })
 
-test('the pre-existing active, session, interaction and topology locks still reject external moves', () => {
+test('the pre-existing active, operation and gesture locks still reject external moves', () => {
   for (const [field, locked] of [['active', false], ['touching', true], ['menuVisible', true],
-    ['shareBusy', true], ['informationBusy', true], ['previewIndex', 0], ['inputTopology', 6], ['inputLocked', true]]) {
+    ['shareBusy', true], ['informationBusy', true], ['previewIndex', 0], ['inputLocked', true]]) {
     const value = scenario('waiting'); value.surface[field] = locked
     assert.equal(value.input.move('next'), false, field)
     assert.deepEqual(value.moves, []); assert.equal(value.reads(), 0)
   }
-  const opening = scenario(); opening.surface.state.phase = 'opening'
-  assert.equal(opening.input.move('next'), false); assert.deepEqual(opening.moves, [])
+  const opening = scenario(); opening.surface.state.phase = 'catalog'
+  opening.surface.inputTopology = -1
+  assert.equal(opening.input.move('next'), true); assert.deepEqual(opening.moves, ['next'])
 })
 
 test('unit boundary intent is accepted only for a current available adjacent unit', () => {

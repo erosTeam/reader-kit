@@ -157,6 +157,8 @@ class ReaderPagerDataSource implements IDataSource {
 /** Native page container only. Session ownership and diagnostic chrome stay outside. */
 @ComponentV2
 export struct ReaderPagerSurface {
+  @Local private tapWidth: number = 0
+  @Local private tapHeight: number = 0
   @Param loadingInk: ResourceColor = Color.White
   @Param imageEffects: ReaderImageEffects = new ReaderImageEffects()
   @Param imageInterpolation: ImageInterpolation = ImageInterpolation.Low
@@ -214,6 +216,16 @@ export struct ReaderPagerSurface {
       }
     }
     .width('100%').height('100%').clip(true)
+    .onSizeChange((_old: SizeOptions, size: SizeOptions): void => {
+      this.tapWidth = Number(size.width); this.tapHeight = Number(size.height)
+    })
+    .onClick((event: ClickEvent): void => {
+      // Before a page owns input, the existing catalog canvas routes taps.
+      // No transparent overlay is placed over the native pager.
+      if (this.active && this.snapshot.pagerKeys.length === 0 && this.tapWidth > 0 && this.tapHeight > 0) {
+        this.onTap(event.x / this.tapWidth, event.y / this.tapHeight)
+      }
+    })
   }
 }
 

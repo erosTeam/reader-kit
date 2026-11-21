@@ -111,6 +111,7 @@ struct ReaderLoadingBar {
           .borderRadius(LOADING_BAR_RADIUS)
           .animation({ duration: LOADING_PROGRESS_ANIM_DURATION, curve: Curve.EaseOut })
           .transition(TransitionEffect.IDENTITY)
+          .hitTestBehavior(HitTestMode.None)
       } else if (this.indeterminateVisible) {
         Row()
           .width(this.sliderWidth())
@@ -121,6 +122,7 @@ struct ReaderLoadingBar {
           .animation({ duration: LOADING_INDETERMINATE_ANIM_DURATION, curve: Curve.EaseInOut,
             iterations: -1, playMode: PlayMode.Alternate })
           .transition(TransitionEffect.IDENTITY)
+          .hitTestBehavior(HitTestMode.None)
           .onAppear((): void => { this.startIndeterminateAnimation() })
       } else {
         Row()
@@ -129,6 +131,7 @@ struct ReaderLoadingBar {
           .backgroundColor(this.barFillColor)
           .borderRadius(LOADING_BAR_RADIUS)
           .transition(TransitionEffect.IDENTITY)
+          .hitTestBehavior(HitTestMode.None)
       }
     }
     .width(LOADING_BAR_WIDTH_PERCENT)
@@ -137,6 +140,7 @@ struct ReaderLoadingBar {
     .backgroundColor(this.barTrackColor)
     .borderRadius(LOADING_BAR_RADIUS)
     .clip(true)
+    .hitTestBehavior(HitTestMode.None)
     // Native lists can build and lay out a cached page before it enters the viewport.
     .onVisibleAreaChange([0], (_expanding: boolean, ratio: number): void => {
       this.inViewport = ratio > 0
@@ -193,6 +197,7 @@ export struct ReaderLoadingStage {
       .fontSize(LOADING_STAGE_FONT)
       .fontColor(this.loadingForeground())
       .textAlign(TextAlign.Center)
+      .hitTestBehavior(HitTestMode.None)
   }
 
   @Builder
@@ -205,6 +210,7 @@ export struct ReaderLoadingStage {
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .padding(LOADING_STAGE_PADDING)
+    .hitTestBehavior(HitTestMode.None)
   }
 
   build() {
@@ -215,6 +221,7 @@ export struct ReaderLoadingStage {
         }
         .width(LOADING_BAR_WIDTH_PERCENT)
         .constraintSize({ maxWidth: LOADING_BAR_MAX_WIDTH + LOADING_STAGE_PADDING * 2 })
+        .hitTestBehavior(HitTestMode.None)
         .alignItems(HorizontalAlign.Center)
         .padding({
           top: LOADING_STAGE_PADDING + LOADING_TRANSITION_PANEL_BOTTOM,
@@ -229,6 +236,6 @@ export struct ReaderLoadingStage {
       } else {
         this.LoadingContent()
       }
-    }.width('100%').height('100%').hitTestBehavior(HitTestMode.Transparent)
+    }.width('100%').height('100%').hitTestBehavior(HitTestMode.None)
   }
 }

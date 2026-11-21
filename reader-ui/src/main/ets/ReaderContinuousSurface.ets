@@ -92,6 +92,7 @@ export struct ReaderContinuousSurface {
   @Event onContinuationRetry: (key: string, topology: number, navigation: number) => void = () => {}
 
   @Local private measuredViewportWidth: number = 0
+  @Local private measuredViewportHeight: number = 0
 
   build() {
     Stack() {
@@ -126,6 +127,13 @@ export struct ReaderContinuousSurface {
       .onAreaChange((_old: Area, area: Area): void => {
         const width = Number(area.width)
         if (Number.isFinite(width) && width > 1) this.measuredViewportWidth = width
+        this.measuredViewportHeight = Number(area.height)
+      })
+      .onClick((event: ClickEvent): void => {
+        if (this.active && this.snapshot.displayKeys.length === 0 &&
+          this.measuredViewportWidth > 0 && this.measuredViewportHeight > 0) {
+          this.onTap(event.x / this.measuredViewportWidth, event.y / this.measuredViewportHeight)
+        }
       })
   }
 }
@@ -399,7 +407,7 @@ struct ReaderContinuousList {
   private imageTap(key: string, windowX: number, windowY: number): void {
     if (!this.active || this.disposed || this.pendingPosition || this.positionInFlight || !this.fullyVisible ||
       this.moving || (this.lockedKey.length > 0 && this.lockedKey !== key) || this.snapshot.phase !== 'ready' ||
-      this.createdRevision !== this.snapshot.topologyRevision || this.entryTransition?.blocksInput() ||
+      this.createdRevision !== this.snapshot.topologyRevision ||
       !Number.isFinite(windowX) || !Number.isFinite(windowY)) return
     const frame = this.snapshot.forItem(key).frames[0]
     if (frame === undefined && key !== this.snapshot.continuousContinuationKey) return
@@ -426,8 +434,8 @@ struct ReaderContinuousList {
   private moveViewport(intent: ReaderMoveIntent): boolean {
     if (!this.active || this.disposed || this.pendingPosition || this.positionInFlight || !this.fullyVisible ||
       this.moving || this.lockedKey.length > 0 || this.snapshot.phase !== 'ready' ||
-      this.createdRevision !== this.snapshot.topologyRevision || this.entryTransition?.blocksInput() ||
-      this.viewHeight <= 1) return false
+      this.createdRevision !== this.snapshot.topologyRevision || this.viewHeight <= 1) return false
+    if (this.entryTransition?.phase === 'layout') this.entryTransition.cancel()
     try {
       this.boundaryIntent += 1
       const offset = this.scroller.currentOffset().yOffset
