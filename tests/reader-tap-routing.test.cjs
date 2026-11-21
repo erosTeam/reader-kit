@@ -97,7 +97,7 @@ test('continuous taps cross only at the actual scroll edge', () => {
   }
 })
 test('real List rejects stale or locked geometry and callback navigation changes', () => {
-  for (const field of ['disposed', 'pendingPosition', 'positionInFlight', 'moving']) {
+  for (const field of ['disposed', 'moving']) {
     const f = list(); f.h[field] = true; f.h.imageTap('row', 150, 400); assert.deepEqual(f.calls, [])
   }
   const f = list(); f.h.onTap = () => { f.h.snapshot.navigationRevision++; return 'next' }
@@ -155,4 +155,28 @@ test('catalog and image loading route chrome and navigation intents without pixe
     assert.deepEqual(f.moves, ['menu', 'next'])
     assert.equal(f.host.entryTransition.phase, 'cancelled')
   }
+})
+
+test('continuous chrome and explicit navigation remain available during entry positioning', () => {
+  for (const field of ['pendingPosition', 'positionInFlight']) {
+    const f = list()
+    f.h[field] = true
+    f.h.onTap = () => { f.calls.push('menu'); return 'menu' }
+    f.h.imageTap('loading-row', 150, 400)
+    assert.deepEqual(f.calls, ['menu'])
+    f.h.releasePosition = () => { f.h.pendingPosition = false; f.h.positionInFlight = false }
+    f.h.onTap = () => 'next'
+    f.h.imageTap('loading-row', 150, 400)
+    assert.deepEqual(f.scrolls, [[0, 450]])
+  }
+})
+
+test('a continuous tap owner survives image readiness but retires on navigation', () => {
+  const h = method('ReaderContinuousZoomImage', 'ReaderContinuousZoomImage', 'tapOwnerIdentity')
+  Object.assign(h, { navigation: 4, frame: { slotId: 6, part: { sourceIndex: 9 }, asset: { requestId: 0 } }, rotateClockwise: false })
+  const before = h.tapOwnerIdentity()
+  h.frame.asset.requestId = 1
+  assert.equal(h.tapOwnerIdentity(), before)
+  h.navigation++
+  assert.notEqual(h.tapOwnerIdentity(), before)
 })

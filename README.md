@@ -62,7 +62,9 @@ Loading feedback is display-only and never owns input. The catalog canvas
 routes taps before pages exist; chrome does not wait for a catalog, decoded
 image, or page geometry. With a page map, navigation can leave a pending or
 failed image; only zoom requires displayed pixels. An explicit navigation
-intent cancels a pending entry-geometry wait.
+intent cancels a pending entry-geometry wait. Continuous tap arbitration belongs to the row/navigation identity;
+an image request becoming ready cannot cancel a pending chrome tap. Entry
+positioning gates automatic positioning and zoom, not explicit chrome/navigation.
 A catalog failure still exposes reader chrome from its own surface. Retry
 stays a separate action, and host settings remain accessible without pages.
 

@@ -52,10 +52,10 @@ export struct ReaderContinuousZoomImage {
   private tapIdentity: string = ''
   private tapArbiter: ReaderTapArbiter = new ReaderTapArbiter(
     (point: ReaderTapPoint): void => {
-      if (this.canTap() && this.tapIdentity === this.identity) this.onTap(point.windowX, point.windowY)
+      if (this.canTap() && this.tapIdentity === this.tapOwnerIdentity()) this.onTap(point.windowX, point.windowY)
     },
     (point: ReaderTapPoint): void => {
-      if (this.tapIdentity === this.identity) this.doubleTapAt(point.x, point.y)
+      if (this.tapIdentity === this.tapOwnerIdentity()) this.doubleTapAt(point.x, point.y)
     })
   private lastZoomResetSerial: number = 0
 
@@ -78,7 +78,7 @@ export struct ReaderContinuousZoomImage {
   onContentChanged(): void {
     this.retainedFrameValue = readerRetainedFrame(this.frame, this.retainedFrameValue)
     const identity = `${this.navigation}:${this.frame.slotId}:${this.frame.asset.assetRequestId}:${this.rotateClockwise}`
-    if (!this.active || !this.interactionAllowed || (this.tapIdentity.length > 0 && this.tapIdentity !== identity)) {
+    if (!this.active || (this.tapIdentity.length > 0 && this.tapIdentity !== this.tapOwnerIdentity())) {
       this.tapArbiter.cancel()
     }
     if (identity !== this.identity || this.frame.asset.phase !== 'displayed') {
@@ -106,8 +106,15 @@ export struct ReaderContinuousZoomImage {
       pixels > 0 ? pixels / this.componentWidth : 2)
   }
 
+  private tapOwnerIdentity(): string {
+    // A tap belongs to this row/navigation, not to a download/decode epoch.
+    return `${this.navigation}:${this.frame.slotId}:${this.frame.part.sourceIndex}:${this.rotateClockwise}`
+  }
+
   private canTap(): boolean {
-    return this.active && this.interactionAllowed && this.componentWidth > 1
+    // The List validates viewport/gesture ownership. Image positioning and decode
+    // readiness only gate zoom, never the tap that opens chrome or navigates.
+    return this.active && this.componentWidth > 1
   }
   private presentedFrame(): ReaderPagedFrame { return this.retainedFrameValue ?? this.frame }
 
@@ -328,7 +335,7 @@ export struct ReaderContinuousZoomImage {
         if (this.canTap() && !this.pinching && this.tapSequence.allowed() && location !== undefined &&
           Number.isFinite(location.x) && Number.isFinite(location.y) &&
           Number.isFinite(location.windowX) && Number.isFinite(location.windowY)) {
-          this.tapIdentity = this.identity
+          this.tapIdentity = this.tapOwnerIdentity()
           this.tapArbiter.tap(new ReaderTapPoint(location.x, location.y, location.windowX, location.windowY),
             this.doubleTapEnabled, this.doubleTapIntervalMs)
         }

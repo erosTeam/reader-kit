@@ -405,7 +405,7 @@ struct ReaderContinuousList {
   }
 
   private imageTap(key: string, windowX: number, windowY: number): void {
-    if (!this.active || this.disposed || this.pendingPosition || this.positionInFlight || !this.fullyVisible ||
+    if (!this.active || this.disposed || !this.fullyVisible ||
       this.moving || (this.lockedKey.length > 0 && this.lockedKey !== key) || this.snapshot.phase !== 'ready' ||
       this.createdRevision !== this.snapshot.topologyRevision ||
       !Number.isFinite(windowX) || !Number.isFinite(windowY)) return
@@ -422,7 +422,7 @@ struct ReaderContinuousList {
         width <= 0 || height <= 0 ||
         x < 0 || y < 0 || x > width || y > height) return
       const action = this.onTap(x / width, y / height)
-      if (!this.active || this.disposed || this.pendingPosition || this.positionInFlight ||
+      if (!this.active || this.disposed ||
         this.lockedKey.length > 0 || navigation !== this.snapshot.navigationRevision) return
       if (action === 'previous' || action === 'left') this.moveViewport('previous')
       else if (action === 'next' || action === 'right') this.moveViewport('next')
@@ -432,9 +432,11 @@ struct ReaderContinuousList {
   /** Explicit taps and hardware keys scroll the same native viewport, not image indices.
    * Keep the established 25% overlap and native observed-position/progress owner. */
   private moveViewport(intent: ReaderMoveIntent): boolean {
-    if (!this.active || this.disposed || this.pendingPosition || this.positionInFlight || !this.fullyVisible ||
+    if (!this.active || this.disposed || !this.fullyVisible ||
       this.moving || this.lockedKey.length > 0 || this.snapshot.phase !== 'ready' ||
       this.createdRevision !== this.snapshot.topologyRevision || this.viewHeight <= 1) return false
+    // An explicit navigation supersedes a pending automatic entry position.
+    if (this.pendingPosition || this.positionInFlight) this.releasePosition()
     if (this.entryTransition?.phase === 'layout') this.entryTransition.cancel()
     try {
       this.boundaryIntent += 1
