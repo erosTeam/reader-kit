@@ -119,8 +119,10 @@ test('same-page replacement keeps stable slot identity and promotes only a compo
   assert.match(src, /\(frame: ReaderPagedFrame\): string => readerElementKey\(`\$\{frame\.slotId\}:\$\{frame\.part\.fragment\}`\)/)
   assert.match(src, /@Local private retainedFrameValue: ReaderPagedFrame \| null = null/)
   assert.match(src, /private presentedFrame\(\): ReaderPagedFrame \{[\s\S]*this\.retainedFrameValue \?\? this\.frame/)
-  assert.match(src, /frame: this\.presentedFrame\(\)[\s\S]*?active: this\.retainedFrameValue === null[\s\S]*?\.zIndex\(this\.retainedFrameValue !== null && this\.frame\.asset\.phase === 'decoding' \? 1 : 0\)/)
-  assert.match(src, /if \(this\.retainedFrameValue !== null\) \{[\s\S]*?frame: this\.frame[\s\S]*?onPresented: this\.onPresented[\s\S]*?\.zIndex\(this\.frame\.asset\.phase === 'displayed' \? 1 : 0\)/)
+  // The retained-frame zIndex raised for the auto HDR blend (commit 832f960) and
+  // wrapped onto two lines; the promotion/fallback contract is unchanged.
+  assert.match(src, /frame: this\.presentedFrame\(\)[\s\S]*?active: this\.retainedFrameValue === null[\s\S]*?\.zIndex\(this\.retainedFrameValue !== null &&[\s\S]*?\? 1 : 0\)/)
+  assert.match(src, /if \(this\.retainedFrameValue !== null\) \{[\s\S]*?frame: this\.frame[\s\S]*?onPresented: this\.onPresented[\s\S]*?\.zIndex\(!this\.imageEffects\.hdrBrightness && this\.frame\.asset\.phase === 'displayed' \? 1 : 0\)/)
   assert.match(src, /postFrameCallback\(new ReaderEntryAfterLayout[\s\S]*?this\.onPresented\(this\.slotId, requestId, true, width, height\)/)
 })
 

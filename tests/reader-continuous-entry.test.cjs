@@ -283,15 +283,18 @@ test('continuous measured container can authorize flight while the original URI 
 })
 
 test('continuous waiting permits current loading-page taps but motion and stale topology do not', () => {
+  // Motion ownership moved to the list's own `moving` flag when continuous taps
+  // were decoupled from entry/image positioning (commit 8273785): the entry
+  // transition no longer gates navigation taps.
   const f = listFixture(), actions = []
   f.frame.asset.phase = 'asset'
-  Object.assign(f.list, { fullyVisible: true, createdRevision: f.state.topologyRevision,
+  Object.assign(f.list, { fullyVisible: true, createdRevision: f.state.topologyRevision, moving: false,
     getUIContext: () => ({ px2vp: x => x, getComponentUtils: () => ({ getRectangleById: () =>
       ({ windowOffset: { x: 0, y: 0 }, size: { width: 400, height: 800 } }) }) }),
     onTap: () => { actions.push('menu'); return 'menu' } })
-  f.transition.phase = 'moving'; f.list.imageTap('selected', 200, 400)
+  f.list.moving = true; f.list.imageTap('selected', 200, 400)
   assert.equal(actions.length, 0)
-  f.transition.phase = 'waiting'; f.list.imageTap('selected', 200, 400)
+  f.list.moving = false; f.list.imageTap('selected', 200, 400)
   assert.deepEqual(actions, ['menu'])
   f.list.createdRevision--; f.list.imageTap('selected', 200, 400)
   assert.equal(actions.length, 1)
@@ -305,7 +308,11 @@ test('plain tap remains available during loading without enabling image zoom', (
     frame: { asset: { phase: 'asset' } } })
   assert.equal(zoom.canTap(), true); assert.equal(zoom.canInteract(), false)
   zoom.frame.asset.phase = 'displayed'; assert.equal(zoom.canInteract(), true)
-  zoom.interactionAllowed = false; assert.equal(zoom.canTap(), false)
+  // Tap arbitration belongs to the row/navigation identity; positioning readiness
+  // gates zoom only (commits 8273785/8c9425e: loading feedback never owns input).
+  zoom.interactionAllowed = false
+  assert.equal(zoom.canTap(), true)
+  assert.equal(zoom.canInteract(), false)
 })
 
 // Native regression 072: an earlier visible row can receive dimensions after

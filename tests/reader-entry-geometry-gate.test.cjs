@@ -221,7 +221,11 @@ test('real session presentation refines zero metadata without changing navigatio
   assert.equal(after.topologyRevision, before.topologyRevision)
   assert.ok(after.selectionId > before.selectionId)
   assert.equal(after.observedAnchor, null)
-  assert.ok(observed.some(snapshot => snapshot.frames[0].asset.phase === 'displayed' && snapshot.frames[0].asset.page.width === 0))
+  // Presentation and measured original geometry are one publication (reader-kit consumer contract).
+  // The superseded expectation required an intermediate displayed frame with zero width.
+  const presented = observed.filter(snapshot => snapshot.frames[0].asset.phase === 'displayed')
+  assert.ok(presented.length > 0)
+  assert.ok(presented.every(snapshot => snapshot.frames[0].asset.page.width === 600 && snapshot.frames[0].asset.page.height === 900))
   assert.ok(observed.every(snapshot => !gate.cancel(snapshot.frames, 'layout')))
   session.close()
 })

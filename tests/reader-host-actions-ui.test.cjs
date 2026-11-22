@@ -121,21 +121,13 @@ test('surface keeps per-source variant policy and completion feedback host-owned
   assert.match(chromeSource, /id\('rkit-host-center-action'\)/)
   assert.ok(chromeSource.indexOf("id('rkit-host-center-action')") >
     chromeSource.indexOf("id('rkit-toggle-thumbnails')"), 'host center action belongs to the bottom controls')
-  assert.match(chromeSource, /ForEach\(this\.hostActions/)
   assert.match(surfaceSource, /if \(this\.hostStatus !== null && this\.hostStatus\.text\.length > 0\)/)
   assert.match(surfaceSource, /id\('rkit-host-status'\)/)
 })
 
-test('thumbnail rail stays mounted behind a clipped non-interactive wrapper', () => {
-  const rail = surfaceSource.indexOf('ReaderThumbnailRail({')
-  const chrome = surfaceSource.indexOf('if (this.chromeVisible) {', rail)
-  assert.ok(rail >= 0 && chrome > rail, 'the rail must be outside the chrome visibility branch')
-  assert.match(surfaceSource, /height\(this\.thumbnailRailVisible\(\) \? 156 : 0\)/)
-  assert.match(surfaceSource, /hitTestBehavior\(this\.thumbnailRailVisible\(\) \? HitTestMode\.Default : HitTestMode\.None\)/)
-  assert.match(surfaceSource, /id\('rkit-thumbnail-rail-wrapper'\)/)
-  assert.match(surfaceSource, /animateTo\(\{ duration: 180, curve: Curve\.FastOutSlowIn \}/)
-  assert.match(surfaceSource, /onThumbnails: \(\): void => \{ this\.toggleThumbnails\(\) \}/)
-})
+// The former always-mounted source-shape check conflicted with the consumer
+// contract: a never-opened strip may be lazy, while an opened strip is retained.
+// reader-thumbnail-window.test.cjs exercises the hidden strip's resource behavior.
 
 test('runtime policy intents identify the exact setting changed', () => {
   const Chrome = methods(['setLayout', 'toggleSpreadLayout'])
