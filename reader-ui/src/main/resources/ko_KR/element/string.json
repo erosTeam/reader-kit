@@ -1,0 +1,292 @@
+{
+  "string": [
+    {
+      "name": "rkit_original_enable_both",
+      "value": "두 페이지 모두 원본 사용"
+    },
+    {
+      "name": "rkit_original_disable_both",
+      "value": "두 페이지 모두 원본 사용 중지"
+    },
+    {
+      "name": "rkit_original_failed",
+      "value": "페이지 %s의 원본 로드 불가"
+    },
+    {
+      "name": "rkit_auto_read_start",
+      "value": "자동 페이지 전환 시작"
+    },
+    {
+      "name": "rkit_auto_read_stop",
+      "value": "자동 페이지 전환 중지"
+    },
+    {
+      "name": "rkit_save_image",
+      "value": "이미지 저장"
+    },
+    {
+      "name": "rkit_save_both",
+      "value": "두 페이지 모두 저장"
+    },
+    {
+      "name": "rkit_save_success",
+      "value": "이미지 저장됨"
+    },
+    {
+      "name": "rkit_save_failed",
+      "value": "이미지 저장 실패"
+    },
+    {
+      "name": "rkit_save_partial",
+      "value": "%d / %d개 이미지 저장됨"
+    },
+    {
+      "name": "rkit_more",
+      "value": "더보기"
+    },
+    {
+      "name": "rkit_image_info",
+      "value": "이미지 정보"
+    },
+    {
+      "name": "rkit_reload_source",
+      "value": "이미지 소스 다시 로드"
+    },
+    {
+      "name": "rkit_reset_zoom",
+      "value": "확대비율 초기화"
+    },
+    {
+      "name": "rkit_info_title",
+      "value": "이미지 정보 · 페이지 %d"
+    },
+    {
+      "name": "rkit_info_left",
+      "value": "왼쪽 · 페이지 %d"
+    },
+    {
+      "name": "rkit_info_right",
+      "value": "오른쪽 · 페이지 %d"
+    },
+    {
+      "name": "rkit_unknown",
+      "value": "알 수 없음"
+    },
+    {
+      "name": "rkit_info_format",
+      "value": "포맷: "
+    },
+    {
+      "name": "rkit_info_size",
+      "value": "크기: "
+    },
+    {
+      "name": "rkit_info_current",
+      "value": "현재: "
+    },
+    {
+      "name": "rkit_info_dimensions",
+      "value": "표시 크기: "
+    },
+    {
+      "name": "rkit_info_source",
+      "value": "원본 이미지"
+    },
+    {
+      "name": "rkit_info_resampled",
+      "value": "리샘플링된 이미지"
+    },
+    {
+      "name": "rkit_info_enhanced",
+      "value": "강화된 이미지"
+    },
+    {
+      "name": "rkit_info_translated",
+      "value": "번역된 이미지"
+    },
+    {
+      "name": "rkit_info_original_available",
+      "value": "원본: 사용 가능"
+    },
+    {
+      "name": "rkit_info_original_unavailable",
+      "value": "원본: 사용 불가능"
+    },
+    {
+      "name": "rkit_info_failed",
+      "value": "이미지 정보를 읽을 수 없습니다. 다시 시도해주세요."
+    },
+    {
+      "name": "rkit_ok",
+      "value": "확인"
+    },
+    {
+      "name": "rkit_share_image",
+      "value": "현재 이미지를 공유"
+    },
+    {
+      "name": "rkit_share_failed",
+      "value": "공유할 수 없습니다. 다시 시도해주세요."
+    },
+    {
+      "name": "rkit_thumbnail_unavailable",
+      "value": "미리보기 없음"
+    },
+    {
+      "name": "rkit_close",
+      "value": "뒤로"
+    },
+    {
+      "name": "rkit_runtime_settings",
+      "value": "현재 세션의 읽기 모드"
+    },
+    {
+      "name": "rkit_seek_page",
+      "value": "페이지로 이동"
+    },
+    {
+      "name": "rkit_catalog_failed",
+      "value": "페이지 카탈로그를 불러올 수 없습니다."
+    },
+    {
+      "name": "rkit_release_metrics",
+      "value": "해제 크기"
+    },
+    {
+      "name": "rkit_image_failed",
+      "value": "이미지 로드 실패"
+    },
+    {
+      "name": "rkit_image_retry_hint",
+      "value": "이미지 다시 로드하려면 다시 시도해주세요."
+    },
+    {
+      "name": "rkit_lab_title",
+      "value": "공유 리더 · D3"
+    },
+    {
+      "name": "rkit_lab_scope",
+      "value": "디버그 연동 · 읽기 진행 상황과 설정은 저장되지 않음"
+    },
+    {
+      "name": "rkit_retry",
+      "value": "다시 시도"
+    },
+    {
+      "name": "rkit_previous_page",
+      "value": "이전 페이지"
+    },
+    {
+      "name": "rkit_next_page",
+      "value": "다음 페이지"
+    },
+    {
+      "name": "rkit_thumbnail",
+      "value": "썸네일"
+    },
+    {
+      "name": "rkit_original",
+      "value": "원본"
+    },
+    {
+      "name": "rkit_previous_unit",
+      "value": "이전 장"
+    },
+    {
+      "name": "rkit_next_unit",
+      "value": "다음 장"
+    },
+    {
+      "name": "rkit_single",
+      "value": "한 페이지"
+    },
+    {
+      "name": "rkit_shift_spread",
+      "value": "두 페이지를 한 페이지 앞으로 이동"
+    },
+    {
+      "name": "rkit_spread_split",
+      "value": "분할형 두 페이지로 변경"
+    },
+    {
+      "name": "rkit_spread_joined",
+      "value": "결합형 두 페이지로 변경"
+    },
+    {
+      "name": "rkit_vertical_paged",
+      "value": "세로 페이지"
+    },
+    {
+      "name": "rkit_spread",
+      "value": "두 페이지"
+    },
+    {
+      "name": "rkit_continuous",
+      "value": "연속"
+    },
+    {
+      "name": "rkit_ltr",
+      "value": "왼쪽→오른쪽"
+    },
+    {
+      "name": "rkit_rtl",
+      "value": "오른쪽→왼쪽"
+    },
+    {
+      "name": "rkit_split_on",
+      "value": "분할: 켜짐"
+    },
+    {
+      "name": "rkit_split_off",
+      "value": "분할: 꺼짐"
+    },
+    {
+      "name": "rkit_cover_on",
+      "value": "표지: 한 페이지"
+    },
+    {
+      "name": "rkit_cover_off",
+      "value": "표지: 두 페이지"
+    },
+    {
+      "name": "rkit_host_settings",
+      "value": "리더 설정"
+    },
+    {
+      "name": "rkit_open_external",
+      "value": "외부 브라우저에서 열기"
+    },
+    {
+      "name": "rkit_crop_on",
+      "value": "테두리 자르기 활성화"
+    },
+    {
+      "name": "rkit_crop_off",
+      "value": "테두리 자르기 비활성화"
+    },
+    {
+      "name": "rkit_tap_left",
+      "value": "왼쪽"
+    },
+    {
+      "name": "rkit_tap_right",
+      "value": "오른쪽"
+    },
+    {
+      "name": "rkit_tap_menu",
+      "value": "메뉴"
+    },
+    {
+      "name": "rkit_loading_resolving",
+      "value": "이미지 분석 중"
+    },
+    {
+      "name": "rkit_loading_image",
+      "value": "이미지 로딩 중"
+    },
+    {
+      "name": "rkit_loading_decoding",
+      "value": "이미지 준비 중"
+    }
+  ]
+}

@@ -1,0 +1,151 @@
+{
+  "string": [
+    { "name": "rkit_original_enable_both", "value": "兩頁均使用原圖" },
+    { "name": "rkit_original_disable_both", "value": "兩頁均關閉原圖" },
+    { "name": "rkit_original_failed", "value": "第 %s 頁原圖無法加載" },
+    { "name": "rkit_auto_read_start", "value": "開始自動翻頁" },
+    { "name": "rkit_auto_read_stop", "value": "停止自動翻頁" },
+    { "name": "rkit_save_image", "value": "保存圖片" },
+    { "name": "rkit_save_both", "value": "保存兩頁" },
+    { "name": "rkit_save_success", "value": "圖片已保存" },
+    { "name": "rkit_save_failed", "value": "圖片保存失敗" },
+    { "name": "rkit_save_partial", "value": "已保存 %d / %d 張圖片" },
+    { "name": "rkit_more", "value": "更多" },
+    { "name": "rkit_image_info", "value": "圖片信息" },
+    { "name": "rkit_reload_source", "value": "重新加載圖片來源" },
+    { "name": "rkit_reset_zoom", "value": "重置縮放" },
+    { "name": "rkit_info_title", "value": "圖片信息 · 第 %d 頁" },
+    { "name": "rkit_info_left", "value": "左側 · 第 %d 頁" },
+    { "name": "rkit_info_right", "value": "右側 · 第 %d 頁" },
+    { "name": "rkit_unknown", "value": "未知" },
+    { "name": "rkit_info_format", "value": "格式：" },
+    { "name": "rkit_info_size", "value": "大小：" },
+    { "name": "rkit_info_current", "value": "當前：" },
+    { "name": "rkit_info_dimensions", "value": "顯示尺寸：" },
+    { "name": "rkit_info_source", "value": "源圖片" },
+    { "name": "rkit_info_resampled", "value": "重採樣圖片" },
+    { "name": "rkit_info_enhanced", "value": "增強圖片" },
+    { "name": "rkit_info_translated", "value": "譯圖" },
+    { "name": "rkit_info_original_available", "value": "原圖：可用" },
+    { "name": "rkit_info_original_unavailable", "value": "原圖：不可用" },
+    { "name": "rkit_info_failed", "value": "暫時無法讀取圖片信息，請重試" },
+    { "name": "rkit_ok", "value": "確定" },
+    { "name": "rkit_share_image", "value": "分享當前圖片" },
+    { "name": "rkit_share_failed", "value": "暫時無法分享，請重試" },
+    { "name": "rkit_thumbnail_unavailable", "value": "無縮略圖" },
+    { "name": "rkit_close", "value": "返回" },
+    { "name": "rkit_runtime_settings", "value": "閱讀模式（僅本次）" },
+    { "name": "rkit_seek_page", "value": "跳轉頁碼" },
+    { "name": "rkit_catalog_failed", "value": "頁面目錄加載失敗" },
+    {
+      "name": "rkit_release_metrics",
+      "value": "釋放尺寸"
+    },
+    {
+      "name": "rkit_image_failed",
+      "value": "圖片加載失敗"
+    },
+    {
+      "name": "rkit_image_retry_hint",
+      "value": "請重試，重新獲取這張圖片。"
+    },
+    {
+      "name": "rkit_lab_title",
+      "value": "共享閱讀器 · D3"
+    },
+    {
+      "name": "rkit_lab_scope",
+      "value": "調試接入 · 不保存閱讀進度和設置"
+    },
+    {
+      "name": "rkit_retry",
+      "value": "重試"
+    },
+    {
+      "name": "rkit_previous_page",
+      "value": "上一頁"
+    },
+    {
+      "name": "rkit_next_page",
+      "value": "下一頁"
+    },
+    {
+      "name": "rkit_thumbnail",
+      "value": "縮略圖"
+    },
+    {
+      "name": "rkit_original",
+      "value": "原圖"
+    },
+    {
+      "name": "rkit_previous_unit",
+      "value": "上一章"
+    },
+    {
+      "name": "rkit_next_unit",
+      "value": "下一章"
+    },
+    {
+      "name": "rkit_single",
+      "value": "單頁"
+    },
+    {
+      "name": "rkit_shift_spread",
+      "value": "雙頁向前移動一頁"
+    },
+    {
+      "name": "rkit_spread_split",
+      "value": "改為分欄雙頁"
+    },
+    {
+      "name": "rkit_spread_joined",
+      "value": "改為拼接雙頁"
+    },
+    {
+      "name": "rkit_vertical_paged",
+      "value": "縱向分頁"
+    },
+    {
+      "name": "rkit_spread",
+      "value": "雙頁"
+    },
+    {
+      "name": "rkit_continuous",
+      "value": "連續"
+    },
+    {
+      "name": "rkit_ltr",
+      "value": "左→右"
+    },
+    {
+      "name": "rkit_rtl",
+      "value": "右→左"
+    },
+    {
+      "name": "rkit_split_on",
+      "value": "拆分：開"
+    },
+    {
+      "name": "rkit_split_off",
+      "value": "拆分：關"
+    },
+    {
+      "name": "rkit_cover_on",
+      "value": "封面：單"
+    },
+    {
+      "name": "rkit_cover_off",
+      "value": "封面：雙"
+    },
+    { "name": "rkit_host_settings", "value": "閱讀設置" },
+    { "name": "rkit_open_external", "value": "在外部瀏覽器中打開" },
+    { "name": "rkit_crop_on", "value": "開啓裁邊" },
+    { "name": "rkit_crop_off", "value": "關閉裁邊" },
+    { "name": "rkit_tap_left", "value": "左側" },
+    { "name": "rkit_tap_right", "value": "右側" },
+    { "name": "rkit_tap_menu", "value": "菜單" },
+    { "name": "rkit_loading_resolving", "value": "正在解析圖片" },
+    { "name": "rkit_loading_image", "value": "正在加載圖片" },
+    { "name": "rkit_loading_decoding", "value": "正在準備圖片" }
+  ]
+}
