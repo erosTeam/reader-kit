@@ -148,9 +148,10 @@ The following are existing preservation requirements, not new feature work:
   A growing next-unit budget keeps its pending preparation alive. Only the
   configured page budget is spent on image warming.
   In continuous reading the native list reserves one viewport of loading space
-  for a verified successor, even while its catalog is pending. It retains the first page's
-  key so catalog arrival can extend the list without a new gesture. After the
-  viewport settles in that row, its position survives late image measurements.
+  for a verified neighbor while its catalog is pending. The row reuses the key
+  of the real page at that seam: the predecessor's final page or the successor's
+  first page. The current resume page still owns the initial viewport. After
+  a gesture settles in a reserved row, the seam survives late image measurements.
   The reserved row never selects a page, leases an asset or updates progress.
   Catalog failures can be retried in place.
   A host resolving legacy chapter chronology beside a readable page can call

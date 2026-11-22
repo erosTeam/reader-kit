@@ -32,14 +32,11 @@ class ReaderContinuousIndexSource implements IDataSource {
   unregisterDataChangeListener(listener: DataChangeListener): void {
     this.listeners = this.listeners.filter((value: DataChangeListener): boolean => value !== listener)
   }
-  update(pages: string[], continuation: string): void {
+  update(keys: string[]): void {
     // Chapter extension changes only the ends. Never reload/remount the List;
     // ArkUI preserves its visible key/offset with add/delete notifications.
-    const count = pages.length + (continuation.length > 0 ? 1 : 0)
-    if (count === this.keys.length && (continuation.length === 0 || this.keys[pages.length] === continuation) &&
-      pages.every((key: string, index: number): boolean =>
-      key === this.keys[index])) return
-    const keys = continuation.length > 0 ? pages.concat(continuation) : pages
+    if (keys.length === this.keys.length &&
+      keys.every((key: string, index: number): boolean => key === this.keys[index])) return
     const wanted = new Set<string>(keys)
     for (let index = this.keys.length - 1; index >= 0; index--) {
       if (wanted.has(this.keys[index])) continue
@@ -205,7 +202,10 @@ struct ReaderContinuousList {
   private boundaryNavigation: number = -1
   private boundaryIntent: number = 0
   private continuationAnchorKey: string = ''
-  private continuationAnchorTop: number = 0
+  private continuationAnchorEdge: number = 0
+  private continuationAnchorAtEnd: boolean = false
+  // Native indices include the reserved head; the core uses real pages only.
+  private leadingCatalogRows: number = 0
 
   private handleBoundaryTouch(event: TouchEvent): void {
     if (!this.active || this.snapshot.phase !== 'ready' || event.touches.length > 1 ||
@@ -249,7 +249,8 @@ struct ReaderContinuousList {
   }
 
   private requestBoundary(direction: ReaderBoundaryDirection): void {
-    if (direction === 'next' && this.snapshot.continuousContinuationKey.length > 0) return
+    const reserved = direction === 'previous' ? this.snapshot.continuousPredecessorKey : this.snapshot.continuousContinuationKey
+    if (reserved.length > 0) return
     const topology = this.createdRevision
     const navigation = this.snapshot.navigationRevision
     const intent = ++this.boundaryIntent
@@ -275,11 +276,12 @@ struct ReaderContinuousList {
 
     this.inputConnection = this.input?.connect((intent: ReaderMoveIntent): boolean => this.moveViewport(intent)) ?? 0
     this.source = new ReaderContinuousIndexSource(this.nativeKeys())
+    this.leadingCatalogRows = this.snapshot.continuousPredecessorKey.length > 0 ? 1 : 0
     this.lastNavigation = this.snapshot.navigationRevision
-    this.first = this.snapshot.continuousIndex
+    this.first = this.snapshot.continuousIndex + this.leadingCatalogRows
     this.last = this.first
     this.entryAnchorKey = this.entryTransition === null && this.snapshot.kind === 'original'
-      ? this.snapshot.displayKeys[this.first] ?? '' : ''
+      ? this.snapshot.displayKeys[this.snapshot.continuousIndex] ?? '' : ''
     this.reportExternalLock()
   }
 
@@ -302,8 +304,10 @@ struct ReaderContinuousList {
 
   @Monitor('snapshot', 'active')
   onSnapshotChanged(): void {
-    const positionedKey = this.positionTarget >= 0 ? this.source.getData(this.positionTarget) : ''
-    this.source.update(this.snapshot.displayKeys, this.snapshot.continuousContinuationKey)
+    const positionedKey = this.positionTarget >= 0
+      ? this.source.getData(this.positionTarget + this.leadingCatalogRows) ?? '' : ''
+    this.leadingCatalogRows = this.snapshot.continuousPredecessorKey.length > 0 ? 1 : 0
+    this.source.update(this.nativeKeys())
     if (positionedKey.length > 0) this.positionTarget = this.snapshot.displayKeys.indexOf(positionedKey)
     if (this.continuationAnchorKey.length > 0 && this.lastNavigation === this.snapshot.navigationRevision) {
       const continued = this.snapshot.displayKeys.indexOf(this.continuationAnchorKey)
@@ -314,7 +318,8 @@ struct ReaderContinuousList {
         this.positionX = 0.5
         this.positionY = 0
         this.invalidatePosition()
-      } else if (continued < 0 && this.continuationAnchorKey !== this.snapshot.continuousContinuationKey) {
+      } else if (continued < 0 && this.continuationAnchorKey !== this.snapshot.continuousContinuationKey &&
+        this.continuationAnchorKey !== this.snapshot.continuousPredecessorKey) {
         this.continuationAnchorKey = ''
       }
     }
@@ -410,7 +415,8 @@ struct ReaderContinuousList {
       this.createdRevision !== this.snapshot.topologyRevision ||
       !Number.isFinite(windowX) || !Number.isFinite(windowY)) return
     const frame = this.snapshot.forItem(key).frames[0]
-    if (frame === undefined && key !== this.snapshot.continuousContinuationKey) return
+    if (frame === undefined && key !== this.snapshot.continuousContinuationKey &&
+      key !== this.snapshot.continuousPredecessorKey) return
     const navigation = this.snapshot.navigationRevision
     try {
       const context = this.getUIContext()
@@ -629,11 +635,12 @@ struct ReaderContinuousList {
       const geometryRevision = this.geometryRevision
       const width = this.viewWidth
       const height = this.imageHeight(index)
-      const anchorTop = this.continuationAnchorKey === this.snapshot.displayKeys[index] ? this.continuationAnchorTop : 0
+      const anchorTop = this.continuationAnchorKey === this.snapshot.displayKeys[index]
+        ? this.continuationAnchorEdge - (this.continuationAnchorAtEnd ? height : 0) : 0
       // Every cell state allocates imageHeight. A minimum-height inset would
       // scroll past the body of a sufficiently short page.
       this.positionInFlight = true
-      this.scroller.scrollToIndex(index, false, ScrollAlign.START,
+      this.scroller.scrollToIndex(index + this.leadingCatalogRows, false, ScrollAlign.START,
         { extraOffset: LengthMetrics.vp(height * y - anchorTop) })
       // scrollToIndex schedules native layout; old getItemRect data is not the
       // requested position. Keep input/observations gated until a frame finishes.
@@ -659,7 +666,7 @@ struct ReaderContinuousList {
    */
   private measuredPosition(start: number, end: number): number {
     for (let index = end; index >= start; index--) {
-      const rect = this.scroller.getItemRect(index)
+      const rect = this.scroller.getItemRect(index + this.leadingCatalogRows)
       // This row's aspect-ratio Stack is the drawable body. Native layout
       // rounds its height to pixels; recomputing width / ratio can put a fully
       // visible last row fractionally beyond the viewport and strand progress.
@@ -682,26 +689,22 @@ struct ReaderContinuousList {
       if (hit >= 0) this.first = hit
       const endHit = this.scroller.getItemIndex(this.viewWidth / 2, Math.max(1, this.viewHeight - 1))
       if (endHit >= 0) this.last = endHit
-      const continuation = this.snapshot.continuousContinuationKey
-      if (continuation.length > 0 && !this.moving && this.last === this.snapshot.displayKeys.length) {
-        const rect = this.scroller.getItemRect(this.last)
-        const center = this.viewHeight / 2
-        if (rect.height > 0 && rect.y <= center && rect.y + rect.height > center &&
-          this.continuationAnchorKey !== continuation) {
-          this.continuationAnchorKey = continuation
-          this.continuationAnchorTop = rect.y
-        }
+      if (!this.moving) {
+        this.rememberContinuation(this.snapshot.continuousPredecessorKey, 0, true)
+        this.rememberContinuation(this.snapshot.continuousContinuationKey,
+          this.snapshot.displayKeys.length + this.leadingCatalogRows, false)
       }
       // Only catalog-confirmed rows can select a page or report an observation.
-      const last = Math.min(Math.max(this.first, this.last), this.snapshot.displayKeys.length - 1)
-      if (this.first > last) return
-      let first = this.measuredPosition(this.first, last)
+      const start = Math.max(0, this.first - this.leadingCatalogRows)
+      const last = Math.min(this.last - this.leadingCatalogRows, this.snapshot.displayKeys.length - 1)
+      if (start > last) return
+      let first = this.measuredPosition(start, last)
       const target = this.positionTarget
-      if (target >= this.first && target <= last) {
-        const targetRect = this.scroller.getItemRect(target)
+      if (target >= start && target <= last) {
+        const targetRect = this.scroller.getItemRect(target + this.leadingCatalogRows)
         if (targetRect.height > 0 && targetRect.y < this.viewHeight && targetRect.y + targetRect.height > 0) first = target
       }
-      this.onRange(this.first, last, this.createdRevision, navigation, first)
+      this.onRange(start, last, this.createdRevision, navigation, first)
       const key = this.snapshot.displayKeys[first]
       // Visibility reads one frame from the current window. A full render
       // projection copies policy, request arrays and frames on every scroll sample.
@@ -709,7 +712,7 @@ struct ReaderContinuousList {
       if (this.waitingForEntryAnchor(key) ||
         frame === undefined || frame.cropPending || frame.asset.kind !== 'original' || frame.asset.phase !== 'displayed' ||
         this.nativeReady.get(key) !== `${frame.slotId}:${frame.asset.assetRequestId}`) return
-      const rect = this.scroller.getItemRect(first)
+      const rect = this.scroller.getItemRect(first + this.leadingCatalogRows)
       const imageHeight = this.imageHeight(first)
       const imageTop = rect.y + (rect.height - imageHeight) / 2
       if (rect.height <= 0 || imageTop >= this.viewHeight || imageTop + imageHeight <= 0) return
@@ -722,15 +725,29 @@ struct ReaderContinuousList {
     }, 0)
   }
 
+  private rememberContinuation(key: string, index: number, atEnd: boolean): void {
+    if (key.length === 0 || index < this.first || index > this.last || this.continuationAnchorKey === key) return
+    const rect = this.scroller.getItemRect(index)
+    const center = this.viewHeight / 2
+    if (rect.height <= 0 || rect.y > center || rect.y + rect.height <= center) return
+    // Keep the seam next to the current chapter fixed when the waiting row
+    // is replaced by a real image. A predecessor's seam is its bottom edge.
+    this.continuationAnchorKey = key
+    this.continuationAnchorEdge = atEnd ? rect.y + rect.height : rect.y
+    this.continuationAnchorAtEnd = atEnd
+  }
+
   private nativeKeys(): string[] {
-    const continuation = this.snapshot.continuousContinuationKey
-    return continuation.length > 0 ? this.snapshot.displayKeys.concat(continuation) : this.snapshot.displayKeys
+    const previous = this.snapshot.continuousPredecessorKey
+    const next = this.snapshot.continuousContinuationKey
+    const pages = previous.length > 0 ? [previous].concat(this.snapshot.displayKeys) : this.snapshot.displayKeys
+    return next.length > 0 ? pages.concat(next) : pages
   }
 
   @Builder
-  private Continuation(key: string) {
+  private Continuation(key: string, previous: boolean) {
     Stack() {
-      if (this.snapshot.continuousContinuationFailed) {
+      if (previous ? this.snapshot.continuousPredecessorFailed : this.snapshot.continuousContinuationFailed) {
         ReaderFailurePanel({
           page: 1, catalog: true, compact: true, retryEnabled: this.active,
           onRetry: (): void => {
@@ -740,9 +757,9 @@ struct ReaderContinuousList {
       } else {
         ReaderLoadingStage({ label: $r('app.string.rkit_loading_resolving'), loadingInk: this.loadingInk })
       }
-    // The trailing slot must be tall enough for the last real page to leave
-    // the viewport. A short slot would stop a fling with that page still on screen.
-    }.width('100%').height(Math.max(this.viewHeight, this.imageHeight(-1))).id('rkit-continuous-next-catalog')
+    // Reserve enough room for the current chapter to leave the viewport.
+    }.width('100%').height(Math.max(this.viewHeight, this.imageHeight(-1)))
+      .id(previous ? 'rkit-continuous-previous-catalog' : 'rkit-continuous-next-catalog')
       .gesture(TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => {
         const location = event?.tapLocation
         if (location !== undefined) this.imageTap(key, location.windowX, location.windowY)
@@ -750,12 +767,14 @@ struct ReaderContinuousList {
   }
 
   build() {
-    List({ initialIndex: this.snapshot.continuousIndex, scroller: this.scroller,
+    List({ initialIndex: this.snapshot.continuousIndex + this.leadingCatalogRows, scroller: this.scroller,
       space: normalizedReaderPageGap(this.pageGap) }) {
       LazyForEach(this.source, (key: string) => {
         ListItem() {
-          if (key === this.snapshot.continuousContinuationKey) {
-            this.Continuation(key)
+          if (key === this.snapshot.continuousPredecessorKey) {
+            this.Continuation(key, true)
+          } else if (key === this.snapshot.continuousContinuationKey) {
+            this.Continuation(key, false)
           } else {
             ReaderContinuousCell({
               imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects, loadingInk: this.loadingInk,

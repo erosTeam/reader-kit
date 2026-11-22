@@ -36,7 +36,7 @@ function fixture(width = 400, height = 2400) {
   return { frame, state, transition }
 }
 const List = evaluate(`export class List { ${methods('ReaderContinuousSurface', 'ReaderContinuousList',
-  ['imageTap', 'imageAspectRatio', 'refreshEntryPosition', 'rotates', 'imageIdentity', 'invalidatePosition', 'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'onImageLock', 'onRowGeometry', 'refreshEntryAnchorGeometry', 'waitingForEntryAnchor', 'releasePosition'])} }`, {}, {
+  ['imageTap', 'imageAspectRatio', 'refreshEntryPosition', 'rotates', 'imageIdentity', 'invalidatePosition', 'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'nativeKeys', 'onImageLock', 'onRowGeometry', 'refreshEntryAnchorGeometry', 'waitingForEntryAnchor', 'releasePosition'])} }`, {}, {
   ReaderContinuousEntryPosition: Position, clearTimeout() {}, setTimeout: callback => { callback(); return 1 },
   ReaderContinuousAfterLayout: class { constructor(action) { this.action = action } },
   readerPolicyRotatesPage: core.readerPolicyRotatesPage,
@@ -45,7 +45,7 @@ const List = evaluate(`export class List { ${methods('ReaderContinuousSurface', 
 function listFixture(ListType = List) {
   const f = fixture(), list = new ListType(), frames = []
   Object.assign(list, { snapshot: f.state, entryTransition: f.transition, entryPosition: null, entryAnchorKey: '',
-    continuationAnchorKey: '', continuationAnchorTop: 0,
+    continuationAnchorKey: '', continuationAnchorEdge: 0, continuationAnchorAtEnd: false, leadingCatalogRows: 0,
     // This harness extracts methods rather than constructing the ArkUI struct.
     // The single-chapter source still needs its List data interface.
     source: { getData: index => f.state.displayKeys[index], update() {} },
@@ -392,7 +392,7 @@ function queuedListFixture() {
   const timers = [], cancelled = new Set()
   const QueuedList = evaluate(`export class List { ${methods('ReaderContinuousSurface', 'ReaderContinuousList',
     ['imageTap', 'imageAspectRatio', 'refreshEntryPosition', 'rotates', 'imageIdentity', 'invalidatePosition',
-      'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'onImageLock', 'onRowGeometry', 'refreshEntryAnchorGeometry', 'waitingForEntryAnchor', 'releasePosition'])} }`, {}, {
+      'schedulePosition', 'aboutToDisappear', 'onSnapshotChanged', 'nativeKeys', 'onImageLock', 'onRowGeometry', 'refreshEntryAnchorGeometry', 'waitingForEntryAnchor', 'releasePosition'])} }`, {}, {
     ReaderContinuousEntryPosition: Position,
     clearTimeout: id => cancelled.add(id),
     setTimeout: callback => { timers.push(callback); return timers.length },
@@ -547,19 +547,48 @@ for (const kind of ['width', 'container height', 'image height']) {
   })
 }
 
+const ContinuousMeasure = evaluate(`export class Measure { ${methods('ReaderContinuousSurface',
+  'ReaderContinuousList', ['measuredPosition', 'scheduleMeasure', 'rememberContinuation'])} }`, {}, {
+  setTimeout: callback => { callback(); return 1 },
+}).Measure
+
+test('an inertial landing in the reserved previous chapter keeps the bottom seam when its last page arrives', () => {
+  const f = listFixture(), ranges = [], offsets = []
+  f.list.entryTransition = null
+  Object.assign(f.list, { fullyVisible: true, first: 0, last: 0, leadingCatalogRows: 1,
+    createdRevision: f.state.topologyRevision, nativeReady: new Map(),
+    measuredPosition: ContinuousMeasure.prototype.measuredPosition,
+    scheduleMeasure: ContinuousMeasure.prototype.scheduleMeasure,
+    rememberContinuation: ContinuousMeasure.prototype.rememberContinuation,
+    onRange: (...range) => ranges.push(range),
+  })
+  f.state.continuousPredecessorKey = 'previous-end'
+  f.list.scroller.getItemIndex = () => 0
+  f.list.scroller.getItemRect = () => ({ y: 0, height: 800 })
+  f.list.scheduleMeasure()
+  assert.equal(ranges.length, 0, 'the reserved row cannot report reading progress')
+  assert.equal(f.list.continuationAnchorKey, 'previous-end')
+  assert.equal(f.list.continuationAnchorEdge, 800)
+  f.list.measureTimer = 0
+  f.list.imageHeight = () => 300
+  f.list.scroller.scrollToIndex = (index, _animate, _align, options) => offsets.push([index, options.extraOffset])
+  f.state.continuousPredecessorKey = ''
+  f.state.displayKeys = ['previous-first', 'previous-end', 'other', 'selected']
+  f.state.continuousIndex = 3
+  f.list.onSnapshotChanged()
+  assert.deepEqual(offsets, [[1, -500]], 'the real last page ends at the same seam after prepend')
+})
+
 // A short last row cannot reach the viewport top. Its explicit seek target
 // still owns page selection while a host sheet temporarily suspends input.
 test('opening and closing a host sheet preserves explicit continuous page selection', () => {
-  const Measure = evaluate(`export class Measure { ${methods('ReaderContinuousSurface',
-    'ReaderContinuousList', ['measuredPosition', 'scheduleMeasure'])} }`, {}, {
-    setTimeout: callback => { callback(); return 1 },
-  }).Measure
   const f = listFixture(), observed = []
   f.list.entryTransition = null
   Object.assign(f.list, { fullyVisible: true, viewHeight: 800,
     createdRevision: f.state.topologyRevision, nativeReady: new Map(),
-    measuredPosition: Measure.prototype.measuredPosition,
-    scheduleMeasure: Measure.prototype.scheduleMeasure,
+    measuredPosition: ContinuousMeasure.prototype.measuredPosition,
+    scheduleMeasure: ContinuousMeasure.prototype.scheduleMeasure,
+    rememberContinuation: ContinuousMeasure.prototype.rememberContinuation,
     onRange: (_start, _end, _topology, _navigation, position) => observed.push(position),
   })
   f.list.scroller.getItemIndex = (_x, y) => y <= 1 ? 0 : 1
@@ -712,7 +741,7 @@ test('webtoon observed position follows measured page ends, including a short la
     'ReaderContinuousList', ['measuredPosition'])} }`).Visible
   const value = new Visible()
   const rects = [{ y: -400, height: 600 }, { y: 200, height: 600 }]
-  Object.assign(value, { viewHeight: 800, imageHeight: index => rects[index].height,
+  Object.assign(value, { viewHeight: 800, leadingCatalogRows: 0, imageHeight: index => rects[index].height,
     scroller: { getItemRect: index => rects[index] } })
   assert.equal(value.measuredPosition(0, 1), 1, 'the last page actually fits, even while the preceding page peeks above it')
   value.imageHeight = index => rects[index].height + 0.25

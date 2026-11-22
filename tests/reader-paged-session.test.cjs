@@ -2043,6 +2043,61 @@ test('a continuous tail reserves the next first row without selecting or loading
 })
 
 
+test('resume on either opening page can join the previous chapter without replacing the list', async () => {
+  for (const startPage of [0, 1]) {
+    const { session, key, catalog, calls } = setup({ count: 5 })
+    const previous = new ReaderUnitKey(key.scope, key.work, 'previous')
+    let finish, reject, attempts = 0
+    const open = catalog.open
+    catalog.adjacent = (unit, direction) => unit.key.equals(key) && direction === 'previous' ? previous : null
+    catalog.open = (target) => {
+      if (!target.equals(previous)) return open(target)
+      attempts++
+      return new Promise((resolve, fail) => {
+        finish = () => resolve(new ReaderUnit(previous, 'previous', 7))
+        reject = fail
+      })
+    }
+    session.setPolicy(policy({ layout: 'continuous' }))
+    await session.open(key, startPage); await tick()
+    const initial = session.snapshot()
+    const { topologyRevision: topology, navigationRevision: navigation } = initial
+    const reserved = initial.continuousPredecessorKey
+    assert.ok(reserved)
+    assert.equal(initial.continuousIndex, startPage)
+    assert.equal(initial.unit.key.unit, key.unit)
+    assert.equal(initial.window.some(item => item.key === reserved), false)
+    assert.equal(calls.load.some(([page]) => page.startsWith('previous-')), false)
+    assert.equal(attempts, 1)
+    if (startPage === 1) {
+      reject(new Error('catalog temporarily unavailable')); await tick()
+      assert.equal(session.snapshot().continuousPredecessorFailed, true)
+      assert.equal(attempts, 1)
+      session.retryContinuousContinuation(reserved, topology, navigation)
+      assert.equal(attempts, 2)
+    }
+    finish(); await tick()
+    let state = session.snapshot()
+    assert.equal(state.continuousPredecessorKey, '')
+    assert.equal(state.displayKeys[6], reserved)
+    assert.equal(state.continuousIndex, 7 + startPage)
+    assert.equal(state.topologyRevision, topology)
+    assert.equal(state.navigationRevision, navigation)
+    assert.equal(state.unit.key.unit, key.unit)
+    assert.equal(state.observedPosition(), null)
+    assert.equal(session.setContinuousRange(6, 7, topology, navigation, 6), true)
+    await tick()
+    const last = session.snapshot().frames[0]
+    assert.equal(last.part.sourceIndex, 6)
+    assert.equal(last.part.unit.unit, previous.unit)
+    decode(session, last)
+    assert.equal(session.reportContinuousVisible(topology, navigation, reserved,
+      last.slotId, last.asset.assetRequestId, .5, .7), true)
+    assert.equal(session.snapshot().observedPosition().anchor.sourceIndexHint, 6)
+    session.close()
+  }
+})
+
 test('continuous file processing spans five single-page units while native leases stay near the viewport', async () => {
   const { ReaderProcessingPolicy } = load('ReaderProcessingCoordinator')
   const { ReaderVariantPreference } = load('ReaderSession')
