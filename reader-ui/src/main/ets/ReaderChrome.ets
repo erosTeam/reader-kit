@@ -3,7 +3,7 @@ import { ReaderModeControlParams } from './ReaderModeControl'
 import { ReaderAutoReadControlParams } from './ReaderAutoReadPolicy'
 import { ReaderPagedSnapshot, ReaderPagedFrame, ReaderDisplayPolicy, ReaderUnitKey,
   ReaderImageSaveChoice, ReaderImageSaveTarget } from '@reader-kit/core'
-import { Binding, UIUtils, uiMaterial } from '@kit.ArkUI'
+import { Binding, FrameCallback, UIUtils, uiMaterial } from '@kit.ArkUI'
 import { deviceInfo } from '@kit.BasicServicesKit'
 import { SymbolGlyphModifier } from '@kit.ArkUI'
 import { ReaderHostAction } from './ReaderHostAction'
@@ -13,6 +13,28 @@ import { ReaderTitleParams } from './ReaderTitleParams'
 
 export type ReaderRuntimePolicyIntent = 'layout' | 'direction' | 'reading_mode' | 'spread_layout' |
   'first_page_alone' | 'split_wide_pages'
+
+export function readerChromeBarBackgroundEffect(): BackgroundEffectOptions {
+  return {
+    radius: 10,
+    saturation: 1.0,
+    brightness: 1.0,
+    color: '#B3000000',
+  }
+}
+
+export function readerChromeBarHitTestBehavior(): HitTestMode {
+  return deviceInfo.sdkApiVersion >= 20 ? HitTestMode.BLOCK_HIERARCHY : HitTestMode.Default
+}
+
+class ReaderChromeFadeFrame extends FrameCallback {
+  private readonly run: () => void
+  constructor(run: () => void) {
+    super()
+    this.run = run
+  }
+  onFrame(_frameTimeInNano: number): void { this.run() }
+}
 
 /** Default overlay chrome. It emits intentions; it never opens a catalog or writes preferences. */
 @ComponentV2
@@ -24,6 +46,11 @@ export struct ReaderChrome {
   @BuilderParam titleControl: (params: Binding<ReaderTitleParams>) => void = this.EmptyTitleControl
   @Require @Param snapshot: ReaderPagedSnapshot
   @Param active: boolean = true
+  @Param visible: boolean = true
+  @Param thumbnailRailMounted: boolean = false
+  @Param thumbnailRailExpanded: boolean = false
+  @Param thumbnailRailHeight: number = 156
+  @BuilderParam thumbnailRail: () => void = this.EmptyThumbnailRail
   @Param topInset: number = 0
   @Param bottomInset: number = 0
   @Param accent: ResourceColor = '#D93646'
@@ -79,11 +106,16 @@ export struct ReaderChrome {
   @Event onShiftSpread: (unit: ReaderUnitKey, topology: number, navigation: number) => void = () => {}
   @Event onSeek: (index: number, unit: ReaderUnitKey, navigation: number) => void = () => {}
   @Event onPreview: (index: number, unit: ReaderUnitKey | null, navigation: number) => void = () => {}
+  @Event onMountedChange: (mounted: boolean) => void = () => {}
+  @Event onFadeOutComplete: () => void = () => {}
   @Local private preview: number = -1
   @Local private moreShown: boolean = false
   @Local private moreMenuTextColor: ResourceColor = $r('sys.color.font_primary')
   @Local private saveMenuShown: boolean = false
   @Local private originalMenuShown: boolean = false
+  @Local private chromeOpacity: number = 1
+  @Local private chromeLayerVisible: boolean = true
+  private fadeEpoch: number = 0
   private originalFrames: ReaderPagedFrame[] = []
   private originalUnit: ReaderUnitKey | null = null
   private originalNavigation: number = -1
@@ -112,7 +144,65 @@ export struct ReaderChrome {
         this.snapshot.navigationRevision !== this.seekNavigation)) this.cancelSeek()
   }
 
-  aboutToDisappear(): void { this.moreSharePending = false; this.cancelSeek(); this.onMenuVisible(false) }
+  aboutToAppear(): void {
+    this.chromeOpacity = this.visible ? 1 : 0
+    this.chromeLayerVisible = this.visible
+    this.onMountedChange(true)
+  }
+
+  @Monitor('visible')
+  onVisibleChanged(): void {
+    const epoch = ++this.fadeEpoch
+    if (this.visible) {
+      const wasHidden = !this.chromeLayerVisible
+      this.chromeLayerVisible = true
+      const startFadeIn = (): void => {
+        if (epoch !== this.fadeEpoch || !this.visible) return
+        this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseOut }, (): void => {
+          this.chromeOpacity = 1
+        })
+      }
+      if (wasHidden) {
+        this.chromeOpacity = 0
+        this.getUIContext().postFrameCallback(new ReaderChromeFadeFrame(startFadeIn))
+      } else {
+        startFadeIn()
+      }
+    } else {
+      if (this.moreShown) this.moreShown = false
+      if (this.originalMenuShown) this.originalMenuShown = false
+      if (this.saveMenuShown) this.saveMenuShown = false
+      this.moreSharePending = false
+      this.cancelSeek()
+      this.onMenuVisible(false)
+      if (!this.chromeLayerVisible) {
+        this.chromeOpacity = 0
+        this.onFadeOutComplete()
+        return
+      }
+      this.getUIContext().postFrameCallback(new ReaderChromeFadeFrame((): void => {
+        if (epoch !== this.fadeEpoch || this.visible) return
+        this.getUIContext().animateTo({
+          duration: 200,
+          curve: Curve.EaseIn,
+          onFinish: (): void => {
+            if (epoch === this.fadeEpoch && !this.visible) {
+              this.chromeLayerVisible = false
+              this.onFadeOutComplete()
+            }
+          },
+        }, (): void => {
+          this.chromeOpacity = 0
+        })
+      }))
+    }
+  }
+
+  aboutToDisappear(): void {
+    this.fadeEpoch += 1
+    this.onMountedChange(false)
+    this.moreSharePending = false; this.cancelSeek(); this.onMenuVisible(false)
+  }
 
   private cancelSeek(): void {
     const hadPreview = this.seekUnit !== null
@@ -167,6 +257,9 @@ export struct ReaderChrome {
 
   @Builder
   private EmptyTitleControl(_params: Binding<ReaderTitleParams>) {}
+
+  @Builder
+  private EmptyThumbnailRail() {}
 
   private toggleSpreadLayout(): void {
     const policy = this.snapshot.policy.copy()
@@ -752,10 +845,31 @@ export struct ReaderChrome {
         }
       }.width('100%').height(this.topInset + 56)
         .padding({ top: this.topInset, left: 8, right: 8 })
-        .backgroundColor('#CC000000').position({ x: 0, y: 0 })
+        .backgroundEffect(readerChromeBarBackgroundEffect())
+        .position({ x: 0, y: 0 })
+        .opacity(this.chromeOpacity)
+        .visibility(this.chromeLayerVisible ? Visibility.Visible : Visibility.Hidden)
+        .hitTestBehavior(this.visible ? readerChromeBarHitTestBehavior() : HitTestMode.None)
+        .enabled(this.visible)
+        .onClick((): void => {})
         .id('rkit-chrome-top')
 
-      Column({ space: this.appearance.columnSpacing }) {
+      Column() {
+        if (this.thumbnailRailMounted) {
+          Column() {
+            this.thumbnailRail()
+          }
+          .width('100%')
+          .height(this.thumbnailRailExpanded ? this.thumbnailRailHeight : 0)
+          .padding({ top: this.thumbnailRailExpanded ? 8 : 0, bottom: this.thumbnailRailExpanded ? 8 : 0 })
+          .opacity(this.thumbnailRailExpanded ? 1 : 0)
+          .clip(true)
+          .hitTestBehavior(this.thumbnailRailExpanded && this.visible ? HitTestMode.Default : HitTestMode.None)
+          .enabled(this.thumbnailRailExpanded && this.visible)
+          .id('rkit-thumbnail-rail-wrapper')
+        }
+
+        Column({ space: this.appearance.columnSpacing }) {
         Row({ space: 4 }) {
           Text(`${this.appearance.fixedCounterSides || this.snapshot.policy.direction !== 'rtl' ? this.value() : this.count()}`)
             .fontSize(14).fontColor(Color.White).constraintSize({ minWidth: 30 }).maxLines(1)
@@ -850,9 +964,20 @@ export struct ReaderChrome {
         }.width('100%').height(this.appearance.controlsHeight > 0 ? this.appearance.controlsHeight : undefined)
           .padding({ left: this.appearance.controlsPadding, right: this.appearance.controlsPadding })
           .alignItems(VerticalAlign.Center)
-      }.width('100%').height(this.bottomInset + this.appearance.bottomHeight)
-        .padding({ left: 16, right: 16, top: 8, bottom: this.bottomInset + 8 })
-        .backgroundColor('#CC000000').id('rkit-chrome-bottom')
+        }.width('100%').height(this.bottomInset + this.appearance.bottomHeight)
+          .padding({ left: 16, right: 16, top: 8, bottom: this.bottomInset + 8 })
+      }.width('100%')
+        .height(this.bottomInset + this.appearance.bottomHeight +
+          (this.thumbnailRailExpanded ? this.thumbnailRailHeight : 0))
+        .justifyContent(FlexAlign.End)
+        .clip(true)
+        .backgroundEffect(readerChromeBarBackgroundEffect())
+        .opacity(this.chromeOpacity)
+        .visibility(this.chromeLayerVisible ? Visibility.Visible : Visibility.Hidden)
+        .hitTestBehavior(this.visible ? readerChromeBarHitTestBehavior() : HitTestMode.None)
+        .enabled(this.visible)
+        .onClick((): void => {})
+        .id('rkit-chrome-bottom')
     }.width('100%').height('100%').hitTestBehavior(HitTestMode.Transparent)
   }
 }

@@ -191,6 +191,8 @@ export struct ReaderSurface {
   private menuVisible: boolean = false
   private chromeEpoch: number = 0
   private chromeShowPending: boolean = false
+  private chromeHideFadePending: boolean = false
+  private chromeMounted: boolean = false
   private chromeDisposed: boolean = false
   private chromeCloseRequested: boolean = false
   private lastObservedSignature: string = ''
@@ -759,6 +761,7 @@ export struct ReaderSurface {
   private invalidateChromeShow(): void {
     this.chromeEpoch += 1
     this.chromeShowPending = false
+    this.chromeHideFadePending = false
   }
 
   @Monitor('closing')
@@ -793,15 +796,26 @@ export struct ReaderSurface {
     return JSON.stringify([unit?.key.scope, unit?.key.work, unit?.key.unit, unit?.pageCount])
   }
 
-  private thumbnailRailHeight(): number { return this.thumbnailRailVisible() ? 156 : 0 }
+  private chromeShown(): boolean { return this.chromeVisible && !this.chromeSuppressed }
+
+  private thumbnailRailExpanded(): boolean {
+    return this.state.unit !== null && this.thumbnailsVisible && this.active && this.state.phase === 'ready'
+  }
+
+  private thumbnailRailMounted(): boolean {
+    return this.state.unit !== null && (this.thumbnailRailVisible() ||
+      this.retainedThumbnailUnit === this.thumbnailUnitIdentity())
+  }
+
+  private thumbnailRailHeight(): number { return this.thumbnailRailExpanded() ? 156 : 0 }
 
   private thumbnailRailVisible(): boolean {
-    return this.chromeVisible && !this.chromeSuppressed && this.thumbnailsVisible && this.active && this.state.phase === 'ready'
+    return this.chromeShown() && this.thumbnailsVisible && this.active && this.state.phase === 'ready'
   }
 
   private toggleThumbnails(): void {
     const nextVisible = !this.thumbnailsVisible
-    this.getUIContext().animateTo({ duration: 180, curve: Curve.FastOutSlowIn }, (): void => {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.FastOutSlowIn }, (): void => {
       this.thumbnailsVisible = nextVisible
     })
   }
@@ -826,11 +840,32 @@ export struct ReaderSurface {
   }
 
   private commitChromeVisible(visible: boolean): void {
+    const wasVisible = this.chromeShown()
+    const resumeDuringHideFade = visible && this.chromeHideFadePending
+    this.chromeHideFadePending = false
     // A real window show finishes before chrome is painted. Without a window
     // controller, chrome remains synchronous and usable; never wait for an inset.
-    this.chromeShowPending = visible && !this.chromeVisible && this.windowPresentation !== null
+    this.chromeShowPending = visible && !this.chromeVisible && !resumeDuringHideFade &&
+      this.windowPresentation !== null
     if (!this.chromeShowPending) this.chromeVisible = visible
     if (!visible) this.previewIndex = -1
+    if (!visible && wasVisible && this.chromeMounted && this.windowPresentation !== null &&
+      this.active && !this.closing && !this.chromeDisposed && !this.chromeCloseRequested) {
+      // Symmetrical with reveal: fade chrome out in place before hiding the status bar
+      // so the top bar does not jump upward while fading out.
+      this.chromeEpoch += 1
+      this.chromeHideFadePending = true
+      this.activitySink?.chromeChanged(false)
+      console.info('[ReaderSurface] chrome=false')
+      return
+    }
+    this.publishChromePresentation()
+  }
+
+  private onChromeFadeOutComplete(): void {
+    if (!this.chromeHideFadePending || this.chromeVisible || this.chromeShowPending ||
+      !this.active || this.closing || this.chromeDisposed || this.chromeCloseRequested) return
+    this.chromeHideFadePending = false
     this.publishChromePresentation()
   }
 
@@ -855,7 +890,8 @@ export struct ReaderSurface {
 
   private publishChromePresentation(): void {
     const epoch = ++this.chromeEpoch
-    const operation = this.windowPresentation?.presentChrome(this.chromeVisible || this.chromeShowPending,
+    const operation = this.windowPresentation?.presentChrome(
+      this.chromeVisible || this.chromeShowPending || this.chromeHideFadePending,
       this.windowFullscreen, this.windowCanvasDark,
       (): boolean => epoch === this.chromeEpoch && this.active && !this.closing &&
         !this.chromeDisposed && !this.chromeCloseRequested) ?? Promise.resolve()
@@ -876,6 +912,13 @@ export struct ReaderSurface {
   private toggleChrome(): void {
     if (!this.active || this.closing || this.chromeDisposed || this.chromeCloseRequested) return
     this.commitChromeVisible(!(this.chromeVisible || this.chromeShowPending))
+  }
+
+  private chromeTransition(): TransitionEffect {
+    return TransitionEffect.asymmetric(
+      TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }),
+      TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseIn }),
+    )
   }
 
   private pageTap(x: number, y: number): ReaderTapAction {
@@ -1195,115 +1238,105 @@ export struct ReaderSurface {
       if (this.tapZonePreviewVisible) {
         this.TapZonePreview()
       }
-      // Retain decoded previews when hiding a strip the user already opened.
-      // A new chapter should not build an invisible List and its placeholder tiles.
-      if (this.state.unit !== null && (this.thumbnailRailVisible() ||
-        this.retainedThumbnailUnit === this.thumbnailUnitIdentity())) {
-        Column() {
-          ForEach([this.thumbnailUnitIdentity()], (identity: string) => {
-            ReaderThumbnailRail({ session: this.session, snapshot: this.state, accent: this.accent,
-              visible: this.thumbnailRailVisible(),
-              previewIndex: this.previewIndex,
-              onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
-                this.session.seekSource(index, unit, navigation)
-              },
-            })
-              .onAppear((): void => {
-                if (identity === this.thumbnailUnitIdentity()) this.retainedThumbnailUnit = identity
-              })
-          }, (identity: string): string => readerElementKey(identity))
-        }.width('100%').height(this.thumbnailRailHeight())
-          .padding({ top: this.thumbnailRailVisible() ? 8 : 0, bottom: this.thumbnailRailVisible() ? 8 : 0 })
-          .margin({ bottom: this.bottomInset + this.chromeAppearance.bottomHeight }).backgroundColor('#CC000000').clip(true)
-          .hitTestBehavior(this.thumbnailRailVisible() ? HitTestMode.Default : HitTestMode.None)
-          .id('rkit-thumbnail-rail-wrapper')
-      }
-      if (this.chromeVisible && !this.chromeSuppressed) {
-        ReaderChrome({ appearance: this.chromeAppearance, hostModeControlAvailable: this.modeControl !== undefined,
-          modeControl: (params: ReaderModeControlParams): void => { this.HostModeControl(params) },
-          hostTitleControlAvailable: this.titleControl !== undefined,
-          titleControl: (params: Binding<ReaderTitleParams>): void => {
-            this.HostTitleControl(params)
-          },
-          snapshot: this.state, active: this.active, topInset: this.topInset,
-          bottomInset: this.bottomInset, accent: this.accent, onClose: (): void => this.requestClose(),
-          thumbnailsVisible: this.thumbnailsVisible,
-          chapterNavigationAvailable: this.chapterNavigation !== null,
-          chapterNavigationBusy: this.chapterNavigation?.busy ?? false,
-          onChapter: (direction: 'previous' | 'next', source: ReaderUnitKey): void => {
-            this.requestChapter(direction, source)
-          },
-          shareAvailable: this.mediaActions !== null && this.mediaActions.imageShare !== null,
-          shareBusy: this.shareBusy,
-          saveAvailable: this.mediaActions !== null && this.mediaActions.imageSave !== null,
-          saveBusy: this.saveBusy,
-          hostAutoReadControlAvailable: this.autoReadControl !== undefined,
-          autoReadControl: (params: ReaderAutoReadControlParams): void => { this.HostAutoReadControl(params) },
-          autoReadAvailable: this.autoReadPolicy?.available === true, autoReadEnabled: this.autoReadEnabled,
-          cropAvailable: this.cropPolicy?.available === true,
-          enhancementVisible: this.enhancementVisible(),
-          enhancementProcessing: this.enhancementProcessing(),
-          enhancementApplied: this.enhancementApplied(),
-          enhancementEnabled: this.enhancementEnabledForCurrentUnit(),
-          enhancementToggleAvailable: this.temporaryVariantToggleAvailable(),
-          onToggleEnhancement: (): void => { this.toggleTemporaryVariant() },
-          hostSettingsAvailable: this.hostSettings !== null,
-          onHostSettings: (): void => { this.hostSettings?.request() },
-          externalOpenAvailable: this.externalOpen !== null,
-          onExternalOpen: (source: ReaderUnitKey): void => { this.externalOpen?.request(source) },
-          hostActions: this.hostActions?.items() ?? [],
-          onHostAction: (id: string, source: ReaderUnitKey, navigation: number, sourceIndex: number): void => {
-            this.hostActions?.request(id, source, navigation, sourceIndex)
-          },
-          hostCenterActionAvailable: this.centerAction !== null,
-          hostCenterActionLabel: this.centerAction?.label ?? '',
-          onHostCenterAction: (source: ReaderUnitKey, navigation: number): void => {
-            this.centerAction?.request(source, navigation)
-          },
-          onCrop: (): void => { this.toggleCrop() },
-          originalAvailable: this.session.originalSelectionSupported(),
-          onOriginal: (frames: ReaderPagedFrame[], unit: ReaderUnitKey, navigation: number, enabled: boolean): void => {
-            void this.selectOriginal(frames, unit, navigation, enabled)
-          },
-          onAutoRead: (): void => { this.toggleAutoRead() },
-          onSetAutoRead: (enabled: boolean): void => { this.setAutoRead(enabled) },
-          onSave: (choice: ReaderImageSaveChoice): void => { void this.saveImage(choice) },
-          informationBusy: this.informationBusy,
-          informationPreparing: this.informationBusy && !this.informationPresented,
-          informationAvailable: this.session.informationSupported(),
-          zoomResetAvailable: this.zoomed,
-          onResetZoom: (source: ReaderUnitKey, navigation: number): void => { this.resetZoom(source, navigation) },
-          onReload: (frame: ReaderPagedFrame, _unit: ReaderUnitKey, topology: number, navigation: number,
-            itemKey: string): void => {
-            void this.session.reloadItem(topology, navigation, itemKey, frame.slotId, frame.asset.requestId)
-          },
-          onInformation: (frame: ReaderPagedFrame): void => { void this.showInformation(frame) },
-          onShare: (): void => { void this.shareImage() },
-          onMenuVisible: (visible: boolean): void => {
-            this.menuVisible = visible; this.reportInteractionBusy(); this.syncAutoRead()
-          },
-          onThumbnails: (): void => { this.toggleThumbnails() },
-          onPolicy: (policy: ReaderDisplayPolicy, intent: ReaderRuntimePolicyIntent): void => {
-            this.applyPolicy(policy, intent)
-          },
-          onShiftSpread: (unit: ReaderUnitKey, topology: number, navigation: number): void => {
-            this.session.shiftSpread(unit, topology, navigation)
-          },
-          onPreview: (index: number, unit: ReaderUnitKey | null, navigation: number): void => {
-            this.previewIndex = this.active && this.chromeVisible && unit !== null &&
-              this.state.unit?.key.equals(unit) && this.state.navigationRevision === navigation ? index : -1
-            this.syncAutoRead()
-            console.info(`[ReaderSurface] preview_source=${this.previewIndex} reading_source=${this.state.anchor?.sourceIndexHint ?? -1}`)
-          },
-          onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
-            this.session.seekSource(index, unit, navigation)
-            console.info(`[ReaderSurface] seek_source=${index}`)
-          },
-        })
+      ReaderChrome({ appearance: this.chromeAppearance, hostModeControlAvailable: this.modeControl !== undefined,
+        modeControl: (params: ReaderModeControlParams): void => { this.HostModeControl(params) },
+        hostTitleControlAvailable: this.titleControl !== undefined,
+        titleControl: (params: Binding<ReaderTitleParams>): void => {
+          this.HostTitleControl(params)
+        },
+        snapshot: this.state, active: this.active, visible: this.chromeShown(),
+        thumbnailRailMounted: this.thumbnailRailMounted(),
+        thumbnailRailExpanded: this.thumbnailRailExpanded(),
+        thumbnailRailHeight: 156,
+        thumbnailRail: (): void => { this.ThumbnailRailContent() },
+        topInset: this.topInset,
+        bottomInset: this.bottomInset, accent: this.accent, onClose: (): void => this.requestClose(),
+        thumbnailsVisible: this.thumbnailsVisible,
+        chapterNavigationAvailable: this.chapterNavigation !== null,
+        chapterNavigationBusy: this.chapterNavigation?.busy ?? false,
+        onChapter: (direction: 'previous' | 'next', source: ReaderUnitKey): void => {
+          this.requestChapter(direction, source)
+        },
+        shareAvailable: this.mediaActions !== null && this.mediaActions.imageShare !== null,
+        shareBusy: this.shareBusy,
+        saveAvailable: this.mediaActions !== null && this.mediaActions.imageSave !== null,
+        saveBusy: this.saveBusy,
+        hostAutoReadControlAvailable: this.autoReadControl !== undefined,
+        autoReadControl: (params: ReaderAutoReadControlParams): void => { this.HostAutoReadControl(params) },
+        autoReadAvailable: this.autoReadPolicy?.available === true, autoReadEnabled: this.autoReadEnabled,
+        cropAvailable: this.cropPolicy?.available === true,
+        enhancementVisible: this.enhancementVisible(),
+        enhancementProcessing: this.enhancementProcessing(),
+        enhancementApplied: this.enhancementApplied(),
+        enhancementEnabled: this.enhancementEnabledForCurrentUnit(),
+        enhancementToggleAvailable: this.temporaryVariantToggleAvailable(),
+        onToggleEnhancement: (): void => { this.toggleTemporaryVariant() },
+        hostSettingsAvailable: this.hostSettings !== null,
+        onHostSettings: (): void => { this.hostSettings?.request() },
+        externalOpenAvailable: this.externalOpen !== null,
+        onExternalOpen: (source: ReaderUnitKey): void => { this.externalOpen?.request(source) },
+        hostActions: this.hostActions?.items() ?? [],
+        onHostAction: (id: string, source: ReaderUnitKey, navigation: number, sourceIndex: number): void => {
+          this.hostActions?.request(id, source, navigation, sourceIndex)
+        },
+        hostCenterActionAvailable: this.centerAction !== null,
+        hostCenterActionLabel: this.centerAction?.label ?? '',
+        onHostCenterAction: (source: ReaderUnitKey, navigation: number): void => {
+          this.centerAction?.request(source, navigation)
+        },
+        onCrop: (): void => { this.toggleCrop() },
+        originalAvailable: this.session.originalSelectionSupported(),
+        onOriginal: (frames: ReaderPagedFrame[], unit: ReaderUnitKey, navigation: number, enabled: boolean): void => {
+          void this.selectOriginal(frames, unit, navigation, enabled)
+        },
+        onAutoRead: (): void => { this.toggleAutoRead() },
+        onSetAutoRead: (enabled: boolean): void => { this.setAutoRead(enabled) },
+        onSave: (choice: ReaderImageSaveChoice): void => { void this.saveImage(choice) },
+        informationBusy: this.informationBusy,
+        informationPreparing: this.informationBusy && !this.informationPresented,
+        informationAvailable: this.session.informationSupported(),
+        zoomResetAvailable: this.zoomed,
+        onResetZoom: (source: ReaderUnitKey, navigation: number): void => { this.resetZoom(source, navigation) },
+        onReload: (frame: ReaderPagedFrame, _unit: ReaderUnitKey, topology: number, navigation: number,
+          itemKey: string): void => {
+          void this.session.reloadItem(topology, navigation, itemKey, frame.slotId, frame.asset.requestId)
+        },
+        onInformation: (frame: ReaderPagedFrame): void => { void this.showInformation(frame) },
+        onShare: (): void => { void this.shareImage() },
+        onMenuVisible: (visible: boolean): void => {
+          this.menuVisible = visible; this.reportInteractionBusy(); this.syncAutoRead()
+        },
+        onThumbnails: (): void => { this.toggleThumbnails() },
+        onPolicy: (policy: ReaderDisplayPolicy, intent: ReaderRuntimePolicyIntent): void => {
+          this.applyPolicy(policy, intent)
+        },
+        onShiftSpread: (unit: ReaderUnitKey, topology: number, navigation: number): void => {
+          this.session.shiftSpread(unit, topology, navigation)
+        },
+        onPreview: (index: number, unit: ReaderUnitKey | null, navigation: number): void => {
+          this.previewIndex = this.active && this.chromeVisible && unit !== null &&
+            this.state.unit?.key.equals(unit) && this.state.navigationRevision === navigation ? index : -1
+          this.syncAutoRead()
+          console.info(`[ReaderSurface] preview_source=${this.previewIndex} reading_source=${this.state.anchor?.sourceIndexHint ?? -1}`)
+        },
+        onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
+          this.session.seekSource(index, unit, navigation)
+          console.info(`[ReaderSurface] seek_source=${index}`)
+        },
+        onMountedChange: (mounted: boolean): void => {
+          this.chromeMounted = mounted
+          if (!mounted) this.chromeHideFadePending = false
+        },
+        onFadeOutComplete: (): void => {
+          this.onChromeFadeOutComplete()
+        },
+      })
+      if (this.chromeShown()) {
         if (this.bottomStatusVisible && this.bottomStatus !== undefined) {
           Row() { this.HostBottomStatus() }
             .margin({ bottom: this.bottomInset + this.chromeAppearance.bottomHeight + this.thumbnailRailHeight() + 4 })
             .hitTestBehavior(HitTestMode.None)
+            .transition(this.chromeTransition())
         }
       } else if (this.bottomStatusVisible && this.bottomStatus !== undefined) {
         // One bottom anchor for both rows. The passive status cannot cover
@@ -1322,6 +1355,24 @@ export struct ReaderSurface {
         this.reportInteractionBusy()
         this.syncAutoRead()
       })
+  }
+
+  @Builder
+  private ThumbnailRailContent() {
+    // Retain decoded previews when hiding a strip the user already opened.
+    // A new chapter should not build an invisible List and its placeholder tiles.
+    ForEach([this.thumbnailUnitIdentity()], (identity: string) => {
+      ReaderThumbnailRail({ session: this.session, snapshot: this.state, accent: this.accent,
+        visible: this.thumbnailRailVisible(),
+        previewIndex: this.previewIndex,
+        onSeek: (index: number, unit: ReaderUnitKey, navigation: number): void => {
+          this.session.seekSource(index, unit, navigation)
+        },
+      })
+        .onAppear((): void => {
+          if (identity === this.thumbnailUnitIdentity()) this.retainedThumbnailUnit = identity
+        })
+    }, (identity: string): string => readerElementKey(identity))
   }
 
   @Builder
