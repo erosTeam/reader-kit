@@ -750,9 +750,9 @@ struct ReaderContinuousList {
         this.nativeReady.get(key) !== `${frame.slotId}:${frame.asset.assetRequestId}`) return
       const rect = this.scroller.getItemRect(first + this.leadingCatalogRows)
       const extent = this.imageExtent(first)
-      const start = this.itemStart(rect) + (this.itemExtent(rect) - extent) / 2
-      if (this.itemExtent(rect) <= 0 || start >= this.viewportExtent() || start + extent <= 0) return
-      const position = Math.max(0, Math.min(1, -start / extent))
+      const imageStart = this.itemStart(rect) + (this.itemExtent(rect) - extent) / 2
+      if (this.itemExtent(rect) <= 0 || imageStart >= this.viewportExtent() || imageStart + extent <= 0) return
+      const position = Math.max(0, Math.min(1, -imageStart / extent))
       const region = frame.crop.region(frame.part)
       const rotated = this.rotates(first)
       const sourceUsesX = this.horizontal() !== rotated
