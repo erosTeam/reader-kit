@@ -54,7 +54,10 @@ follows the coherent change; do not adjust behavior through repeated test runs.
 
 In continuous mode a new original's successful presentation and measured
 dimensions belong to the same snapshot. The native List consumes them together.
-Only visible-position observation advances reading progress. Its chapter/policy
+Only visible-position observation advances reading progress. Vertical is the
+default continuous axis for existing hosts. Horizontal continuous uses the same
+native List and source order, fits page height to the viewport, and lets layout
+direction place the leading edge without reversing page indices or chapter order. Its chapter/policy
 check can use `displayPolicyForUnit` without rebuilding the render window.
 Continuous zoom starts an animation transaction only on double tap. Loading
 and direct gesture transforms apply without opening a layout transaction.

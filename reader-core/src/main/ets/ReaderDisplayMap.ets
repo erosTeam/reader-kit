@@ -12,6 +12,8 @@ export class ReaderDisplayPolicy {
   /** The session resolves the effective layout from the measured viewport. */
   automaticPaging: boolean = false
   pagingAxis: ReaderPagingAxis = 'horizontal'
+  /** Continuous hosts default to the established vertical strip. */
+  continuousAxis: ReaderPagingAxis = 'vertical'
   spreadLayout: ReaderSpreadLayout = 'joined'
   direction: ReaderDirection = 'ltr'
   firstPageAlone: boolean = false
@@ -23,7 +25,8 @@ export class ReaderDisplayPolicy {
 
   equals(other: ReaderDisplayPolicy): boolean {
     return this.automaticPaging === other.automaticPaging && this.layout === other.layout &&
-      this.pagingAxis === other.pagingAxis && this.direction === other.direction &&
+      this.pagingAxis === other.pagingAxis && this.continuousAxis === other.continuousAxis &&
+      this.direction === other.direction &&
       this.spreadLayout === other.spreadLayout && this.firstPageAlone === other.firstPageAlone &&
       this.splitWidePages === other.splitWidePages && this.rotateWidePages === other.rotateWidePages &&
       this.rotateWidePagesInContinuous === other.rotateWidePagesInContinuous && this.widePageRatio === other.widePageRatio
@@ -34,6 +37,7 @@ export class ReaderDisplayPolicy {
     value.layout = this.layout
     value.automaticPaging = this.automaticPaging
     value.pagingAxis = this.pagingAxis
+    value.continuousAxis = this.continuousAxis
     value.spreadLayout = this.spreadLayout
     value.direction = this.direction
     value.firstPageAlone = this.firstPageAlone

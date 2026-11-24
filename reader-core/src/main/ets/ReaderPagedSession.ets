@@ -1612,7 +1612,7 @@ export class ReaderPagedSession {
     if (this.state.policy.layout === 'continuous') {
       this.ensureWindowCurrent()
       this.rebuildContinuousRows()
-      const signature = `continuous:${this.state.policy.direction}:${this.state.policy.rotateWidePages}`
+      const signature = `continuous:${this.state.policy.continuousAxis}:${this.state.policy.direction}:${this.state.policy.rotateWidePages}`
       if (signature !== this.topologySignature) {
         this.topologySignature = signature
         this.topologyRevision += 1

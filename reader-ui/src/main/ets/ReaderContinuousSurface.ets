@@ -94,7 +94,7 @@ export struct ReaderContinuousSurface {
   build() {
     Stack() {
       if (this.snapshot.displayKeys.length > 0) {
-        if (this.measuredViewportWidth > 1) {
+        if (this.measuredViewportWidth > 1 && this.measuredViewportHeight > 1) {
           ForEach([this.snapshot.topologyRevision], (revision: number) => {
             ReaderContinuousList({
               imageInterpolation: this.imageInterpolation, imageEffects: this.imageEffects, loadingInk: this.loadingInk,
@@ -104,6 +104,7 @@ export struct ReaderContinuousSurface {
               active: this.active && this.snapshot.phase === 'ready' &&
                 revision === this.snapshot.topologyRevision,
               createdRevision: revision, initialViewportWidth: this.measuredViewportWidth,
+              initialViewportHeight: this.measuredViewportHeight,
               zoomResetCommand: this.zoomResetCommand,
               entryTransition: this.entryTransition,
               onInputLockChange: this.onInputLockChange,
@@ -154,6 +155,7 @@ struct ReaderContinuousList {
   @Event onZoomedChange: (zoomed: boolean, topology: number, navigation: number) => void = () => {}
   @Event onTap: (xFraction: number, yFraction: number) => ReaderTapAction = () => 'none'
   @Require @Param initialViewportWidth: number
+  @Require @Param initialViewportHeight: number
   @Require @Param createdRevision: number
   @Event onRange: (start: number, end: number, topology: number, navigation: number, position?: number) => void = () => {}
   @Event onDecodedOriginal: (slot: number, request: number) => void = () => {}
@@ -207,6 +209,23 @@ struct ReaderContinuousList {
   // Native indices include the reserved head; the core uses real pages only.
   private leadingCatalogRows: number = 0
 
+  private horizontal(): boolean { return this.snapshot.policy.continuousAxis === 'horizontal' }
+  private rtl(): boolean { return this.horizontal() && this.snapshot.policy.direction === 'rtl' }
+  private viewportExtent(): number { return this.horizontal() ? this.viewWidth : this.viewHeight }
+
+  private scrollOffset(): number {
+    const offset = this.scroller.currentOffset()
+    return this.horizontal() ? offset.xOffset : offset.yOffset
+  }
+
+  private itemExtent(rect: RectResult): number { return this.horizontal() ? rect.width : rect.height }
+
+  // Native List keeps indices and scroll offsets in reading order. Item
+  // rectangles and hit tests still use the physical viewport coordinates.
+  private itemStart(rect: RectResult): number {
+    return this.horizontal() ? this.rtl() ? this.viewWidth - rect.x - rect.width : rect.x : rect.y
+  }
+
   private handleBoundaryTouch(event: TouchEvent): void {
     if (!this.active || this.snapshot.phase !== 'ready' || event.touches.length > 1 ||
       event.changedTouches.length === 0) {
@@ -224,7 +243,7 @@ struct ReaderContinuousList {
       let atStart = false
       let atEnd = false
       try {
-        atStart = this.first === 0 && this.scroller.currentOffset().yOffset <= 0.5
+        atStart = this.first === 0 && this.scrollOffset() <= 0.5
         atEnd = this.last + 1 >= this.source.totalCount() && this.scroller.isAtEnd()
       } catch (_) {
         this.boundarySwipe.cancel()
@@ -240,7 +259,8 @@ struct ReaderContinuousList {
       return
     }
     if (event.type !== TouchType.Up) return
-    const direction = this.boundarySwipe.finish(point.windowX, point.windowY, 'vertical')
+    const direction = this.boundarySwipe.finish(point.windowX, point.windowY,
+      this.snapshot.policy.continuousAxis, this.snapshot.policy.direction)
     if (direction !== null && this.active && this.snapshot.phase === 'ready' &&
       this.createdRevision === this.snapshot.topologyRevision && this.boundaryTopology === this.snapshot.topologyRevision &&
       this.boundaryNavigation === this.snapshot.navigationRevision) {
@@ -258,21 +278,21 @@ struct ReaderContinuousList {
     if (edge === undefined) return
     try {
       if (direction === 'next' && !this.scroller.isAtEnd()) return
-      const offset = this.scroller.currentOffset().yOffset
+      const offset = this.scrollOffset()
       this.onBoundary(direction, topology, navigation, edge, (): boolean => {
         if (this.disposed || !this.active || this.boundaryIntent !== intent || this.pendingPosition ||
           this.lockedKey.length > 0 || topology !== this.snapshot.topologyRevision ||
           navigation !== this.snapshot.navigationRevision) return false
-        try { return Math.abs(this.scroller.currentOffset().yOffset - offset) <= 0.5 }
+        try { return Math.abs(this.scrollOffset() - offset) <= 0.5 }
         catch (_) { return false }
       })
     } catch (_) { /* The native list has not laid out an edge yet. */ }
   }
 
   aboutToAppear(): void {
-    // First native layout needs both the real row heights and initialIndex.
-    // The existing full-size parent measures this width before creating us.
+    // First native layout needs the measured cross-axis size and initialIndex.
     this.viewWidth = this.initialViewportWidth
+    this.viewHeight = this.initialViewportHeight
 
     this.inputConnection = this.input?.connect((intent: ReaderMoveIntent): boolean => this.moveViewport(intent)) ?? 0
     this.source = new ReaderContinuousIndexSource(this.nativeKeys())
@@ -327,7 +347,8 @@ struct ReaderContinuousList {
       this.entryTransition?.matches(frame.part) === true)
     if (entryFrame?.asset.phase === 'failed') this.entryTransition?.cancel()
     if (this.entryPosition !== null && entryFrame !== undefined &&
-      this.entryPosition.height !== this.imageHeight(this.snapshot.continuousIndex)) this.invalidatePosition()
+      (this.entryPosition.width !== this.imageWidth(this.snapshot.continuousIndex) ||
+        this.entryPosition.height !== this.imageHeight(this.snapshot.continuousIndex))) this.invalidatePosition()
     if (this.positionTarget >= 0) {
       const targetFrame = this.snapshot.forItem(this.snapshot.displayKeys[this.positionTarget]).frames[0]
       if (targetFrame?.asset.phase === 'failed' || targetFrame?.asset.phase === 'suppressed') this.releasePosition()
@@ -397,7 +418,7 @@ struct ReaderContinuousList {
     const frame = this.snapshot.forItem(this.snapshot.displayKeys[this.snapshot.continuousIndex]).frames[0]
     if (frame === undefined || !entry.matches(frame.part)) return
     if (frame.asset.phase === 'failed') { entry.cancel(); return }
-    const width = this.viewWidth
+    const width = this.imageWidth(this.snapshot.continuousIndex)
     const height = this.imageHeight(this.snapshot.continuousIndex)
     const previous = this.entryPosition
     if (previous !== null && previous.matches(this.snapshot) && previous.width === width && previous.height === height) return
@@ -405,7 +426,7 @@ struct ReaderContinuousList {
     const token: ReaderContinuousEntryPosition = new ReaderContinuousEntryPosition(epoch, this.snapshot, frame, width, height, entry, (): boolean =>
       this.entryPosition === token && !this.disposed && this.active && !this.pendingPosition &&
       !this.positionInFlight && !this.moving && this.lockedKey.length === 0 && this.positionEpoch === epoch && token.matches(this.snapshot) &&
-      this.viewWidth === width && this.imageHeight(this.snapshot.continuousIndex) === height)
+      this.imageWidth(this.snapshot.continuousIndex) === width && this.imageHeight(this.snapshot.continuousIndex) === height)
     this.entryPosition = token
   }
 
@@ -430,8 +451,8 @@ struct ReaderContinuousList {
       const action = this.onTap(x / width, y / height)
       if (!this.active || this.disposed ||
         this.lockedKey.length > 0 || navigation !== this.snapshot.navigationRevision) return
-      if (action === 'previous' || action === 'left') this.moveViewport('previous')
-      else if (action === 'next' || action === 'right') this.moveViewport('next')
+      if (action === 'previous' || action === (this.rtl() ? 'right' : 'left')) this.moveViewport('previous')
+      else if (action === 'next' || action === (this.rtl() ? 'left' : 'right')) this.moveViewport('next')
     } catch (_) { /* A missing current viewport is not permission to infer a tap position. */ }
   }
 
@@ -440,23 +461,27 @@ struct ReaderContinuousList {
   private moveViewport(intent: ReaderMoveIntent): boolean {
     if (!this.active || this.disposed || !this.fullyVisible ||
       this.moving || this.lockedKey.length > 0 || this.snapshot.phase !== 'ready' ||
-      this.createdRevision !== this.snapshot.topologyRevision || this.viewHeight <= 1) return false
+      this.createdRevision !== this.snapshot.topologyRevision || this.viewportExtent() <= 1) return false
     // An explicit navigation supersedes a pending automatic entry position.
     if (this.pendingPosition || this.positionInFlight) this.releasePosition()
     if (this.entryTransition?.phase === 'layout') this.entryTransition.cancel()
     try {
       this.boundaryIntent += 1
-      const offset = this.scroller.currentOffset().yOffset
+      const offset = this.scrollOffset()
       const previous = intent === 'previous'
       this.releasePosition()
       if ((previous && this.first === 0 && offset <= 0.5) ||
         (!previous && this.last + 1 >= this.source.totalCount() && this.scroller.isAtEnd())) {
         this.requestBoundary(intent)
-      } else if (this.pageTurnAnimation) {
-        this.scroller.scrollTo({ xOffset: 0,
-          yOffset: Math.max(0, offset + (previous ? -1 : 1) * this.viewHeight * 0.75), animation: true })
       } else {
-        this.scroller.scrollBy(0, (previous ? -1 : 1) * this.viewHeight * 0.75)
+        const delta = (previous ? -1 : 1) * this.viewportExtent() * 0.75
+        if (this.pageTurnAnimation) {
+          const target = Math.max(0, offset + delta)
+          this.scroller.scrollTo({ xOffset: this.horizontal() ? target : 0,
+            yOffset: this.horizontal() ? 0 : target, animation: true })
+        } else {
+          this.scroller.scrollBy(this.horizontal() ? delta : 0, this.horizontal() ? 0 : delta)
+        }
       }
       return true
     } catch (_) { return false }
@@ -496,14 +521,15 @@ struct ReaderContinuousList {
     return readerPolicyRotatesPage(this.snapshot.policy, page ?? null)
   }
 
-  private imageHeight(index: number): number {
+  private imageWidth(index: number): number { return this.horizontal() ? this.imageExtent(index) : this.viewWidth }
+  private imageHeight(index: number): number { return this.horizontal() ? this.viewHeight : this.imageExtent(index) }
+
+  private imageExtent(index: number): number {
     const context = this.getUIContext()
-    // The List row, native Image and position observer must share one physical
-    // pixel height. Independent aspect-ratio/100% descendants can round to
-    // different edges as the native list moves through fractional offsets.
-    // Allocate the real row once; do not enlarge/overlap drawable pixels.
-    return context.px2vp(Math.max(1, Math.round(context.vp2px(
-      this.viewWidth / this.imageAspectRatio(index)))))
+    const ratio = this.imageAspectRatio(index)
+    const extent = this.horizontal() ? this.viewHeight * ratio : this.viewWidth / ratio
+    // Use the same physical pixel size for the native List, image and position observer.
+    return context.px2vp(Math.max(1, Math.round(context.vp2px(extent))))
   }
 
   private imageIdentity(key: string, frame: ReaderPagedFrame): string {
@@ -587,7 +613,7 @@ struct ReaderContinuousList {
     // A guessed height may put a decoded neighbor on screen that the real anchor
     // will push away. Decode still runs in that row; pixels wait for actual layout.
     // Release on the first measured anchor only, including genuinely short pages.
-    if (Math.round(context.vp2px(measured)) === Math.round(context.vp2px(this.imageHeight(index)))) {
+    if (Math.round(context.vp2px(measured)) === Math.round(context.vp2px(this.imageExtent(index)))) {
       this.entryAnchorKey = ''
     }
   }
@@ -627,26 +653,28 @@ struct ReaderContinuousList {
       const sourceY = this.positionY
       const rotated = this.rotates(index)
       const defaultStart = sourceX === 0.5 && sourceY === 0
-      const sourcePosition = rotated ? (defaultStart ? crop.left : sourceX) : sourceY
-      const start = rotated ? crop.left : crop.top
-      const end = rotated ? crop.right : crop.bottom
-      const y = this.snapshot.kind === 'original'
-        ? Math.max(0, Math.min(1, (sourcePosition - start) / (1 - start - end))) : 0
+      const sourceUsesX = this.horizontal() !== rotated
+      const start = sourceUsesX ? crop.left : crop.top
+      const end = sourceUsesX ? crop.right : crop.bottom
+      const sourcePosition = sourceUsesX ? sourceX : sourceY
+      const fraction = (sourcePosition - start) / (1 - start - end)
+      const fromEnd = this.horizontal() && this.rtl() !== rotated
+      const position = this.snapshot.kind === 'original' && !defaultStart
+        ? Math.max(0, Math.min(1, fromEnd ? 1 - fraction : fraction)) : 0
       const geometryRevision = this.geometryRevision
-      const width = this.viewWidth
-      const height = this.imageHeight(index)
-      const anchorTop = this.continuationAnchorKey === this.snapshot.displayKeys[index]
-        ? this.continuationAnchorEdge - (this.continuationAnchorAtEnd ? height : 0) : 0
-      // Every cell state allocates imageHeight. A minimum-height inset would
-      // scroll past the body of a sufficiently short page.
+      const viewport = this.viewportExtent()
+      const extent = this.imageExtent(index)
+      const anchorStart = this.continuationAnchorKey === this.snapshot.displayKeys[index]
+        ? this.continuationAnchorEdge - (this.continuationAnchorAtEnd ? extent : 0) : 0
+      // A minimum inset would scroll past a short image.
       this.positionInFlight = true
       this.scroller.scrollToIndex(index + this.leadingCatalogRows, false, ScrollAlign.START,
-        { extraOffset: LengthMetrics.vp(height * y - anchorTop) })
+        { extraOffset: LengthMetrics.vp(extent * position - anchorStart) })
       // scrollToIndex schedules native layout; old getItemRect data is not the
       // requested position. Keep input/observations gated until a frame finishes.
       this.getUIContext().postFrameCallback(new ReaderContinuousAfterLayout((): void => {
         if (this.disposed || epoch !== this.positionEpoch || navigation !== this.snapshot.navigationRevision) return
-        if (geometryRevision !== this.geometryRevision || width !== this.viewWidth || height !== this.imageHeight(index)) {
+        if (geometryRevision !== this.geometryRevision || viewport !== this.viewportExtent() || extent !== this.imageExtent(index)) {
           this.invalidatePosition()
           this.schedulePosition()
           return
@@ -670,10 +698,11 @@ struct ReaderContinuousList {
       // This row's aspect-ratio Stack is the drawable body. Native layout
       // rounds its height to pixels; recomputing width / ratio can put a fully
       // visible last row fractionally beyond the viewport and strand progress.
-      const top = rect.y
-      const bottom = top + rect.height
-      if (rect.height > 0 && top < this.viewHeight && bottom > 0 &&
-        (bottom <= this.viewHeight || top < 0)) return index
+      const start = this.itemStart(rect)
+      const extent = this.itemExtent(rect)
+      const end = start + extent
+      if (extent > 0 && start < this.viewportExtent() && end > 0 &&
+        (end <= this.viewportExtent() || start < 0)) return index
     }
     return start
   }
@@ -685,9 +714,14 @@ struct ReaderContinuousList {
       this.measureTimer = 0
       if (!this.active || this.pendingPosition || !this.fullyVisible || this.lockedKey.length > 0 || navigation !== this.snapshot.navigationRevision ||
         this.snapshot.phase !== 'ready') return
-      const hit = this.scroller.getItemIndex(this.viewWidth / 2, 1)
+      const trailing = Math.max(1, this.viewportExtent() - 1)
+      const leadingX = this.rtl() ? trailing : 1
+      const trailingX = this.rtl() ? 1 : trailing
+      const hit = this.horizontal() ? this.scroller.getItemIndex(leadingX, this.viewHeight / 2) :
+        this.scroller.getItemIndex(this.viewWidth / 2, 1)
       if (hit >= 0) this.first = hit
-      const endHit = this.scroller.getItemIndex(this.viewWidth / 2, Math.max(1, this.viewHeight - 1))
+      const endHit = this.horizontal() ? this.scroller.getItemIndex(trailingX, this.viewHeight / 2) :
+        this.scroller.getItemIndex(this.viewWidth / 2, trailing)
       if (endHit >= 0) this.last = endHit
       if (!this.moving) {
         this.rememberContinuation(this.snapshot.continuousPredecessorKey, 0, true)
@@ -702,7 +736,9 @@ struct ReaderContinuousList {
       const target = this.positionTarget
       if (target >= start && target <= last) {
         const targetRect = this.scroller.getItemRect(target + this.leadingCatalogRows)
-        if (targetRect.height > 0 && targetRect.y < this.viewHeight && targetRect.y + targetRect.height > 0) first = target
+        const targetStart = this.itemStart(targetRect)
+        const targetExtent = this.itemExtent(targetRect)
+        if (targetExtent > 0 && targetStart < this.viewportExtent() && targetStart + targetExtent > 0) first = target
       }
       this.onRange(start, last, this.createdRevision, navigation, first)
       const key = this.snapshot.displayKeys[first]
@@ -713,27 +749,30 @@ struct ReaderContinuousList {
         frame === undefined || frame.cropPending || frame.asset.kind !== 'original' || frame.asset.phase !== 'displayed' ||
         this.nativeReady.get(key) !== `${frame.slotId}:${frame.asset.assetRequestId}`) return
       const rect = this.scroller.getItemRect(first + this.leadingCatalogRows)
-      const imageHeight = this.imageHeight(first)
-      const imageTop = rect.y + (rect.height - imageHeight) / 2
-      if (rect.height <= 0 || imageTop >= this.viewHeight || imageTop + imageHeight <= 0) return
-      const y = Math.max(0, Math.min(1, -imageTop / imageHeight))
+      const extent = this.imageExtent(first)
+      const start = this.itemStart(rect) + (this.itemExtent(rect) - extent) / 2
+      if (this.itemExtent(rect) <= 0 || start >= this.viewportExtent() || start + extent <= 0) return
+      const position = Math.max(0, Math.min(1, -start / extent))
       const region = frame.crop.region(frame.part)
       const rotated = this.rotates(first)
+      const sourceUsesX = this.horizontal() !== rotated
+      const fromEnd = this.horizontal() && this.rtl() !== rotated
+      const fraction = fromEnd ? 1 - position : position
       this.onVisible(this.createdRevision, navigation, key, frame.slotId, frame.asset.assetRequestId,
-        rotated ? region.sourceX(y) : region.sourceX(0.5),
-        rotated ? region.sourceY(0.5) : region.sourceY(y))
+        region.sourceX(sourceUsesX ? fraction : 0.5), region.sourceY(sourceUsesX ? 0.5 : fraction))
     }, 0)
   }
 
   private rememberContinuation(key: string, index: number, atEnd: boolean): void {
     if (key.length === 0 || index < this.first || index > this.last || this.continuationAnchorKey === key) return
     const rect = this.scroller.getItemRect(index)
-    const center = this.viewHeight / 2
-    if (rect.height <= 0 || rect.y > center || rect.y + rect.height <= center) return
-    // Keep the seam next to the current chapter fixed when the waiting row
-    // is replaced by a real image. A predecessor's seam is its bottom edge.
+    const center = this.viewportExtent() / 2
+    const start = this.itemStart(rect)
+    const extent = this.itemExtent(rect)
+    if (extent <= 0 || start > center || start + extent <= center) return
+    // Hold the chapter seam as the waiting row becomes a real image.
     this.continuationAnchorKey = key
-    this.continuationAnchorEdge = atEnd ? rect.y + rect.height : rect.y
+    this.continuationAnchorEdge = atEnd ? start + extent : start
     this.continuationAnchorAtEnd = atEnd
   }
 
@@ -758,7 +797,8 @@ struct ReaderContinuousList {
         ReaderLoadingStage({ label: $r('app.string.rkit_loading_resolving'), loadingInk: this.loadingInk })
       }
     // Reserve enough room for the current chapter to leave the viewport.
-    }.width('100%').height(Math.max(this.viewHeight, this.imageHeight(-1)))
+    }.width(this.horizontal() ? Math.max(this.viewWidth, this.imageExtent(-1)) : this.viewWidth)
+      .height(this.horizontal() ? this.viewHeight : Math.max(this.viewHeight, this.imageExtent(-1)))
       .id(previous ? 'rkit-continuous-previous-catalog' : 'rkit-continuous-next-catalog')
       .gesture(TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => {
         const location = event?.tapLocation
@@ -790,7 +830,7 @@ struct ReaderContinuousList {
                 (this.lockedKey.length === 0 || this.lockedKey === key),
               onLock: (identity: string, locked: boolean): void => { this.onImageLock(key, identity, locked) },
               onZoomedChange: (identity: string, zoomed: boolean): void => { this.onImageZoomed(key, identity, zoomed) },
-              imageWidth: this.viewWidth, imageHeight: this.imageHeight(this.snapshot.displayKeys.indexOf(key)),
+              imageWidth: this.imageWidth(this.snapshot.displayKeys.indexOf(key)), imageHeight: this.imageHeight(this.snapshot.displayKeys.indexOf(key)),
               rotateClockwise: this.rotates(this.snapshot.displayKeys.indexOf(key)),
               onRetry: (slot: number, request: number): void => {
                 this.onRetry(this.createdRevision, key, slot, request)
@@ -825,11 +865,13 @@ struct ReaderContinuousList {
         }
           .zIndex(this.lockedKey === key ? 1 : 0)
           .onAreaChange((_old: Area, area: Area): void => {
-            this.onRowGeometry(key, Number(area.height))
+            this.onRowGeometry(key, Number(this.horizontal() ? area.width : area.height))
           })
       }, (key: string): string => readerElementKey(key))
     }
     .width('100%').height('100%').cachedCount(this.snapshot.nativeCacheDepth)
+    .listDirection(this.horizontal() ? Axis.Horizontal : Axis.Vertical)
+    .direction(this.horizontal() ? this.rtl() ? Direction.Rtl : Direction.Ltr : Direction.Auto)
     .scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
     .maintainVisibleContentPosition(true)
     .enableScrollInteraction(this.active && this.snapshot.phase === 'ready' && !this.pendingPosition && this.lockedKey.length === 0)
@@ -837,13 +879,14 @@ struct ReaderContinuousList {
     .onTouch((event: TouchEvent): void => { this.handleBoundaryTouch(event) })
     .onAreaChange((_old: Area, area: Area): void => {
       const width = Math.max(1, Number(area.width))
-      if (this.viewWidth !== width || (this.entryTransition?.pending() === true &&
-        this.viewHeight !== Math.max(1, Number(area.height)))) {
+      const height = Math.max(1, Number(area.height))
+      if (this.viewWidth !== width ||
+        ((this.horizontal() || this.entryTransition?.pending() === true) && this.viewHeight !== height)) {
         if (this.viewWidth > 1 && this.entryTransition?.target !== null) this.entryTransition?.cancel()
         this.invalidatePosition()
       }
       this.viewWidth = width
-      this.viewHeight = Math.max(1, Number(area.height))
+      this.viewHeight = height
       if (this.pendingPosition) this.schedulePosition()
       else this.scheduleMeasure()
     })
@@ -995,7 +1038,7 @@ struct ReaderContinuousCell {
           })
         }, (frame: ReaderPagedFrame): string =>
           readerElementKey(`${frame.slotId}:${frame.asset.assetRequestId}`))
-      }.width('100%').height(this.imageHeight).id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
+      }.width(this.imageWidth).height(this.imageHeight).id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
         .onTouch((event: TouchEvent): void => { this.terminalTouch(event) })
         .gesture(TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => { this.terminalTap(event) }))
     } else if (this.snapshot.frames[0]?.asset.phase === 'failed') {
@@ -1009,7 +1052,7 @@ struct ReaderContinuousCell {
           })
         }, (frame: ReaderPagedFrame): string =>
           readerElementKey(`${frame.slotId}:${frame.asset.assetRequestId}`))
-      }.width('100%').height(this.imageHeight).id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
+      }.width(this.imageWidth).height(this.imageHeight).id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
         .onTouch((event: TouchEvent): void => { this.terminalTouch(event) })
         .gesture(TapGesture({ count: 1 }).onAction((event?: GestureEvent): void => { this.terminalTap(event) }))
     } else {
@@ -1038,7 +1081,7 @@ struct ReaderContinuousCell {
         ReaderImagePlaceholder({ loadingInk: this.loadingInk, presentation: this.imagePresentation(),
           frame: this.snapshot.frames[0] ?? null,
           entryTransition: this.entryTransition }).zIndex(2)
-      }.width('100%').height(this.imageHeight)
+      }.width(this.imageWidth).height(this.imageHeight)
         .id(`rkit-continuous-page-${this.snapshot.displayIndex}`)
     }
   }
