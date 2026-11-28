@@ -11,6 +11,8 @@ export struct ReaderEnhancementStatus {
   /** Only an explicitly capable host turns the status leaf into a hot zone. */
   @Param toggleAvailable: boolean = false
   @Param accent: ResourceColor = '#D93646'
+  @Param sessionToggleAvailable: boolean = false
+  @Event onToggleSession: () => void = () => {}
   @Event onToggle: () => void = () => {}
 
   private active(): boolean {
@@ -29,21 +31,39 @@ export struct ReaderEnhancementStatus {
     return readerEnhancementContentColor(color.red, color.green, color.blue)
   }
 
-  build() {
-    Stack({ alignContent: Alignment.Center }) {
-      if (this.enhancementEnabled && this.processing) {
-        LoadingProgress().width(14).height(14).color(this.activeInk())
-      } else {
-        SymbolGlyph($r('sys.symbol.AI_hd_rectangle')).fontSize(14)
-          .fontColor([this.active() ? this.activeInk() : Color.White])
-          .opacity(this.active() ? 1 : this.enhancementEnabled ? 0.78 : 0.39)
-      }
+  @Builder
+  private BadgeContents() {
+    if (this.enhancementEnabled && this.processing) {
+      LoadingProgress().width(14).height(14).color(this.activeInk())
+    } else {
+      SymbolGlyph($r('sys.symbol.AI_hd_rectangle')).fontSize(14)
+        .fontColor([this.active() ? this.activeInk() : Color.White])
+        .opacity(this.active() ? 1 : this.enhancementEnabled ? 0.78 : 0.39)
     }
-      .width(22).height(22).borderRadius(11)
-      .backgroundColor(this.active() ? this.activeFill() : '#26000000')
-      .hitTestBehavior(this.toggleAvailable ? HitTestMode.Block : HitTestMode.None)
-      .enabled(this.toggleAvailable)
-      .onClick((): void => { if (this.toggleAvailable) this.onToggle() })
-      .id('rkit-enhancement-status')
+  }
+
+  build() {
+    if (this.sessionToggleAvailable) {
+      Stack({ alignContent: Alignment.Center }) { this.BadgeContents() }
+        .width(22).height(22).borderRadius(11)
+        .backgroundColor(this.active() ? this.activeFill() : '#26000000')
+        .hitTestBehavior(HitTestMode.Block)
+        .priorityGesture(GestureGroup(GestureMode.Exclusive,
+          LongPressGesture({ repeat: false }).onAction((): void => { this.onToggleSession() }),
+          TapGesture().onAction((): void => { if (this.toggleAvailable) this.onToggle() })))
+        .onClick((event: ClickEvent): void => {
+          // Touch and mouse clicks are handled by the exclusive gesture group.
+          if (this.toggleAvailable && (event.source === SourceType.KEY || event.source === SourceType.Unknown)) this.onToggle()
+        })
+        .id('rkit-enhancement-status')
+    } else {
+      Stack({ alignContent: Alignment.Center }) { this.BadgeContents() }
+        .width(22).height(22).borderRadius(11)
+        .backgroundColor(this.active() ? this.activeFill() : '#26000000')
+        .hitTestBehavior(this.toggleAvailable ? HitTestMode.Block : HitTestMode.None)
+        .enabled(this.toggleAvailable)
+        .onClick((): void => { if (this.toggleAvailable) this.onToggle() })
+        .id('rkit-enhancement-status')
+    }
   }
 }

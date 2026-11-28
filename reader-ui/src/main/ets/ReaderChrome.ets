@@ -68,6 +68,8 @@ export struct ReaderChrome {
   @Param enhancementApplied: boolean = false
   @Param enhancementEnabled: boolean = true
   @Param enhancementToggleAvailable: boolean = false
+  @Param enhancementSessionToggleAvailable: boolean = false
+  @Event onToggleEnhancementSession: () => void = () => {}
   @Event onToggleEnhancement: () => void = () => {}
   @Event onCrop: () => void = () => {}
   @Param originalAvailable: boolean = false
@@ -759,6 +761,8 @@ export struct ReaderChrome {
               ReaderEnhancementStatus({ processing: this.enhancementProcessing,
                 applied: this.enhancementApplied, enhancementEnabled: this.enhancementEnabled,
                 toggleAvailable: this.enhancementToggleAvailable, accent: this.accent,
+                sessionToggleAvailable: this.enhancementSessionToggleAvailable,
+                onToggleSession: (): void => { this.onToggleEnhancementSession() },
                 onToggle: (): void => { this.onToggleEnhancement() } })
             }
           } else {
@@ -837,11 +841,13 @@ export struct ReaderChrome {
               ReaderEnhancementStatus({ processing: this.enhancementProcessing,
                 applied: this.enhancementApplied, enhancementEnabled: this.enhancementEnabled,
                 toggleAvailable: this.enhancementToggleAvailable, accent: this.accent,
+                sessionToggleAvailable: this.enhancementSessionToggleAvailable,
+                onToggleSession: (): void => { this.onToggleEnhancementSession() },
                 onToggle: (): void => { this.onToggleEnhancement() } })
             }
           }
           .alignItems(VerticalAlign.Center)
-            .hitTestBehavior(this.enhancementToggleAvailable ? HitTestMode.Transparent : HitTestMode.None)
+            .hitTestBehavior((this.enhancementToggleAvailable || this.enhancementSessionToggleAvailable) ? HitTestMode.Transparent : HitTestMode.None)
         }
       }.width('100%').height(this.topInset + 56)
         .padding({ top: this.topInset, left: 8, right: 8 })

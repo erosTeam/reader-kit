@@ -651,6 +651,21 @@ export struct ReaderSurface {
     return preference?.variant === 'enhanced' && preference.identity.length > 0
   }
 
+  private enhancementSessionToggleAvailable(): boolean {
+    return this.temporaryVariantControl?.onToggleSession != null && this.active && !this.closing &&
+      !this.chromeDisposed && this.state.phase === 'ready'
+  }
+
+  private showEnhancementStatus(): boolean {
+    return this.enhancementVisible() || this.temporaryVariantControl?.onToggleSession != null
+  }
+
+  private toggleEnhancementSession(): void {
+    if (!this.enhancementSessionToggleAvailable()) return
+    this.temporaryVariantOverride.clear()
+    this.temporaryVariantControl?.onToggleSession?.()
+  }
+
   private temporaryVariantScope(state: ReaderPagedSnapshot): ReaderTemporaryVariantScope | null {
     const unit = state.unit?.key
     if (unit === undefined || state.phase !== 'ready' || state.kind !== 'original') return null
@@ -693,8 +708,8 @@ export struct ReaderSurface {
   }
 
   private enhancementEnabledForCurrentUnit(): boolean {
-    return !this.temporaryVariantOverride.hasOverride() ||
-      !this.temporaryVariantOverride.isDisabled(this.temporaryVariantScope(this.state))
+    return this.temporaryVariantControl?.sessionEnabled !== false && (!this.temporaryVariantOverride.hasOverride() ||
+      !this.temporaryVariantOverride.isDisabled(this.temporaryVariantScope(this.state)))
   }
 
   private toggleTemporaryVariant(): void {
@@ -1063,7 +1078,7 @@ export struct ReaderSurface {
   }
 
   private hasPageStatus(): boolean {
-    return (this.showPageNumber || this.enhancementVisible()) && this.state.unit !== null &&
+    return (this.showPageNumber || this.showEnhancementStatus()) && this.state.unit !== null &&
       this.state.unit.pageCount > 0
   }
 
@@ -1078,11 +1093,13 @@ export struct ReaderSurface {
   private PersistentPageStatus(bottomMargin: number) {
     ReaderPageStatus({ value: `${(this.state.anchor?.sourceIndexHint ?? 0) + 1} / ${this.state.unit?.pageCount ?? 0}`,
       bottomMargin, showPageNumber: this.showPageNumber,
-      showEnhancement: this.enhancementVisible(),
+      showEnhancement: this.showEnhancementStatus(),
       enhancementProcessing: this.enhancementVisible() && this.enhancementProcessing(),
       enhancementApplied: this.enhancementVisible() && this.enhancementApplied(),
       enhancementEnabled: this.enhancementEnabledForCurrentUnit(),
       enhancementToggleAvailable: this.temporaryVariantToggleAvailable(), accent: this.accent,
+      enhancementSessionToggleAvailable: this.enhancementSessionToggleAvailable(),
+      onToggleEnhancementSession: (): void => { this.toggleEnhancementSession() },
       onToggleEnhancement: (): void => { this.toggleTemporaryVariant() } })
   }
 
@@ -1265,11 +1282,13 @@ export struct ReaderSurface {
         autoReadControl: (params: ReaderAutoReadControlParams): void => { this.HostAutoReadControl(params) },
         autoReadAvailable: this.autoReadPolicy?.available === true, autoReadEnabled: this.autoReadEnabled,
         cropAvailable: this.cropPolicy?.available === true,
-        enhancementVisible: this.enhancementVisible(),
+        enhancementVisible: this.showEnhancementStatus(),
         enhancementProcessing: this.enhancementProcessing(),
         enhancementApplied: this.enhancementApplied(),
         enhancementEnabled: this.enhancementEnabledForCurrentUnit(),
         enhancementToggleAvailable: this.temporaryVariantToggleAvailable(),
+        enhancementSessionToggleAvailable: this.enhancementSessionToggleAvailable(),
+        onToggleEnhancementSession: (): void => { this.toggleEnhancementSession() },
         onToggleEnhancement: (): void => { this.toggleTemporaryVariant() },
         hostSettingsAvailable: this.hostSettings !== null,
         onHostSettings: (): void => { this.hostSettings?.request() },

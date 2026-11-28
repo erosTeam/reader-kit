@@ -12,6 +12,8 @@ export struct ReaderPageStatus {
   @Param enhancementApplied: boolean = false
   @Param enhancementEnabled: boolean = true
   @Param enhancementToggleAvailable: boolean = false
+  @Param enhancementSessionToggleAvailable: boolean = false
+  @Event onToggleEnhancementSession: () => void = () => {}
   @Param accent: ResourceColor = '#D93646'
   @Event onToggleEnhancement: () => void = () => {}
   private controller: TextController = new TextController()
@@ -36,10 +38,12 @@ export struct ReaderPageStatus {
         ReaderEnhancementStatus({ processing: this.enhancementProcessing,
           applied: this.enhancementApplied, enhancementEnabled: this.enhancementEnabled,
           toggleAvailable: this.enhancementToggleAvailable, accent: this.accent,
+          sessionToggleAvailable: this.enhancementSessionToggleAvailable,
+          onToggleSession: (): void => { this.onToggleEnhancementSession() },
           onToggle: (): void => { this.onToggleEnhancement() } })
       }
     }.width('100%').justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Center)
       .margin({ bottom: this.bottomMargin })
-      .hitTestBehavior(this.enhancementToggleAvailable ? HitTestMode.Transparent : HitTestMode.None)
+      .hitTestBehavior((this.enhancementToggleAvailable || this.enhancementSessionToggleAvailable) ? HitTestMode.Transparent : HitTestMode.None)
   }
 }
